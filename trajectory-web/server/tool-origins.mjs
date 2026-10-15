@@ -50,8 +50,37 @@ function packageLabel(dir) {
 	return basename(dir);
 }
 
-/** 单个源码文件里的工具注册名（字符串式 registerTool("x") 与对象式 name: "x"）。 */
-function scanFile(file, label, out) {
+/** 名字与包名的相似度（按 `_`/`-` 分词后看包名是否含某段），用于多包竞争同一名字时择优。 */
+function similarity(name, label) {
+	const parts = name.toLowerCase().split(/[_-]/);
+	const lower = label.toLowerCase();
+	return parts.some((part) => part.length >= 3 && lower.includes(part)) ? 1 : 0;
+}
+
+/** 记录一次名字声明：精确声明优先；同级（精确对精确 / 放宽对放宽）按相似度择优。 */
+function claim(claims, name, label, exact) {
+	const previous = claims.get(name);
+	if (!previous) {
+		claims.set(name, { label, exact });
+		return;
+	}
+	if (exact && !previous.exact) {
+		claims.set(name, { label, exact });
+		return;
+	}
+	if (exact === previous.exact && similarity(name, label) > similarity(name, previous.label)) {
+		claims.set(name, { label, exact });
+	}
+}
+
+/**
+ * 单个源码文件里的工具名声明：
+ *   精确：registerTool("x") 与 name: "x"；
+ *   放宽：同一文件里形如工具名的字符串字面量——覆盖 registerActionTool("add", "memory_add", …)
+ *         这类帮助函数式注册（名字不在 registerTool/name 位置上）。
+ * 放宽会引入杂项字面量，但前端只查会话里真实出现过的工具名，多余条目不会显示。
+ */
+function scanFile(file, label, claims) {
 	let text;
 	try {
 		const stat = statSync(file);
@@ -61,10 +90,9 @@ function scanFile(file, label, out) {
 		return;
 	}
 	if (!text.includes("registerTool")) return;
-	for (const match of text.matchAll(/registerTool\(\s*["']([A-Za-z_][\w-]*)["']/g)) out.set(match[1], label);
-	for (const match of text.matchAll(/name:\s*["']([A-Za-z_][\w-]*)["']/g)) {
-		if (!out.has(match[1])) out.set(match[1], label);
-	}
+	for (const match of text.matchAll(/registerTool\(\s*["']([A-Za-z_][\w-]*)["']/g)) claim(claims, match[1], label, true);
+	for (const match of text.matchAll(/name:\s*["']([A-Za-z_][\w-]*)["']/g)) claim(claims, match[1], label, true);
+	for (const match of text.matchAll(/["']([a-z][a-z0-9_]{2,30})["']/g)) claim(claims, match[1], label, false);
 }
 
 function scanTree(dir, label, out, depth = 0) {
@@ -126,6 +154,10 @@ export function scanToolOrigins(options = {}) {
 		}
 	}
 
-	for (const [name, label] of packages) tools[name] = { kind: "package", label };
+	// 合并：内置已占的短名（read/bash…）不被扩展声明覆盖；其余按 claims 落包
+	for (const [name, entry] of packages) {
+		if (tools[name]?.kind === "builtin") continue;
+		tools[name] = { kind: "package", label: entry.label };
+	}
 	return { generatedAt: new Date().toISOString(), source: "scan", tools };
 }

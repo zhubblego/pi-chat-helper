@@ -25,7 +25,7 @@
 - 保留两级轨迹（问题 sticky 分段 + 事件行）；详情抽屉 Markdown/参数/结果/tokens
 - **工具条**（复刻 deepseek `TrajectoryToolbar` 形态，不含时长控件）：「轮次」折叠按钮（⊟/⊞ 全部折叠/展开）+ 单个「过滤」按钮（显示 `过滤 n/5` 计数）——点击弹 deepseek 紧凑菜单卡（复刻 `Menu.module.css` + `MenuSurface`：4px 内边距、elevation-prominent；底色按主人要求由半透明磨砂改为不透明层底 `bg-layer-2`）：显示类型 5 项为勾选菜单项（尾部勾 + `menuitemcheckbox`/`aria-checked`）；勾选后菜单保持打开可连续切换，关闭仅靠点菜单外 / Esc / 切换会话；支持 ↑↓/Home/End
 - **工具名子菜单**（复刻 deepseek Menu 的 `.submenu`：右侧卡片 + 10px 命中桥；长列表改**顶部锚定 + 内层 `.menu-viewport` 滚动**——deepseek 的 bottom 锚定会让长列表向上长出视口，顶部条目不显示）：「工具」行是**子菜单父行**（`menuitem` + `aria-haspopup`，无勾选标记与行上值，尾部 ▸ 按钮感提示），点击 / hover 150ms / → 打开；子菜单为「全部 / 工具名…」**多选**（`menuitemcheckbox`；勾选模型是**排除集**——默认全部勾选，「全部」= 全选开关（全勾↔全不勾），新出现的工具默认勾选），工具名取自当前会话出现过的调用（按首次出现去重）；打开菜单与数据到达时同步；←/Esc 退回，勾选后保持打开；过滤只作用于工具调用行；「过滤 n/N」计数只算四个开关
-- **工具名按归属分组**（子菜单内）：`内置` / `MCP: <server>` / 各扩展包名 / `未识别`，**只渲染非空分组**（会话里没出现过的工具不产生空组）；归属来源：模式 A 用 pi 运行时精确映射（实测 `pi.getAllTools()[].sourceInfo` = `{path,source,scope,origin,baseDir}`，内置 `source:"builtin"`、npm 包 `source:"npm:<pkg>"`），模式 B 用 `server/tool-origins.mjs` 静态扫描安装目录（`/api/tool-origins`，缓存 5 分钟；CLI 可给 `--agent-dir/--pi-dir`）；MCP 按 `mcp__<server>__` 前缀归组。**已实测的局限**：名字由变量拼接或只出现在注释里的工具，模式 B 扫不到→「未识别」（本机为 pi-hermes-memory 的 skill_manage/memory_add/memory_replace），模式 A 无此问题
+- **工具名按归属分组**（子菜单内）：`内置` / `MCP: <server>` / 各扩展包名 / `未识别`，**只渲染非空分组**（会话里没出现过的工具不产生空组）；归属来源：模式 A 用 pi 运行时精确映射（实测 `pi.getAllTools()[].sourceInfo` = `{path,source,scope,origin,baseDir}`，内置 `source:"builtin"`、npm 包 `source:"npm:<pkg>"`），模式 B 用 `server/tool-origins.mjs` 静态扫描安装目录（`/api/tool-origins`，缓存 5 分钟；CLI 可给 `--agent-dir/--pi-dir`）；MCP 按 `mcp__<server>__` 前缀归组；**放宽规则**：含 registerTool 的文件里同时收集形如工具名的字符串字面量，覆盖 `registerActionTool("add", "memory_add", …)` 这类帮助函数式注册；两条保护：内置短名（read/bash…）不被扩展杂项字面量覆盖、多包竞争同名按「名字分词 vs 包名」相似度择优。实测本机 14 个工具全部归类、无「未识别」分组（映射 3089 条/约 165KB，5 分钟缓存）
 - **轮次折叠**：点击问题头部的 ⊟/⊞ 折叠单轮，工具条按钮折叠全部；折叠仅隐藏正文，sticky 头仍可用于导航
 - **搜索**（复刻 deepseek `trajectory-search-index.ts`）：工具条搜索框（照搬其 search 规格）；会话级增量全文索引，按事件稳定 id 缓存来源数组、空格分隔 AND 匹配、大小写不敏感，切换会话重建
 - **时长格式**（复刻 `trajectory-record.ts` 的 `formatDurationMillis`/`formatElapsedSeconds`）：整数毫秒 + 千分位，未知显示 `—`
@@ -53,4 +53,4 @@
 
 ## 最近验证
 
-2026-10-15：10 套测试全绿（新增 test-tool-origins.cjs、test-web-lib 分组用例、test-server `/api/tool-origins`、test-extension 模式 A 精确归属断言）；`tsc` 零错误；真实会话端到端核验：工具按归属分组为「内置 bash/read/write/edit」「@tintinweb/pi-tasks」「context-mode」「pi-hermes-memory」「pi-lens」，仅变量拼接命名的三个工具落「未识别」（模式 B 局限，已注明）；无进程遗留。
+2026-10-15：10 套测试全绿（新增 test-tool-origins.cjs：目录/单文件扩展、对象式与帮助函数式注册、scope 包、嵌套跳过、内置兜底与保护、相似度竞争；另补分组、接口、模式 A 精确归属断言）；`tsc` 零错误；真实会话端到端核验：14 个工具全部归类（内置 bash/read/write/edit、@tintinweb/pi-tasks、context-mode、pi-hermes-memory 含 memory_add/replace/skill_manage、pi-lens），无「未识别」分组；期间定位到「重启未生效」的真因是旧进程占住 7717/7788（旧代码，接口 404），已停旧进程并以 PID 1138412 重起 7788。
