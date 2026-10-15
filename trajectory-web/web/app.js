@@ -48,6 +48,7 @@ const state = {
 	filters: presetFilters("all"),
 	searchIndex: new TrajectorySearchIndex(),
 	query: "",
+	menuOpen: false,
 	folded: new Set(),
 	openId: null,
 	openFull: null,
@@ -134,13 +135,14 @@ const ICONS = {
 		["path", { d: "M6 1.7 1.8 4.1 6 6.5l4.2-2.4z" }],
 		["path", { d: "M1.8 7.1 6 9.5l4.2-2.4" }],
 	],
+	check: [["path", { d: "M2.6 6.3 4.9 8.7 9.4 3.6" }]],
 };
 
-function svgIcon(name) {
+function svgIcon(name, className = "tb-icon") {
 	const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
 	svg.setAttribute("viewBox", "0 0 12 12");
 	svg.setAttribute("aria-hidden", "true");
-	svg.setAttribute("class", "tb-icon");
+	svg.setAttribute("class", className);
 	for (const [tag, attrs] of ICONS[name] ?? []) {
 		const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
 		for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
@@ -258,42 +260,55 @@ const PRESETS = [
 	["text", "仅输出"],
 ];
 
-function presetActive(name) {
-	const preset = presetFilters(name);
-	return Object.keys(preset).every((k) => preset[k] === (state.filters[k] !== false));
+/** 过滤菜单：显示类型（勾选切换）+ 快捷预设（照 deepseek Menu 的紧凑卡与选中语义）。 */
+function renderFilterMenu() {
+	const nodes = [h("div", { class: "menu-label", role: "presentation", text: "显示类型" })];
+	for (const [group, label] of Object.entries(GROUP_LABELS)) {
+		const checked = state.filters[group] !== false;
+		nodes.push(
+			h(
+				"button",
+				{ class: "menu-item", type: "button", role: "menuitemcheckbox", "aria-checked": String(checked), dataset: { group } },
+				svgIcon(group, "menu-item-icon"),
+				h("span", { class: "menu-item-label", text: label }),
+				checked ? svgIcon("check", "menu-check") : null,
+			),
+		);
+	}
+	nodes.push(h("div", { class: "menu-separator", role: "separator" }));
+	nodes.push(h("div", { class: "menu-label", role: "presentation", text: "快捷" }));
+	for (const [key, label] of PRESETS) {
+		nodes.push(
+			h(
+				"button",
+				{ class: "menu-item", type: "button", role: "menuitem", dataset: { preset: key } },
+				svgIcon(key, "menu-item-icon"),
+				h("span", { class: "menu-item-label", text: label }),
+			),
+		);
+	}
+	el("filter-menu").replaceChildren(...nodes);
+}
+
+function updateFilterButton() {
+	const groups = Object.keys(GROUP_LABELS);
+	const on = groups.filter((g) => state.filters[g] !== false).length;
+	el("filter-label").textContent = on === groups.length ? "过滤" : `过滤 ${on}/${groups.length}`;
+	el("filter-btn").setAttribute("aria-expanded", String(state.menuOpen));
+	el("filter-btn").title = on === groups.length ? "过滤显示的类型" : `过滤显示的类型（当前显示 ${on}/${groups.length}）`;
 }
 
 function renderToolbar() {
-	el("presets").replaceChildren(
-		...PRESETS.map(([key, label]) =>
-			h(
-				"button",
-				{ class: "tb-btn", type: "button", dataset: { preset: key }, "aria-pressed": String(presetActive(key)), title: label },
-				svgIcon(key),
-				label,
-			),
-		),
-	);
-	el("filters").replaceChildren(
-		...Object.entries(GROUP_LABELS).map(([group, label]) =>
-			h(
-				"button",
-				{ class: "tb-btn", type: "button", dataset: { group }, "aria-pressed": String(state.filters[group] !== false), title: label },
-				svgIcon(group),
-				label,
-			),
-		),
-	);
+	renderFilterMenu();
+	updateFilterButton();
 	updateFoldAll();
 }
 
-function updateFilterButtons() {
-	for (const btn of el("presets").querySelectorAll("button")) {
-		btn.setAttribute("aria-pressed", String(presetActive(btn.dataset.preset)));
-	}
-	for (const btn of el("filters").querySelectorAll("button")) {
-		btn.setAttribute("aria-pressed", String(state.filters[btn.dataset.group] !== false));
-	}
+function setMenuOpen(open) {
+	state.menuOpen = open;
+	el("filter-menu").hidden = !open;
+	el("filter-btn").setAttribute("aria-expanded", String(open));
+	if (open) el("filter-menu").querySelector('button[role^="menuitem"]')?.focus();
 }
 
 /** 当前会话可折叠的轮次序号（问题分组，含「会话开始」）。 */
@@ -701,23 +716,64 @@ async function pollSession(force = false) {
 // 事件绑定
 // ---------------------------------------------------------------------------
 
-el("presets").addEventListener("click", (e) => {
-	const btn = e.target.closest("button[data-preset]");
-	if (!btn) return;
-	state.filters = presetFilters(btn.dataset.preset);
-	saveFilters();
-	updateFilterButtons();
-	renderMain();
+el("filter-btn").addEventListener("click", (e) => {
+	e.stopPropagation();
+	setMenuOpen(!state.menuOpen);
 });
 
-el("filters").addEventListener("click", (e) => {
-	const btn = e.target.closest("button[data-group]");
-	if (!btn) return;
-	const group = btn.dataset.group;
-	state.filters[group] = state.filters[group] === false;
-	saveFilters();
-	updateFilterButtons();
-	renderMain();
+el("filter-menu").addEventListener("click", (e) => {
+	const item = e.target.closest("button[role^=\"menuitem\"]");
+	if (!item) return;
+	if (item.dataset.group) {
+		const group = item.dataset.group;
+		state.filters[group] = state.filters[group] === false;
+		saveFilters();
+		renderFilterMenu();
+		updateFilterButton();
+		renderMain();
+		el("filter-menu").querySelector(`button[data-group="${group}"]`)?.focus();
+		return;
+	}
+	if (item.dataset.preset) {
+		state.filters = presetFilters(item.dataset.preset);
+		saveFilters();
+		renderFilterMenu();
+		updateFilterButton();
+		renderMain();
+		setMenuOpen(false);
+		el("filter-btn").focus();
+	}
+});
+
+// 菜单键盘导航（照 deepseek Menu：上下循环 / Home / End / Escape 关闭）
+el("filter-menu").addEventListener("keydown", (e) => {
+	const items = [...el("filter-menu").querySelectorAll('button[role^="menuitem"]')];
+	if (items.length === 0) return;
+	const index = items.indexOf(document.activeElement);
+	if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+		e.preventDefault();
+		const step = e.key === "ArrowDown" ? 1 : -1;
+		items[(index + step + items.length) % items.length].focus();
+		return;
+	}
+	if (e.key === "Home" || e.key === "End") {
+		e.preventDefault();
+		items[e.key === "Home" ? 0 : items.length - 1].focus();
+		return;
+	}
+	if (e.key === "Escape") {
+		e.preventDefault();
+		e.stopPropagation();
+		setMenuOpen(false);
+		el("filter-btn").focus();
+	}
+});
+
+// 点击菜单外关闭
+document.addEventListener("click", (e) => {
+	if (!state.menuOpen) return;
+	if (e.target.closest("#filter-root")) return;
+	setMenuOpen(false);
 });
 
 el("search").addEventListener("input", (e) => {
@@ -741,6 +797,7 @@ sessionList.addEventListener("click", (e) => {
 	state.folded = new Set();
 	state.query = "";
 	state.searchIndex = new TrajectorySearchIndex();
+	setMenuOpen(false);
 	el("search").value = "";
 	state.openId = null;
 	state.openFull = null;
