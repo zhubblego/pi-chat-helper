@@ -163,7 +163,8 @@ function svgIcon(name, className = "tb-icon") {
 function loadPrefs() {
 	try {
 		const raw = localStorage.getItem(LS_FILTERS);
-		if (raw) state.filters = { ...presetFilters("all"), ...JSON.parse(raw) };
+		// 工具不再是开关（走子菜单），旧存档里若被关掉要强制打开
+		if (raw) state.filters = { ...presetFilters("all"), ...JSON.parse(raw), tools: true };
 	} catch {
 		/* 忽略损坏的本地状态 */
 	}
@@ -258,43 +259,53 @@ function renderSessions() {
 // 工具条（deepseek 工具栏形态：轮次折叠 + 过滤菜单）
 // ---------------------------------------------------------------------------
 
-/** 过滤菜单：显示类型勾选（照 deepseek Menu 的紧凑卡与选中语义）；工具行带工具名子菜单。 */
+/** 过滤菜单里可开关的类型（工具走子菜单，不是开关）。 */
+const TOGGLE_GROUPS = ["user", "thinking", "text", "context"];
+
+/** 过滤菜单：显示类型勾选（照 deepseek Menu 的紧凑卡与选中语义）；工具行是带子菜单入口的行。 */
 function renderFilterMenu() {
 	const nodes = [h("div", { class: "menu-label", role: "presentation", text: "显示类型" })];
 	for (const [group, label] of Object.entries(GROUP_LABELS)) {
-		const checked = state.filters[group] !== false;
-		const row = h(
-			"button",
-			{
-				class: "menu-item",
-				type: "button",
-				role: "menuitemcheckbox",
-				"aria-checked": String(checked),
-				dataset: { group },
-				...(group === "tools" ? { "aria-haspopup": "menu", "aria-expanded": String(state.submenuOpen) } : {}),
-			},
-			svgIcon(group, "menu-item-icon"),
-			h("span", { class: "menu-item-label", text: label }),
-			group === "tools" ? h("span", { class: "menu-value", id: "tool-value", text: toolValueText() }) : null,
-			group === "tools" ? h("span", { class: "menu-chev", "aria-hidden": "true", text: "▸" }) : null,
-			checked ? svgIcon("check", "menu-check") : null,
-		);
-		if (group !== "tools") {
-			nodes.push(row);
+		if (group === "tools") {
+			// 工具行不再是开关，而是子菜单父行（照 deepseek：menuitem + aria-haspopup，hover/点击进入）
+			const row = h(
+				"button",
+				{
+					class: "menu-item",
+					type: "button",
+					role: "menuitem",
+					"aria-haspopup": "menu",
+					"aria-expanded": String(state.submenuOpen),
+					dataset: { submenu: "tools" },
+				},
+				svgIcon(group, "menu-item-icon"),
+				h("span", { class: "menu-item-label", text: label }),
+				h("span", { class: "menu-chev", "aria-hidden": "true", text: "▸" }),
+			);
+			// 包一层容器：hover 行或子菜单都保持打开（照 deepseek 子菜单的指针桥）
+			const wrap = h("div", { class: "menu-item-wrap" }, row, buildToolSubmenu());
+			let hoverTimer;
+			wrap.addEventListener("mouseenter", () => {
+				clearTimeout(hoverTimer);
+				hoverTimer = setTimeout(() => setSubmenuOpen(true), 150);
+			});
+			wrap.addEventListener("mouseleave", () => {
+				clearTimeout(hoverTimer);
+				hoverTimer = setTimeout(() => setSubmenuOpen(false), 150);
+			});
+			nodes.push(wrap);
 			continue;
 		}
-		// 工具行：包一层容器，hover 行或子菜单都保持打开（照 deepseek 子菜单的指针桥）
-		const wrap = h("div", { class: "menu-item-wrap" }, row, buildToolSubmenu());
-		let hoverTimer;
-		wrap.addEventListener("mouseenter", () => {
-			clearTimeout(hoverTimer);
-			hoverTimer = setTimeout(() => setSubmenuOpen(true), 150);
-		});
-		wrap.addEventListener("mouseleave", () => {
-			clearTimeout(hoverTimer);
-			hoverTimer = setTimeout(() => setSubmenuOpen(false), 150);
-		});
-		nodes.push(wrap);
+		const checked = state.filters[group] !== false;
+		nodes.push(
+			h(
+				"button",
+				{ class: "menu-item", type: "button", role: "menuitemcheckbox", "aria-checked": String(checked), dataset: { group } },
+				svgIcon(group, "menu-item-icon"),
+				h("span", { class: "menu-item-label", text: label }),
+				checked ? svgIcon("check", "menu-check") : null,
+			),
+		);
 	}
 	el("filter-menu").replaceChildren(...nodes);
 }
@@ -317,14 +328,7 @@ function submenuItem(toolName, label, checked) {
 	);
 }
 
-/** 工具行右侧的当前值：未选不显示（空串由 CSS :empty 隐藏），单个直接显示，多选「首个 +N」。 */
-function toolValueText() {
-	const names = state.toolNames.filter((name) => state.toolFilters.has(name));
-	if (names.length === 0) return "";
-	return names.length === 1 ? names[0] : `${names[0]} +${names.length - 1}`;
-}
-
-/** 同步工具名列表：新出现的工具会在下次打开/刷新菜单时进子菜单；已失效的选中回落到「全部」。 */
+/** 同步工具名列表：新出现的工具会在下次打开/刷新菜单时进子菜单；已失效的选中自动摘除。 */
 function syncToolNames() {
 	const names = collectToolNames(state.data?.questions ?? []);
 	const changed = names.length !== state.toolNames.length || names.some((name, i) => name !== state.toolNames[i]);
@@ -342,14 +346,12 @@ function setSubmenuOpen(open, focusFirst = false) {
 	const submenu = el("tool-submenu");
 	if (!submenu) return;
 	submenu.hidden = !next;
-	el("filter-menu").querySelector('button[data-group="tools"]')?.setAttribute("aria-expanded", String(next));
+	el("filter-menu").querySelector('button[data-submenu="tools"]')?.setAttribute("aria-expanded", String(next));
 	if (next && focusFirst) submenu.querySelector('button[role^="menuitem"]')?.focus();
 }
 
-/** 原地更新工具行右侧的当前值与子菜单勾选态。 */
-function updateToolsRow() {
-	const value = el("tool-value");
-	if (value) value.textContent = toolValueText();
+/** 原地更新子菜单勾选态（空集时「全部」勾选）。 */
+function updateSubmenuChecks() {
 	const submenu = el("tool-submenu");
 	if (!submenu) return;
 	for (const item of submenu.querySelectorAll('button[role^="menuitem"]')) {
@@ -365,6 +367,7 @@ function updateToolsRow() {
 /** 原地同步勾选态（不重建 DOM：重建会把点击目标摘出文档，导致文档级监听误判为“点外部”而关菜单）。 */
 function syncFilterItems() {
 	for (const group of Object.keys(GROUP_LABELS)) {
+		if (group === "tools") continue; // 工具行是子菜单入口，不再是开关
 		const item = el("filter-menu").querySelector(`button[data-group="${group}"]`);
 		if (!item) continue;
 		const checked = state.filters[group] !== false;
@@ -376,7 +379,7 @@ function syncFilterItems() {
 }
 
 function updateFilterButton() {
-	const groups = Object.keys(GROUP_LABELS);
+	const groups = TOGGLE_GROUPS;
 	const on = groups.filter((g) => state.filters[g] !== false).length;
 	el("filter-label").textContent = on === groups.length ? "过滤" : `过滤 ${on}/${groups.length}`;
 	el("filter-btn").setAttribute("aria-expanded", String(state.menuOpen));
@@ -821,12 +824,17 @@ el("filter-menu").addEventListener("click", (e) => {
 	e.stopPropagation();
 	const item = e.target.closest('button[role^="menuitem"]');
 	if (!item) return;
+	if (item.dataset.submenu === "tools") {
+		setSubmenuOpen(true);
+		item.focus();
+		return;
+	}
 	if (item.dataset.tool !== undefined) {
 		const name = item.dataset.tool;
 		if (name === "") state.toolFilters.clear();
 		else if (state.toolFilters.has(name)) state.toolFilters.delete(name);
 		else state.toolFilters.add(name);
-		updateToolsRow();
+		updateSubmenuChecks();
 		renderMain();
 		item.focus();
 		return;
@@ -860,7 +868,7 @@ el("filter-menu").addEventListener("keydown", (e) => {
 		return;
 	}
 	if (e.key === "ArrowRight") {
-		if (scope === el("filter-menu") && document.activeElement?.dataset?.group === "tools") {
+		if (scope === el("filter-menu") && document.activeElement?.dataset?.submenu === "tools") {
 			e.preventDefault();
 			setSubmenuOpen(true, true);
 		}
@@ -870,7 +878,7 @@ el("filter-menu").addEventListener("keydown", (e) => {
 		if (scope !== el("filter-menu")) {
 			e.preventDefault();
 			setSubmenuOpen(false);
-			el("filter-menu").querySelector('button[data-group="tools"]')?.focus();
+			el("filter-menu").querySelector('button[data-submenu="tools"]')?.focus();
 		}
 		return;
 	}
@@ -879,7 +887,7 @@ el("filter-menu").addEventListener("keydown", (e) => {
 		e.stopPropagation();
 		if (scope !== el("filter-menu")) {
 			setSubmenuOpen(false);
-			el("filter-menu").querySelector('button[data-group="tools"]')?.focus();
+			el("filter-menu").querySelector('button[data-submenu="tools"]')?.focus();
 			return;
 		}
 		setMenuOpen(false);

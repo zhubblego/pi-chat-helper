@@ -440,20 +440,24 @@ svg.tb-icon {
 	stroke-linejoin: round;
 }
 
-.menu-value {
-	flex: none;
-	color: var(--dsw-alias-label-tertiary);
-}
-
-.menu-value:empty {
-	display: none;
-}
-
 .menu-chev {
 	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 14px;
+	border-radius: var(--dsw-radius-xs);
 	color: var(--dsw-alias-label-tertiary);
 	font-size: 9px;
 	line-height: 10px;
+}
+
+/* 子菜单入口的按钮感：行 hover / 聚焦时高亮 */
+.menu-item:hover .menu-chev,
+.menu-item:focus-visible .menu-chev {
+	background: var(--dsw-alias-interactive-bg-active);
+	color: var(--dsw-alias-label-primary);
 }
 
 /* 工具名子菜单（照 deepseek Menu 的 .submenu：右侧卡片 + 10px 命中桥） */
