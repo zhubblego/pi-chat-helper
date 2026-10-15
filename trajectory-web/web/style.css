@@ -5,6 +5,7 @@
 :root {
 	--tw-sidebar-width: 300px;
 	--tw-topbar-height: 48px;
+	--tw-toolbar-height: 28px;
 	--tw-session-max-height: 42vh;
 	color-scheme: light dark;
 }
@@ -157,8 +158,7 @@ body {
 	color: var(--dsw-alias-label-tertiary);
 }
 
-.sidebar-block + .sidebar-block,
-.filter-panel + .question-list {
+.sidebar-block + .sidebar-block {
 	margin-top: 6px;
 }
 
@@ -285,82 +285,71 @@ body {
 	}
 }
 
-/* ---------------------------------------------------------------- 过滤 */
+/* ---------------------------------------------------------------- 工具条 */
 
-.filter-panel {
+.toolbar {
+	position: sticky;
+	top: 0;
+	z-index: 4;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: var(--tw-toolbar-height);
+	padding: 0 6px;
+	border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+	background: var(--dsw-alias-bg-layer-1);
+}
+
+.tb-group {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.tb-sep {
+	width: 1px;
+	height: 12px;
 	flex: none;
+	background: var(--dsw-alias-border-l4);
 }
 
-.filter-head {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	width: 100%;
-	padding: 6px 8px;
-	background: none;
-	border: none;
-	color: var(--dsw-alias-label-tertiary);
-	font: var(--dsw-font-xxxs-strong-11);
-	letter-spacing: 0.04em;
-	cursor: pointer;
-	border-radius: var(--dsw-radius-sm);
-}
-
-.filter-head:hover {
-	background: var(--dsw-specific-sidebar-nav-item-hover);
-}
-
-.filter-body {
-	padding: 0 6px 6px;
-}
-
-.preset-row {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 6px;
-	margin-bottom: 8px;
-}
-
-.preset {
-	background: var(--dsw-alias-button-ghost-active-fill);
-	border: 1px solid var(--dsw-alias-border-l2);
-	border-radius: var(--dsw-radius-sm);
-	padding: 2px 10px;
-	font: var(--dsw-font-xxxs-11);
-	color: var(--dsw-alias-label-secondary);
-	cursor: pointer;
-	transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
-}
-
-.preset:hover {
-	background: var(--dsw-alias-button-ghost-active-hover);
-}
-
-.preset.active {
-	background: var(--dsw-alias-button-ghost-active-fill);
-	border-color: var(--dsw-alias-button-ghost-active-border);
-	color: var(--dsw-alias-label-primary);
-}
-
-.chip-row {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 4px 12px;
-}
-
-.chip {
+.tb-btn {
 	display: inline-flex;
+	flex: none;
 	align-items: center;
+	height: 20px;
+	padding: 0 7px;
 	gap: 4px;
-	color: var(--dsw-alias-label-secondary);
-	font: var(--dsw-font-xxs-12);
+	border: 0;
+	border-radius: var(--dsw-radius-sm);
+	color: var(--dsw-alias-label-tertiary);
+	background: transparent;
 	cursor: pointer;
-	user-select: none;
+	font: var(--dsw-font-xxs-12);
 }
 
-.chip input {
-	margin: 0;
-	accent-color: var(--dsw-alias-state-business-primary);
+.tb-btn:hover {
+	color: var(--dsw-alias-label-primary);
+	background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.tb-btn[aria-pressed="true"] {
+	color: var(--dsw-alias-label-primary);
+	background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.tb-btn:focus-visible {
+	outline: 1px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+	outline-offset: 1px;
+}
+
+.tb-action {
+	margin-left: auto;
+}
+
+.tb-icon {
+	color: var(--dsw-alias-label-tertiary);
+	font: 14px/14px var(--ds-font-family-code);
 }
 
 /* ---------------------------------------------------------------- 问题列表 */
@@ -430,12 +419,16 @@ body {
 /* ---------------------------------------------------------------- 轨迹主区 */
 
 .question {
-	scroll-margin-top: calc(var(--tw-topbar-height) + 4px);
+	scroll-margin-top: calc(var(--tw-toolbar-height) + 44px);
+}
+
+.question.folded .q-body {
+	display: none;
 }
 
 .q-head {
 	position: sticky;
-	top: 0;
+	top: var(--tw-toolbar-height);
 	display: flex;
 	align-items: center;
 	gap: 10px;
@@ -456,6 +449,24 @@ body {
 	font: var(--dsw-font-xxxs-11);
 	font-family: var(--ds-font-family-code);
 	white-space: nowrap;
+}
+
+.q-fold {
+	flex: none;
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	border: 0;
+	border-radius: var(--dsw-radius-xs);
+	background: transparent;
+	color: var(--dsw-alias-label-tertiary);
+	cursor: pointer;
+	font: 13px/13px var(--ds-font-family-code);
+}
+
+.q-fold:hover {
+	color: var(--dsw-alias-label-primary);
+	background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .q-body {

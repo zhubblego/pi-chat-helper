@@ -28,7 +28,6 @@ import {
 } from "./lib.js";
 
 const LS_FILTERS = "tw.filters";
-const LS_COLLAPSED = "tw.filtersCollapsed";
 const POLL_MS = 2000;
 const SESSION_LIST_EVERY = 3; // 每 3 个 tick 刷一次会话列表（约 6s）
 
@@ -47,7 +46,7 @@ const state = {
 	data: null,
 	etag: null,
 	filters: presetFilters("all"),
-	collapsed: false,
+	folded: new Set(),
 	activeQ: null,
 	openId: null,
 	openFull: null,
@@ -123,7 +122,6 @@ function loadPrefs() {
 	} catch {
 		/* 忽略损坏的本地状态 */
 	}
-	state.collapsed = localStorage.getItem(LS_COLLAPSED) === "1";
 }
 
 function saveFilters() {
@@ -211,22 +209,56 @@ function renderSessions() {
 // 过滤面板
 // ---------------------------------------------------------------------------
 
-function renderChips() {
-	el("chips").replaceChildren(
-		...Object.entries(GROUP_LABELS).map(([group, label]) =>
-			h("label", { class: "chip" }, h("input", { type: "checkbox", dataset: { group }, checked: state.filters[group] !== false }), ` ${label}`),
-		),
-	);
+// ---------------------------------------------------------------------------
+// 工具条（deepseek 工具栏形态：预设 + 过滤开关 + 轮次折叠）
+// ---------------------------------------------------------------------------
+
+const PRESETS = [
+	["all", "全部"],
+	["thinking", "仅思考"],
+	["tools", "仅工具"],
+	["text", "仅输出"],
+];
+
+function presetActive(name) {
+	const preset = presetFilters(name);
+	return Object.keys(preset).every((k) => preset[k] === (state.filters[k] !== false));
 }
 
-function applyFilterUI() {
-	el("filter-body").hidden = state.collapsed;
-	el("filter-head").setAttribute("aria-expanded", String(!state.collapsed));
-	el("filter-chev").textContent = state.collapsed ? "▸" : "▾";
-	for (const btn of el("presets").querySelectorAll(".preset")) {
-		const preset = presetFilters(btn.dataset.preset);
-		btn.classList.toggle("active", Object.keys(preset).every((k) => preset[k] === (state.filters[k] !== false)));
+function renderToolbar() {
+	el("presets").replaceChildren(
+		...PRESETS.map(([key, label]) =>
+			h("button", { class: "tb-btn", type: "button", dataset: { preset: key }, "aria-pressed": String(presetActive(key)), text: label }),
+		),
+	);
+	el("filters").replaceChildren(
+		...Object.entries(GROUP_LABELS).map(([group, label]) =>
+			h("button", { class: "tb-btn", type: "button", dataset: { group }, "aria-pressed": String(state.filters[group] !== false), text: label }),
+		),
+	);
+	updateFoldAll();
+}
+
+function updateFilterButtons() {
+	for (const btn of el("presets").querySelectorAll("button")) {
+		btn.setAttribute("aria-pressed", String(presetActive(btn.dataset.preset)));
 	}
+	for (const btn of el("filters").querySelectorAll("button")) {
+		btn.setAttribute("aria-pressed", String(state.filters[btn.dataset.group] !== false));
+	}
+}
+
+/** 当前会话可折叠的轮次序号（问题分组，含「会话开始」）。 */
+function foldableQuestions() {
+	return (state.data?.questions ?? []).map((q) => q.index);
+}
+
+function updateFoldAll() {
+	const indexes = foldableQuestions();
+	const allFolded = indexes.length > 0 && indexes.every((i) => state.folded.has(i));
+	el("fold-all").setAttribute("aria-pressed", String(allFolded));
+	el("fold-all").title = allFolded ? "展开所有轮次" : "收起所有轮次";
+	el("fold-icon").textContent = allFolded ? "⊞" : "⊟";
 }
 
 // ---------------------------------------------------------------------------
@@ -301,12 +333,21 @@ function renderMain() {
 		...questions.map((q) => {
 			const shown = (q.events ?? []).filter((ev) => eventPasses(state.filters, ev.kind));
 			const body = shown.length ? shown.map(renderEvent) : muted("（当前过滤下无条目）");
+			const folded = state.folded.has(q.index);
 			return h(
 				"section",
-				{ class: "question", id: `q-${q.index}`, dataset: { q: String(q.index) } },
+				{ class: `question${folded ? " folded" : ""}`, id: `q-${q.index}`, dataset: { q: String(q.index) } },
 				h(
 					"header",
 					{ class: "q-head" },
+					h("button", {
+						class: "q-fold",
+						type: "button",
+						dataset: { fold: String(q.index) },
+						title: folded ? "展开本轮" : "收起本轮",
+						"aria-expanded": String(!folded),
+						text: folded ? "⊞" : "⊟",
+					}),
 					h("span", { class: "q-no", text: q.index < 0 ? "会话开始" : `问题 ${q.index + 1}` }),
 					h("span", { class: "q-time", text: fmtTime(q.ts) || "" }),
 					h("span", { class: "q-sum", title: q.summary, text: q.summary }),
@@ -317,6 +358,7 @@ function renderMain() {
 		}),
 	);
 	updateActiveQuestion();
+	updateFoldAll();
 }
 
 function updateActiveQuestion() {
@@ -644,32 +686,29 @@ async function pollSession(force = false) {
 // 事件绑定
 // ---------------------------------------------------------------------------
 
-el("filter-head").addEventListener("click", () => {
-	state.collapsed = !state.collapsed;
-	try {
-		localStorage.setItem(LS_COLLAPSED, state.collapsed ? "1" : "0");
-	} catch {
-		/* 忽略 */
-	}
-	applyFilterUI();
-});
-
 el("presets").addEventListener("click", (e) => {
-	const btn = e.target.closest(".preset");
+	const btn = e.target.closest("button[data-preset]");
 	if (!btn) return;
 	state.filters = presetFilters(btn.dataset.preset);
 	saveFilters();
-	renderChips();
-	applyFilterUI();
+	updateFilterButtons();
 	renderMain();
 });
 
-el("chips").addEventListener("change", (e) => {
-	const input = e.target.closest("input[data-group]");
-	if (!input) return;
-	state.filters[input.dataset.group] = input.checked;
+el("filters").addEventListener("click", (e) => {
+	const btn = e.target.closest("button[data-group]");
+	if (!btn) return;
+	const group = btn.dataset.group;
+	state.filters[group] = state.filters[group] === false;
 	saveFilters();
-	applyFilterUI();
+	updateFilterButtons();
+	renderMain();
+});
+
+el("fold-all").addEventListener("click", () => {
+	const indexes = foldableQuestions();
+	const allFolded = indexes.length > 0 && indexes.every((i) => state.folded.has(i));
+	state.folded = new Set(allFolded ? [] : indexes);
 	renderMain();
 });
 
@@ -679,6 +718,7 @@ sessionList.addEventListener("click", (e) => {
 	state.selectedId = item.dataset.id;
 	state.data = null;
 	state.etag = null;
+	state.folded = new Set();
 	state.openId = null;
 	state.openFull = null;
 	drawer.hidden = true;
@@ -691,6 +731,14 @@ sessionList.addEventListener("click", (e) => {
 });
 
 mainInner.addEventListener("click", (e) => {
+	const fold = e.target.closest(".q-fold");
+	if (fold) {
+		const index = Number(fold.dataset.fold);
+		if (state.folded.has(index)) state.folded.delete(index);
+		else state.folded.add(index);
+		renderMain();
+		return;
+	}
 	const row = e.target.closest(".ev");
 	if (row) openDrawer(row.dataset.eid);
 });
@@ -727,8 +775,7 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", app
 
 applyTheme();
 loadPrefs();
-renderChips();
-applyFilterUI();
+renderToolbar();
 pollSessions();
 pollSession();
 setInterval(() => {

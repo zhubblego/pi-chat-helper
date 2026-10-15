@@ -29,24 +29,17 @@
 				</div>
 				<div id="session-list" class="session-list" aria-label="会话列表"></div>
 			</section>
-			<div id="filter-panel" class="filter-panel sidebar-block">
-				<button id="filter-head" class="filter-head" aria-expanded="true">
-					<span>过滤</span>
-					<span id="filter-chev" class="chev">▾</span>
-				</button>
-				<div id="filter-body" class="filter-body">
-					<div id="presets" class="preset-row">
-						<button class="preset" data-preset="all">全部</button>
-						<button class="preset" data-preset="thinking">仅思考</button>
-						<button class="preset" data-preset="tools">仅工具</button>
-						<button class="preset" data-preset="text">仅输出</button>
-					</div>
-					<div id="chips" class="chip-row"></div>
-				</div>
-			</div>
 			<nav id="question-list" class="question-list" aria-label="提问列表"></nav>
 		</aside>
 		<main id="main">
+			<div id="toolbar" class="toolbar" role="toolbar" aria-label="轨迹工具栏">
+				<div id="presets" class="tb-group"></div>
+				<span class="tb-sep" aria-hidden="true"></span>
+				<div id="filters" class="tb-group"></div>
+				<button id="fold-all" class="tb-btn tb-action" type="button" aria-pressed="false" title="收起所有轮次">
+					<span id="fold-icon" class="tb-icon" aria-hidden="true">⊟</span><span>轮次</span>
+				</button>
+			</div>
 			<div id="main-inner" class="main-inner"></div>
 		</main>
 	</div>
