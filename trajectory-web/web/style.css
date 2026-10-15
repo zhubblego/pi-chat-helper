@@ -326,6 +326,7 @@ body {
 	background: transparent;
 	cursor: pointer;
 	font: var(--dsw-font-xxs-12);
+	white-space: nowrap;
 }
 
 .tb-btn:hover {
@@ -346,6 +347,13 @@ body {
 .tb-icon {
 	color: var(--dsw-alias-label-tertiary);
 	font: 14px/14px var(--ds-font-family-code);
+}
+
+/* SVG 图标：定宽高（无内在尺寸的 SVG 不设尺寸会在 flex 行里擑大，把按钮文字挤成竖排） */
+svg.tb-icon {
+	flex: none;
+	width: 12px;
+	height: 12px;
 	fill: none;
 	stroke: currentColor;
 	stroke-width: 1.1;
@@ -353,17 +361,12 @@ body {
 	stroke-linejoin: round;
 }
 
-.tb-chev {
-	font-size: 9px;
-	line-height: 10px;
-	color: var(--dsw-alias-label-tertiary);
-}
-
 /* 过滤下拉菜单（复刻 deepseek Menu 紧凑卡 + MenuSurface 规格：
    4px 内边距 / 半透明底 + backdrop-filter / elevation-prominent / 尾部勾选） */
 .menu-root {
 	position: relative;
 	display: inline-flex;
+	flex: none;
 }
 
 .menu {
