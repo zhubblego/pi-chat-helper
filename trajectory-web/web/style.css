@@ -498,6 +498,10 @@ svg.tb-icon {
 	font: var(--dsw-font-xxxs-11);
 }
 
+.menu.submenu .menu-label {
+	margin-top: 2px;
+}
+
 /* 搜索框（复刻 deepseek TrajectoryToolbar 的 search 规格） */
 .tb-search {
 	display: flex;

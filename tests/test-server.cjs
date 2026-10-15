@@ -102,7 +102,7 @@ async function stopServer(child) {
 		writeSession(projB, { id: "srv-b1", cwd: "/tmp/projB", first: "B 问", mtimeMs: recent - 120_000 });
 
 		// ---- 模式 B：全部范围 ----
-		all = startServer(["--scope", "all", "--sessions-root", sessionsRoot, "--port", "0", "--web", WEB]);
+		all = startServer(["--scope", "all", "--sessions-root", sessionsRoot, "--agent-dir", path.join(tmp, "agent"), "--port", "0", "--web", WEB]);
 		const base = await waitForUrl(all);
 
 		const health = await (await fetch(`${base}/api/health`)).json();
@@ -134,6 +134,9 @@ async function stopServer(child) {
 		for (const file of ["/", "/app.js", "/lib.js", "/style.css", "/tokens.css"]) {
 			check(`静态资源 ${file}`, (await fetch(base + file)).status === 200);
 		}
+
+		const origins = await (await fetch(`${base}/api/tool-origins`)).json();
+		check("工具归属接口（静态扫描）", origins.source === "scan" && origins.tools?.read?.kind === "builtin", JSON.stringify(origins).slice(0, 140));
 
 		// 追加新条目 → 热更新
 		fs.appendFileSync(a1, line({ type: "message", id: "u2", parentId: "a2", timestamp: H, message: { role: "user", content: "追问", timestamp: 2000 } }) + "\n");

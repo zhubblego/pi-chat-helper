@@ -22,7 +22,7 @@
  *   pi -e ./trajectory-web/index.ts
  */
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -38,6 +38,48 @@ interface ServerHandle {
 	port: number;
 	url: string;
 	close: () => Promise<void>;
+}
+
+interface ToolOriginEntry {
+	kind: "builtin" | "mcp" | "package";
+	label: string;
+}
+
+/** mcp__<server>__<tool> → “MCP: <server>”。 */
+function mcpLabelOf(name: string): string | null {
+	if (!name.startsWith("mcp__")) return null;
+	const rest = name.slice(5);
+	const index = rest.indexOf("__");
+	return `MCP: ${index > 0 ? rest.slice(0, index) : rest}`;
+}
+
+/**
+ * 从 pi 运行时取精确工具归属（模式 A 专用）。
+ * sourceInfo 实测形状：{ path, source, scope, origin, baseDir }；内置 source:"builtin"，
+ * npm 包 source:"npm:@scope/pkg"，本地扩展为文件路径 + baseDir。
+ */
+function toolOriginsFromPi(pi: ExtensionAPI): Record<string, ToolOriginEntry> {
+	const out: Record<string, ToolOriginEntry> = {};
+	for (const tool of pi.getAllTools()) {
+		// SAFETY: ToolInfo 的 sourceInfo 未在安装包的 .d.ts 里导出（运行时由 pi 注入），
+		// 此处按实测形状窄化读取；缺失时按内置处理。
+		const info = (tool as { sourceInfo?: { source?: string; path?: string; baseDir?: string } }).sourceInfo;
+		const name = typeof tool.name === "string" ? tool.name : "";
+		if (!name) continue;
+		const mcp = mcpLabelOf(name);
+		if (mcp) {
+			out[name] = { kind: "mcp", label: mcp };
+			continue;
+		}
+		const source = info?.source ?? "";
+		if (!info || source === "builtin" || (info.path ?? "").startsWith("builtin:")) {
+			out[name] = { kind: "builtin", label: "内置" };
+			continue;
+		}
+		const label = source.startsWith("npm:") ? source.slice(4) : info.baseDir ? basename(info.baseDir) : source || "扩展";
+		out[name] = { kind: "package", label };
+	}
+	return out;
 }
 
 interface GlobalSlot {
@@ -63,9 +105,9 @@ async function closeSlot(): Promise<void> {
 }
 
 /** 进程内启动；端口占用时降级为系统分配端口（port 0）。 */
-async function startInProcess(port: number, sessionFile: string): Promise<ServerHandle> {
+async function startInProcess(port: number, sessionFile: string, toolOrigins: Record<string, ToolOriginEntry>): Promise<ServerHandle> {
 	const { createTrajectoryServer } = await import("./server/app.mjs");
-	const base = { scope: "project" as const, sessionFile, webDir: WEB_DIR, host: "127.0.0.1" };
+	const base = { scope: "project" as const, sessionFile, webDir: WEB_DIR, host: "127.0.0.1", toolOrigins };
 	try {
 		return await createTrajectoryServer({ ...base, port });
 	} catch (err) {
@@ -76,7 +118,7 @@ async function startInProcess(port: number, sessionFile: string): Promise<Server
 	}
 }
 
-async function runStart(portArg: string | undefined, ctx: ExtensionCommandContext, notify: Notice): Promise<void> {
+async function runStart(portArg: string | undefined, ctx: ExtensionCommandContext, pi: ExtensionAPI, notify: Notice): Promise<void> {
 	let port = DEFAULT_PORT;
 	if (portArg) {
 		const n = Number(portArg);
@@ -100,7 +142,7 @@ async function runStart(portArg: string | undefined, ctx: ExtensionCommandContex
 	}
 
 	try {
-		const handle = await startInProcess(port, sessionFile);
+		const handle = await startInProcess(port, sessionFile, toolOriginsFromPi(pi));
 		slot().handle = handle;
 		const note = handle.port === port ? "" : `（端口 ${port} 被占用，改用 ${handle.port}）`;
 		notify(`轨迹服务已启动：${handle.url}${note}\n范围：当前项目的全部会话；随本 pi 实例退出而停止`);
@@ -136,7 +178,7 @@ export default function (pi: ExtensionAPI) {
 			};
 			const [subcommand, ...rest] = (args ?? "").trim().split(/\s+/).filter(Boolean);
 			if (subcommand === "start") {
-				await runStart(rest[0], ctx, notify);
+				await runStart(rest[0], ctx, pi, notify);
 				return;
 			}
 			if (subcommand === "stop") {

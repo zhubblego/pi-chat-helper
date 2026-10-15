@@ -54,6 +54,13 @@ function freePort() {
 				if (event === "session_shutdown") shutdownHandlers.push(handler);
 				return () => {};
 			},
+			// 模式 A 的精确归属来源（真实形状：sourceInfo.source = builtin / npm:<pkg>）
+			getAllTools: () => [
+				{ name: "read", sourceInfo: { path: "builtin:read", source: "builtin" } },
+				{ name: "memory_search", sourceInfo: { path: "/tmp/pi-hermes-memory/dist/index.ts", source: "npm:pi-hermes-memory" } },
+				{ name: "local_tool", sourceInfo: { path: "/tmp/my-ext/index.ts", source: "file:/tmp/my-ext/index.ts", baseDir: "/tmp/my-ext" } },
+				{ name: "mcp__docs__search", sourceInfo: { path: "/tmp/mcp/index.ts", source: "npm:@scope/mcp" } },
+			],
 		});
 		trail = commands["deepseek-trail"];
 		check("注册单一命令 /deepseek-trail", typeof trail?.handler === "function" && typeof trail?.getArgumentCompletions === "function");
@@ -64,7 +71,7 @@ function freePort() {
 		// ---- 仓库根聚合入口（pi -e . 依赖） ----
 		const aggregateCommands = {};
 		const aggregate = jiti(path.join(__dirname, "..", "index.ts"));
-		aggregate.default({ registerCommand: (name, def) => (aggregateCommands[name] = def), on: () => () => {} });
+		aggregate.default({ registerCommand: (name, def) => (aggregateCommands[name] = def), on: () => () => {}, getAllTools: () => [] });
 		check(
 			"根 index.ts 聚合注册 /questions 与 /deepseek-trail",
 			["questions", "deepseek-trail"].every((n) => typeof aggregateCommands[n]?.handler === "function"),
@@ -97,6 +104,18 @@ function freePort() {
 		check("会话列表只含本项目", listing.sessions.length === 1 && listing.sessions[0].id === "ext-1", JSON.stringify(listing.sessions.map((s) => s.id)));
 		const def = await (await fetch(`${url}api/session`)).json();
 		check("默认会话 = 当前 pi 会话", def.sessionId === "ext-1", String(def.sessionId));
+
+		// ---- 精确工具归属（模式 A：来自 pi.getAllTools().sourceInfo） ----
+		const origins = await (await fetch(`${url}api/tool-origins`)).json();
+		check(
+			"工具归属来自 pi（内置 / npm 包 / 本地扩展 / MCP）",
+			origins.source === "pi" &&
+				origins.tools.read?.label === "内置" &&
+				origins.tools.memory_search?.label === "pi-hermes-memory" &&
+				origins.tools.local_tool?.label === "my-ext" &&
+				origins.tools.mcp__docs__search?.label === "MCP: docs",
+			JSON.stringify(origins.tools).slice(0, 220),
+		);
 
 		// ---- 幂等 ----
 		await trail.handler(`start ${port}`, ctx);

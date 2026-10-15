@@ -20,6 +20,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { buildProjection, toLight, findEvent } from "./session.mjs";
 import { listSessions, DEFAULT_SESSIONS_ROOT, LIVE_WINDOW_MS } from "./sessions.mjs";
+import { scanToolOrigins } from "./tool-origins.mjs";
 
 const STATIC = new Map([
 	["/", ["index.html", "text/html; charset=utf-8"]],
@@ -43,6 +44,9 @@ const MAX_CACHED_PROJECTIONS = 4;
  *   port?: number,
  *   liveWindowMs?: number,
  *   log?: (message: string) => void,
+ *   toolOrigins?: Record<string, { kind: string, label: string }>,
+ *   piDir?: string,
+ *   agentDir?: string,
  * }} options
  * @returns {Promise<{port:number, host:string, url:string, server:import("node:http").Server, close:() => Promise<void>}>}
  */
@@ -57,6 +61,18 @@ export function createTrajectoryServer(options) {
 	if (scope === "project" && !sessionFile) throw new Error("scope=project 需要 --session <会话文件>");
 	const projectDir = scope === "project" ? dirname(sessionFile) : undefined;
 	const log = options.log ?? (() => {});
+
+	// 工具归属：模式 A 传精确映射（pi sourceInfo）；否则静态扫描安装目录，缓存 5 分钟
+	const ORIGINS_TTL_MS = 5 * 60_000;
+	let originsCache = options.toolOrigins
+		? { generatedAt: new Date().toISOString(), source: "pi", tools: options.toolOrigins }
+		: null;
+
+	function getToolOrigins() {
+		if (originsCache && (originsCache.source === "pi" || Date.now() - Date.parse(originsCache.generatedAt) < ORIGINS_TTL_MS)) return originsCache;
+		originsCache = scanToolOrigins({ piDir: options.piDir, agentDir: options.agentDir });
+		return originsCache;
+	}
 
 	/** 投影缓存 LRU：file -> { id, etag, full, light } */
 	const projections = new Map();
@@ -134,6 +150,11 @@ export function createTrajectoryServer(options) {
 					sessionsRoot,
 					current: defaultSessionId(),
 				});
+				return;
+			}
+
+			if (pathname === "/api/tool-origins") {
+				sendJson(res, 200, getToolOrigins());
 				return;
 			}
 

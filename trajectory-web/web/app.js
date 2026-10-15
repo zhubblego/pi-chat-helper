@@ -25,6 +25,7 @@ import {
 	fmtTokens,
 	formatDurationMillis,
 	groupSessions,
+	groupToolNames,
 	kindGroup,
 	presetFilters,
 	renderMarkdown,
@@ -53,6 +54,9 @@ const state = {
 	menuOpen: false,
 	toolExcluded: new Set(),
 	toolNames: [],
+	toolOrigins: {},
+	toolOriginsAt: 0,
+	toolOriginsLoading: false,
 	submenuOpen: false,
 	folded: new Set(),
 	openId: null,
@@ -310,14 +314,35 @@ function renderFilterMenu() {
 	el("filter-menu").replaceChildren(...nodes);
 }
 
-/** 工具子菜单：全部 + 当前会话出现过的工具名（默认全部勾选；勾选态 = 未排除）。 */
+/** 工具子菜单：全部 + 工具名（按归属分组，空分组不渲染；勾选态 = 未排除）。 */
 function buildToolSubmenu() {
-	const items = [
-		submenuItem("", "全部", state.toolExcluded.size === 0),
-		...state.toolNames.map((name) => submenuItem(name, name, !state.toolExcluded.has(name))),
-	];
+	const itemNodes = [submenuItem("", "全部", state.toolExcluded.size === 0)];
+	for (const group of groupToolNames(state.toolNames, state.toolOrigins)) {
+		itemNodes.push(h("div", { class: "menu-label", role: "presentation", text: group.label }));
+		for (const name of group.names) itemNodes.push(submenuItem(name, name, !state.toolExcluded.has(name)));
+	}
 	// 内层视口承载滚动：卡片本体不设 overflow，保留左侧 10px 命中桥
-	return h("div", { class: "menu submenu", id: "tool-submenu", role: "menu", hidden: true }, h("div", { class: "menu-viewport" }, ...items));
+	return h("div", { class: "menu submenu", id: "tool-submenu", role: "menu", hidden: true }, h("div", { class: "menu-viewport" }, ...itemNodes));
+}
+
+/** 拉取工具归属映射（模式 A 为 pi 精确映射，模式 B 为静态扫描），缓存 5 分钟。 */
+const TOOL_ORIGINS_TTL_MS = 5 * 60_000;
+async function ensureToolOrigins() {
+	if (state.toolOriginsLoading) return;
+	if (state.toolOriginsAt && Date.now() - state.toolOriginsAt < TOOL_ORIGINS_TTL_MS) return;
+	state.toolOriginsLoading = true;
+	try {
+		const res = await fetch("/api/tool-origins");
+		if (res.ok) {
+			const payload = await res.json();
+			state.toolOrigins = payload.tools ?? {};
+			state.toolOriginsAt = Date.now();
+		}
+	} catch {
+		/* 归属不可用时全部落「未识别」 */
+	} finally {
+		state.toolOriginsLoading = false;
+	}
 }
 
 function submenuItem(toolName, label, checked) {
@@ -817,7 +842,12 @@ async function pollSession(force = false) {
 el("filter-btn").addEventListener("click", (e) => {
 	// 只负责打开：菜单靠点外部或 Esc 关闭，方便连续调整多项
 	e.stopPropagation();
-	if (!state.menuOpen) setMenuOpen(true);
+	if (state.menuOpen) return;
+	setMenuOpen(true);
+	// 归属映射过期/缺失时刷新，到货后重建菜单（分组表头随之更新）
+	void ensureToolOrigins().then(() => {
+		if (state.menuOpen) renderFilterMenu();
+	});
 });
 
 el("filter-menu").addEventListener("click", (e) => {
@@ -997,6 +1027,7 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", app
 applyTheme();
 loadPrefs();
 renderToolbar();
+void ensureToolOrigins();
 pollSessions();
 pollSession();
 setInterval(() => {

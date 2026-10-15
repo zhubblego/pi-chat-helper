@@ -13,6 +13,8 @@
  *   --port <n>             默认 7788；0 = 随机端口
  *   --host <addr>          默认 127.0.0.1
  *   --web <dir>            静态资源目录，默认 ../web
+ *   --agent-dir <dir>      pi agent 目录（工具归属静态扫描），默认 ~/.pi/agent
+ *   --pi-dir <dir>         pi 安装目录（扫描内置工具名）
  */
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +30,8 @@ function parseArgs(argv) {
 		port: 7788,
 		host: "127.0.0.1",
 		web: join(HERE, "..", "web"),
+		agentDir: undefined,
+		piDir: undefined,
 	};
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
@@ -50,6 +54,12 @@ function parseArgs(argv) {
 				break;
 			case "--web":
 				out.web = next();
+				break;
+			case "--agent-dir":
+				out.agentDir = next();
+				break;
+			case "--pi-dir":
+				out.piDir = next();
 				break;
 			default:
 				break;
@@ -81,6 +91,8 @@ createTrajectoryServer({
 	webDir: options.web,
 	host: options.host,
 	port: options.port,
+	agentDir: options.agentDir,
+	piDir: options.piDir,
 	log: (message) => process.stderr.write(`${message}\n`),
 })
 	.then((handle) => {

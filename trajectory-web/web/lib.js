@@ -55,6 +55,40 @@ export function eventToolPasses(toolExcluded, event) {
 	return !toolExcluded.has(event.tool?.name);
 }
 
+/** mcp__<server>__<tool> → “MCP: <server>”；非 MCP 工具返回 null。 */
+export function mcpLabel(name) {
+	if (!name.startsWith("mcp__")) return null;
+	const rest = name.slice(5);
+	const index = rest.indexOf("__");
+	return `MCP: ${index > 0 ? rest.slice(0, index) : rest}`;
+}
+
+/**
+ * 工具名按归属分组：只返回**非空**分组，组序为 内置 → MCP → 扩展包 → 未识别。
+ * origins 形如 { [toolName]: { kind: "builtin"|"mcp"|"package", label } }。
+ */
+export function groupToolNames(names, origins = {}) {
+	const groups = new Map();
+	const bucket = (key, label, order) => {
+		if (!groups.has(key)) groups.set(key, { key, label, order, names: [] });
+		return groups.get(key);
+	};
+	for (const name of names ?? []) {
+		const mcp = mcpLabel(name);
+		if (mcp) {
+			bucket(`mcp:${mcp}`, mcp, 1).names.push(name);
+			continue;
+		}
+		const info = origins[name];
+		if (!info) bucket("unknown", "未识别", 3).names.push(name);
+		else if (info.kind === "builtin") bucket("builtin", info.label || "内置", 0).names.push(name);
+		else bucket(`pkg:${info.label}`, info.label, 2).names.push(name);
+	}
+	return [...groups.values()]
+		.sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))
+		.map(({ key, label, names: groupNames }) => ({ key, label, names: groupNames }));
+}
+
 /** 预设：全部 / 仅思考 / 仅工具 / 仅输出 */
 export function presetFilters(name) {
 	switch (name) {

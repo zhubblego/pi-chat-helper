@@ -11,7 +11,7 @@ const check = (label, cond, extra = "") => {
 
 (async () => {
 	const lib = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "lib.js")).href);
-	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, TrajectorySearchIndex, collectToolNames, eventToolPasses } = lib;
+	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel } = lib;
 
 	// ---- 过滤映射 ----
 	check("tool → tools 组", kindGroup("tool") === "tools" && kindGroup("bash") === "tools");
@@ -46,6 +46,17 @@ const check = (label, cond, extra = "") => {
 			eventToolPasses(new Set(["read"]), { kind: "tool", tool: { name: "bash" } }) === true &&
 			eventToolPasses(new Set(["read"]), { kind: "text" }) === true,
 	);
+
+	// ---- 工具归属分组 ----
+	check("mcpLabel 前缀解析", mcpLabel("mcp__docs__search") === "MCP: docs" && mcpLabel("read") === null);
+	const groupedTools = groupToolNames(
+		["mcp__docs__search", "read", "obj_tool", "mystery_tool"],
+		{ read: { kind: "builtin", label: "内置" }, obj_tool: { kind: "package", label: "fake-pkg" } },
+	);
+	check("分组顺序 内置→MCP→扩展→未识别", groupedTools.map((g) => g.label).join(" | ") === "内置 | MCP: docs | fake-pkg | 未识别", groupedTools.map((g) => g.label).join(" | "));
+	check("分组内容", groupedTools[0].names.join(",") === "read" && groupedTools[1].names.join(",") === "mcp__docs__search" && groupedTools[3].names.join(",") === "mystery_tool");
+	const onlyBuiltin = groupToolNames(["read"], { read: { kind: "builtin", label: "内置" } });
+	check("空分组不渲染", onlyBuiltin.length === 1 && onlyBuiltin[0].label === "内置");
 
 	check("标签：文本行统一显示为输出（最终答复仅靠绿色竖条区分）", eventTagLabel({ kind: "text", isFinal: true }) === "输出" && eventTagLabel({ kind: "text" }) === "输出");
 	check("标签：出错工具", eventTagLabel({ kind: "tool", tool: { isError: true } }) === "工具✗");
