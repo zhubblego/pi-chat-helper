@@ -1,8 +1,9 @@
 {
 	"name": "pi-chat-helper",
-	"version": "0.0.0",
-	"private": true,
+	"version": "0.1.0",
 	"description": "pi coding agent 的轨迹观察 web 服务与提问面板扩展",
+	"license": "MIT",
+	"keywords": ["pi", "coding-agent", "extension", "trajectory", "tui"],
 	"scripts": {
 		"dev": "node trajectory-web/server/main.mjs --scope all --port 7788"
 	}
