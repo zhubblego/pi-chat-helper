@@ -13,5 +13,5 @@
 			"@earendil-works/pi-tui": ["node_modules/@earendil-works/pi-tui/dist/index.d.ts"]
 		}
 	},
-	"files": ["question-panel.ts", "trajectory-web/index.ts"]
+	"files": ["index.ts", "question-panel.ts", "trajectory-web/index.ts"]
 }

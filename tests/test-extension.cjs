@@ -39,11 +39,24 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 		if (!process.env.PI_HOME) throw new Error("需要 PI_HOME 环境变量");
 		const { createJiti } = require(path.join(process.env.PI_HOME, "node_modules", "jiti"));
 		const jiti = createJiti(__filename, {
-			alias: { "@earendil-works/pi-coding-agent": path.join(process.env.PI_HOME, "dist", "index.js") },
+			alias: {
+				"@earendil-works/pi-coding-agent": path.join(process.env.PI_HOME, "dist", "index.js"),
+				"@earendil-works/pi-tui": path.join(process.env.PI_HOME, "node_modules", "@earendil-works", "pi-tui", "dist", "index.js"),
+			},
 		});
 		const mod = jiti(path.join(__dirname, "..", "trajectory-web", "index.ts"));
 		mod.default({ registerCommand: (name, def) => (commands[name] = def) });
 		check("注册了 /start 与 /stop", typeof commands.start?.handler === "function" && typeof commands.stop?.handler === "function");
+
+		// ---- 仓库根聚合入口（pi -e . 依赖） ----
+		const aggregateCommands = {};
+		const aggregate = jiti(path.join(__dirname, "..", "index.ts"));
+		aggregate.default({ registerCommand: (name, def) => (aggregateCommands[name] = def) });
+		check(
+			"根 index.ts 聚合注册 /questions /start /stop",
+			["questions", "start", "stop"].every((n) => typeof aggregateCommands[n]?.handler === "function"),
+			Object.keys(aggregateCommands).join(","),
+		);
 
 		const notices = [];
 		const ctxFor = (session) => ({
