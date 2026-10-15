@@ -2,9 +2,15 @@
 
 ## 当前阶段
 
-分支 `feat/trajectory-web`：双启动模式与 deepseek 风格复刻已完成，自动化验证全绿；浏览器视觉/交互与真实 pi 体验待主人确认。
+分支 `feat/trajectory-web`：双启动模式与 deepseek 风格复刻已完成，自动化验证全绿；已按 pi package 标准化并推送 GitHub（main 已同步）；浏览器视觉/交互与真实 pi 体验待主人确认。
 
 ## 已完成（均有自动化验证依据）
+
+### pi package 标准化与发布（2026-10-15）
+
+- `package.json` 对齐 pi package 规范：`pi.extensions` 清单（入口 `./index.ts`）、`pi-package` 关键字（gallery 可发现）、`type: module`、`repository/homepage/bugs`、`engines`、宿主包 `peerDependencies`（`pi-coding-agent`/`pi-tui`，`*` 区间，optional meta）、版本 0.2.0
+- README 重写为标准结构：`pi install git:` 安装 → 快速上手（`/questions`、`/deepseek-trail`、`npm run dev`）→ 两功能详情 → 开发与测试 → License；删除手工 `cp -r` 部署方式
+- 已推送 GitHub `zhubblego/pi-chat-helper`（main 快进至 feat/trajectory-web，两个分支均已上传，推送前核查历史无密钥）
 
 ### trajectory-web 数据与服务端
 
@@ -52,5 +58,7 @@
 - 手动主题切换（当前跟随系统）
 
 ## 最近验证
+
+2026-10-15（晚）：package 标准化——`pi -ne -e . --no-session -p "只回复ok"` 通过新 `pi.extensions` 清单加载两个扩展无报错、模型正常应答；两分支已推 GitHub 并经 `git ls-remote` 核对在线。
 
 2026-10-15：10 套测试全绿（新增 test-tool-origins.cjs：目录/单文件扩展、对象式与帮助函数式注册、scope 包、嵌套跳过、内置兜底与保护、相似度竞争；test-extension 补「精确与扫描合并」「每次请求现取（late_tool）」断言）；`tsc` 零错误；真实会话端到端核验：14 个工具全部归类（内置 bash/read/write/edit、@tintinweb/pi-tasks、context-mode、pi-hermes-memory 含 memory_add/replace/skill_manage、pi-lens），无「未识别」分组；期间两个真因：①「重启未生效」是旧进程占住 7717/7788（旧代码、接口 404）；②模式 A 快照漏掉运行时才注册的 ctx_*（已改为每次请求现取 + 扫描合并）。7788 现为 PID 1144967。

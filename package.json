@@ -1,9 +1,45 @@
 {
 	"name": "pi-chat-helper",
-	"version": "0.1.0",
-	"description": "pi coding agent 的轨迹观察 web 服务与提问面板扩展",
+	"version": "0.2.0",
+	"type": "module",
+	"description": "pi coding agent 扩展包：浏览器会话轨迹回放 + TUI 提问跳转面板（trajectory web viewer + question panel）",
 	"license": "MIT",
-	"keywords": ["pi", "coding-agent", "extension", "trajectory", "tui"],
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/zhubblego/pi-chat-helper.git"
+	},
+	"homepage": "https://github.com/zhubblego/pi-chat-helper#readme",
+	"bugs": {
+		"url": "https://github.com/zhubblego/pi-chat-helper/issues"
+	},
+	"keywords": [
+		"pi-package",
+		"pi-extension",
+		"pi-coding-agent",
+		"trajectory",
+		"session-viewer",
+		"tui"
+	],
+	"engines": {
+		"node": ">=18"
+	},
+	"pi": {
+		"extensions": [
+			"./index.ts"
+		]
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-tui": "*"
+	},
+	"peerDependenciesMeta": {
+		"@earendil-works/pi-coding-agent": {
+			"optional": true
+		},
+		"@earendil-works/pi-tui": {
+			"optional": true
+		}
+	},
 	"scripts": {
 		"dev": "node trajectory-web/server/main.mjs --scope all --port 7788"
 	}
