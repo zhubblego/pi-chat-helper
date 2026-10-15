@@ -2,26 +2,37 @@
 
 ## 当前阶段
 
-question-panel v1 功能完成，源码已入库；真实终端下的交互验证待主人确认。
+分支 `feat/trajectory-web`：轨迹观察 web 服务已实现，自动化验证全绿；浏览器人工验证与部署待主人确认。
 
-## 已完成（均已通过无头验证）
+## 已完成（均有自动化验证依据）
 
-- 提问列表面板：`/questions` 开关，停靠右上角，宽度可调（列数/百分比，会话内记忆）
-- 单击/回车跳转 transcript 到对应提问（OSC 133 标记序号推算 + ScrollView.scrollTo 特征检测，失败降级提示）
-- 回合分析视图：双击/`d` 进入，思考→工具→输出节点树，详情区跟随选中节点，工具节点展示参数与结果，输出节点 Markdown 渲染，`t` 键仅思维链
-- 测试四套全绿：单元（收集/序号推算）、渲染断言、回合分析、无头真渲染跳转链路；tsc 严格模式零错误
+### trajectory-web（轨迹观察 web 服务）
 
-## 待确认
+- 数据投影层 `trajectory-web/server/session.mjs`：会话 JSONL → 活动分支（parentId 回溯）→ 按提问两级分组 → 事件链（提问/思维/工具+结果/bash/系统上下文/压缩/分支/模型/思考等级/用量/上下文编辑/自定义），工具调用与结果配对、回合末 text 标 isFinal、分组与全局统计（tokens/cost/耗时/工具/错误）、light（截断）/full 两档与按 id 查详情
+- HTTP 服务 `trajectory-web/server/main.mjs`：零依赖；静态页 + `/api/session`（mtime+size etag 增量）+ `/api/event`（full 详情）+ `/api/health`；监听后写 state 文件，SIGTERM 清理；仅回环地址、只读会话
+- Web UI `trajectory-web/web/`：左侧问题栏（可折叠过滤按钮组：提问/思考/工具/输出/上下文 + 预设「全部/仅思考/仅工具/仅输出」，状态持久化）+ 右侧整页轨迹（问题 sticky 分段、条目行、错误/输出高亮）+ 详情抽屉（Markdown、工具参数/结果、tokens/耗时/模型）；2s 轮询增量，滚动位置与过滤状态保持；DOM 构建不走 innerHTML，Markdown 先转义再生成自有标签
+- pi 扩展 `trajectory-web/index.ts`：`/start [端口]`（默认 7717，独立 detached 后台进程，幂等、跨会话检测、健康等待）与 `/stop`（`/proc/<pid>/cmdline` 归属校验后 SIGTERM→SIGKILL，清理 state）
+- 测试：`tests/test-projection.cjs`、`tests/test-server.cjs`、`tests/test-web-lib.cjs`、`tests/test-extension.cjs` 四套全绿；`tsc -p tsconfig.json` 严格模式零错误；question-panel 旧四套回归全绿
 
-- 真实终端（fullscreen TUI）下的鼠标点击、双击、滚轮、跳转定位、Markdown 详情展示，需主人新开会话手动验证
-- 若跳转差一条（如纯思考型回复的标记规则偏差），反馈现象后校准 `markerOrdinalForQuestion` 的 assistant 判定
+### question-panel（main 分支，本分支仅保留源码）
+
+- `/questions` 面板：提问列表、跳转、回合分析视图（思考→工具→输出）
+- tests/ 四套无头测试全绿
+
+## 待确认（未验证，不能算完成）
+
+- 浏览器实际渲染与交互：两级分组视觉、过滤按钮组、详情抽屉 Markdown、sticky 段头、暗色模式——本环境无浏览器，需主人打开页面确认
+- 部署链路：`cp -r trajectory-web ~/.pi/agent/extensions/` 后新开 pi 会话执行 `/start` 的真实体验；WSL2 下 Windows 浏览器访问 `http://127.0.0.1:7717`
+- 行为约定：compaction（压缩）目前挂在上一回合尾部显示，如希望改为下一回合开头（"进入本回合前的压缩"）需明确
 
 ## 待办（候选，按需）
 
-- 回合分析全屏模式（非 overlay，详情区更大）
-- 列表关键字过滤（`/` 进入过滤输入）
-- 多会话支持（当前仅列出本会话提问）
+- 轨迹页时间概览条（按条目时间/耗时投影；pi 数据无 TTFT，只能近似）
+- 会话列表与多会话切换（当前服务只观察启动它的那个会话）
+- 长会话虚拟滚动、条目搜索、问题级折叠
+- 请求级上下文快照（每次 LLM 调用实际看到的完整消息列表）
+- 严格主从布局（左问题、右只显示选中问题的轨迹）
 
 ## 最近验证
 
-2025-10-08：tsc 零错误；tests/ 四套件全过（node 直跑，PI_HOME 指向本机 pi 安装）。
+2026-10-15：`node tests/test-projection.cjs`、`node tests/test-server.cjs`、`node tests/test-web-lib.cjs` 全绿；`PI_HOME=... node tests/test-extension.cjs` 全绿（真实 spawn 后台服务并停止）；旧四套 question-panel 测试全绿；`tsc -p tsconfig.json` 零错误。

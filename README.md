@@ -1,6 +1,36 @@
 # pi-chat-helper
 
-pi coding agent 的个人扩展集合。当前包含 `question-panel.ts`（提问列表面板）。
+pi coding agent 的个人扩展集合。
+
+- `trajectory-web/` — **轨迹观察 web 服务**（本分支）：把会话按「问题 → 轨迹条目」两级分组，在浏览器里观察完整上下文。
+- `question-panel.ts` — TUI 提问列表面板（`/questions`，main 分支功能）。
+
+## trajectory-web（轨迹观察 web 服务）
+
+浏览器里看一整页会话轨迹：一级是提问（问题 1、问题 2 …，同级分组），二级是该回合内的事件链（提问原文、思维链、工具调用与结果、输出文本、系统提示/压缩/模型切换等上下文事件）。左侧问题栏带一组可折叠的过滤按钮（提问/思考/工具/输出/上下文，含「仅思考」等预设），点条目在右侧抽屉看完整内容（Markdown 渲染、工具参数/结果、tokens 与耗时）。
+
+```text
+/start            # 启动服务（默认 127.0.0.1:7717），浏览器打开提示的 URL
+/start 8899       # 指定端口
+/stop             # 停止服务并清理运行时状态
+```
+
+- **独立后台进程**：服务 detached 起在 pi 之外，pi 退出、`/new`、重开会话都不影响页面；只读会话 JSONL，不写回、不改上下文。
+- **增量刷新**：页面每 2s 轮询，会话在终端里继续推进时轨迹自动更新；重字段在列表里截断，点开详情时按需拉全文。
+- **幂等与安全**：重复 `/start` 只提示当前 URL；服务在观察别的会话时提示先 `/stop`；终止前用 `/proc/<pid>/cmdline` 核实进程归属，避免 pid 复用误杀。
+- 运行时状态在 `~/.pi/agent/trajectory-web/`（state.json、server.log）。
+
+### 部署与开发
+
+源码主本在本仓库；目录即扩展（入口 `trajectory-web/index.ts`）：
+
+```bash
+# 部署（新开会话生效）
+cp -r trajectory-web ~/.pi/agent/extensions/
+
+# 开发时直接加载
+pi --extension ./trajectory-web/index.ts
+```
 
 ## question-panel
 
@@ -11,39 +41,31 @@ pi coding agent 的个人扩展集合。当前包含 `question-panel.ts`（提�
 - 宽度：`/questions 50`（列数）或 `/questions 60%`（百分比），会话内记忆
 - 键盘备用路径：↑↓ 选择、回车跳转、q/Esc 关闭
 
-## 部署与开发
-
-生效位置在 pi 用户扩展目录；本仓库是源码主本：
-
 ```bash
-# 改动后部署（新开会话生效）
 cp question-panel.ts ~/.pi/agent/extensions/
-
-# 开发时直接加载指定文件
-pi --extension ./question-panel.ts
 ```
 
 ## 测试
 
-无需 pi 运行时，全部无头执行：
-
 ```bash
 PI_HOME=/home/bbz/.nvm/versions/node/v22.19.0/lib/node_modules/@earendil-works/pi-coding-agent
 
-# 单元：提问收集 / 标记序号推算
+# trajectory-web（纯 node，不需要 PI_HOME）
+node tests/test-projection.cjs   # 投影：分组/工具配对/统计/分支重建/light 截断
+node tests/test-server.cjs       # HTTP：健康/增量轮询/静态资源/详情/热更新/SIGTERM
+node tests/test-web-lib.cjs      # 前端纯函数：过滤映射/Markdown 转义与渲染
+
+# trajectory-web 扩展命令（需要 PI_HOME 提供 jiti；临时 HOME 隔离状态）
+PI_HOME=$PI_HOME node tests/test-extension.cjs
+
+# question-panel（无头，需要 PI_HOME）
 node tests/test-question-panel.cjs
-
-# 面板渲染断言（边框/宽度/命中区域）
 node tests/test-render.cjs
-
-# 回合分析：buildTurn 数据 + 回合视图交互
 node tests/test-turn.cjs
-
-# 无头真渲染：假终端跑 TuiAltScreen，验证 transcript 定位与跳转
 node tests/test-headless-tui.cjs
 
-# 类型检查（需 tsconfig，tsc 在 typescript 包里）
-npx tsc -p tsconfig.json
+# 类型检查
+node ~/.npm/_npx/483d2954a4c5190c/node_modules/typescript/bin/tsc -p tsconfig.json
 ```
 
 环境变量 `PI_HOME` 指向本机 pi 安装目录（含 jiti 与 pi-tui）。

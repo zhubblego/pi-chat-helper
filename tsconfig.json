@@ -7,10 +7,11 @@
 		"noEmit": true,
 		"skipLibCheck": true,
 		"baseUrl": "/home/bbz/.nvm/versions/node/v22.19.0/lib/node_modules/@earendil-works/pi-coding-agent",
+		"typeRoots": ["/home/bbz/.nvm/versions/node/v22.19.0/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@types"],
 		"paths": {
 			"@earendil-works/pi-coding-agent": ["dist/index.d.ts"],
 			"@earendil-works/pi-tui": ["node_modules/@earendil-works/pi-tui/dist/index.d.ts"]
 		}
 	},
-	"files": ["question-panel.ts"]
+	"files": ["question-panel.ts", "trajectory-web/index.ts"]
 }

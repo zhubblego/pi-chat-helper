@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>轨迹观察 · pi-chat-helper</title>
+	<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+	<header id="topbar">
+		<div class="brand">
+			<span id="sync-dot" class="dot"></span>
+			<span class="brand-name">轨迹观察</span>
+		</div>
+		<div id="session-meta" class="session-meta">加载中…</div>
+		<div class="topbar-right">
+			<span id="sync" class="sync">—</span>
+			<button id="refresh" class="btn" title="立即刷新">刷新</button>
+		</div>
+	</header>
+	<div id="layout">
+		<aside id="sidebar">
+			<div id="filter-panel" class="filter-panel">
+				<button id="filter-head" class="filter-head" aria-expanded="true">
+					<span>过滤</span>
+					<span id="filter-chev" class="chev">▾</span>
+				</button>
+				<div id="filter-body" class="filter-body">
+					<div id="presets" class="preset-row">
+						<button class="preset" data-preset="all">全部</button>
+						<button class="preset" data-preset="thinking">仅思考</button>
+						<button class="preset" data-preset="tools">仅工具</button>
+						<button class="preset" data-preset="text">仅输出</button>
+					</div>
+					<div id="chips" class="chip-row"></div>
+				</div>
+			</div>
+			<nav id="question-list" class="question-list" aria-label="提问列表"></nav>
+		</aside>
+		<main id="main">
+			<div id="main-inner" class="main-inner"></div>
+		</main>
+	</div>
+	<aside id="drawer" class="drawer" hidden>
+		<header class="drawer-head">
+			<span id="dv-kind" class="dv-kind"></span>
+			<span id="dv-title" class="dv-title"></span>
+			<button id="drawer-close" class="btn icon" title="关闭（Esc）">✕</button>
+		</header>
+		<div id="dv-meta" class="dv-meta"></div>
+		<div id="dv-body" class="dv-body"></div>
+	</aside>
+	<script type="module" src="/app.js"></script>
+</body>
+</html>

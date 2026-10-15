@@ -2,3 +2,6 @@ node_modules/
 *.log
 .env*
 .DS_Store
+
+# pi 运行期任务状态（非项目配置，config 目录 .pi/ 其余内容可入库）
+.pi/tasks/
