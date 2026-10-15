@@ -374,7 +374,7 @@ function renderMain() {
 	mainInner.replaceChildren(
 		...questions.map((q) => {
 			const shown = (q.events ?? []).filter((ev) => eventPasses(state.filters, ev.kind) && (!matches || matches.has(ev.id)));
-			const body = shown.length ? shown.map(renderEvent) : muted("（当前过滤下无条目）");
+			const body = shown.length ? shown.map(renderEvent) : h("div", { class: "ev-empty" });
 			const folded = state.folded.has(q.index);
 			return h(
 				"section",
@@ -834,9 +834,11 @@ el("drawer-close").addEventListener("click", closeDrawer);
 document.addEventListener("keydown", (e) => {
 	if (e.key === "Escape") closeDrawer();
 });
-el("refresh").addEventListener("click", () => {
-	pollSessions(true);
-	pollSession(true);
+// 回到前台立即同步一次（标签页隐藏期间轮询暂停；走 etag 增量，未变则开销极小）
+document.addEventListener("visibilitychange", () => {
+	if (document.hidden) return;
+	pollSessions();
+	pollSession();
 });
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
 
