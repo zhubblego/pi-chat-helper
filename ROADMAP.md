@@ -21,7 +21,7 @@
 
 ## 待确认（未验证，不能算完成）
 
-- 浏览器实际渲染与交互：两级分组视觉、过滤按钮组、详情抽屉 Markdown、sticky 段头、暗色模式——本环境无浏览器，需主人打开页面确认
+- 浏览器实际渲染与交互：两级分组视觉、过滤按钮组、详情抽屉 Markdown、sticky 段头、暗色模式——本环境无浏览器，需主人打开页面确认（抽屉卡死已修，见下）
 - 部署链路：`cp -r trajectory-web ~/.pi/agent/extensions/` 后新开 pi 会话执行 `/deepseek-trail start` 的真实体验；WSL2 下 Windows 浏览器访问 `http://127.0.0.1:7717`
 - 行为约定：compaction（压缩）目前挂在上一回合尾部显示，如希望改为下一回合开头（"进入本回合前的压缩"）需明确
 
@@ -35,4 +35,4 @@
 
 ## 最近验证
 
-2026-10-15：`node tests/test-projection.cjs`、`node tests/test-server.cjs`、`node tests/test-web-lib.cjs` 全绿；`PI_HOME=... node tests/test-extension.cjs` 全绿（真实 spawn 后台服务并停止）；旧四套 question-panel 测试全绿；`tsc -p tsconfig.json` 零错误。
+2026-10-15：抽屉 Markdown 桥接 `importNode` 死循环（点击提问/思考/输出等条目冻死页面）已修为直接 `appendChild`；`test-web-lib.cjs` 增加两条源码级回归守卫；扩展集成测试改随机空闲端口，不再与运行中的 7717 服务撞车；四套测试全绿；`tsc -p tsconfig.json` 零错误；已确认运行中服务端出的 app.js 无 `importNode`。

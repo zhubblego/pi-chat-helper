@@ -4,7 +4,8 @@
  *
  * DOM 全部用 createElement/textContent 构建，不使用 innerHTML；
  * Markdown 由 lib.renderMarkdown 生成（先整体转义再产出自有标签），经 DOMParser
- * 解析成惰性文档后 importNode 进来——两条路径都不引入用户数据作为 HTML 源。
+ * 解析成惰性文档后逐个移入 wrapper（appendChild 会自动收养并摘除源节点，
+ * 不能用 importNode——它是克隆，源 firstChild 不消失，while 会死循环）。
  */
 import {
 	GROUP_LABELS,
@@ -78,7 +79,8 @@ function preNode(text, extraClass = "") {
 function mdNode(text) {
 	const wrapper = h("div", { class: "md" });
 	const doc = new DOMParser().parseFromString(renderMarkdown(text), "text/html");
-	while (doc.body.firstChild) wrapper.appendChild(document.importNode(doc.body.firstChild, true));
+	// appendChild 会自动收养节点并从 doc.body 摘除，循环必然收敛
+	while (doc.body.firstChild) wrapper.appendChild(doc.body.firstChild);
 	return wrapper;
 }
 

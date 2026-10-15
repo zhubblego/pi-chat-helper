@@ -1,4 +1,5 @@
 // 前端纯函数层：过滤映射 / 预设 / 格式化 / Markdown 转义与渲染
+const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 
@@ -49,6 +50,13 @@ const check = (label, cond, extra = "") => {
 	check("引用", md.includes("<blockquote>") && md.includes("引用"));
 	const codeOnly = renderMarkdown("```\n<b>raw</b>\n```");
 	check("代码块内容也转义", !codeOnly.includes("<b>raw</b>") && codeOnly.includes("&lt;b&gt;raw&lt;/b&gt;"));
+
+	// ---- 回归守卫：抽屉的 Markdown 桥接 ----
+	// document.importNode 只做克隆，不把节点从源文档摘除；在 while (doc.body.firstChild)
+	// 里用它条件永远成立，死循环冻结页面（2026-10-15 实测事故）。必须直接 appendChild。
+	const appSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "web", "app.js"), "utf8");
+	check("app.js 不再使用 importNode（克隆不移除源节点，会死循环）", !appSource.includes("importNode("));
+	check("mdNode 直接移入节点保证循环收敛", /wrapper\.appendChild\(\s*doc\.body\.firstChild\s*\)/.test(appSource));
 
 	console.log(failed === 0 ? "\nALL PASS" : `\n${failed} FAILED`);
 	process.exit(failed === 0 ? 0 : 1);

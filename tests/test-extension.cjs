@@ -1,6 +1,7 @@
 // pi 扩展 /deepseek-trail start|stop：真实 spawn 后台服务、幂等、跨会话检测、停止清理
 // 依赖 PI_HOME 指向本机 pi 安装目录（提供 jiti）
 const fs = require("node:fs");
+const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 
@@ -30,7 +31,17 @@ fs.writeFileSync(sessionFile, fixture("a"));
 fs.writeFileSync(sessionFileB, fixture("b"));
 
 const STATE_FILE = path.join(tmpHome, ".pi", "agent", "trajectory-web", "state.json");
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// 取一个空闲端口，避免与本机正在运行的轨迹服务（默认 7717）撞车
+function freePort() {
+	return new Promise((resolve, reject) => {
+		const srv = net.createServer();
+		srv.once("error", reject);
+		srv.listen(0, "127.0.0.1", () => {
+			const port = srv.address().port;
+			srv.close(() => resolve(port));
+		});
+	});
+}
 
 (async () => {
 	let commands = {};
@@ -76,16 +87,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 		check("未知子命令提示用法", lastNotice().type === "warning" && /未知子命令/.test(lastNotice().message), lastNotice().message);
 
 		// ---- start ----
-		await trail.handler("start", ctxFor(sessionFile));
+		const port = await freePort();
+		await trail.handler(`start ${port}`, ctxFor(sessionFile));
 		const state = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
 		pid = state.pid;
 		check("start 提示 URL", /已启动：http:\/\/127\.0\.0\.1:\d+\//.test(lastNotice().message), lastNotice().message);
-		check("state 指向当前会话", state.session === sessionFile && state.port > 0);
+		check("state 指向当前会话", state.session === sessionFile && state.port === port);
 		const health = await (await fetch(`http://127.0.0.1:${state.port}/api/health`)).json();
 		check("服务真实可访问", health.ok === true && health.pid === state.pid);
 
 		// ---- 幂等 ----
-		await trail.handler("start", ctxFor(sessionFile));
+		await trail.handler(`start ${port}`, ctxFor(sessionFile));
 		check("重复 start 只提示已在运行", /已在运行/.test(lastNotice().message), lastNotice().message);
 		const state2 = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
 		check("重复 start 不新起进程", state2.pid === state.pid);
@@ -95,7 +107,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 		check("非法端口被拒", lastNotice().type === "warning" && /端口非法/.test(lastNotice().message));
 
 		// ---- 另一会话 ----
-		await trail.handler("start", ctxFor(sessionFileB));
+		await trail.handler(`start ${port}`, ctxFor(sessionFileB));
 		check("观察其它会话时给出提示", lastNotice().type === "warning" && /另一个会话/.test(lastNotice().message), lastNotice().message);
 
 		// ---- stop ----
