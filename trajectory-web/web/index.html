@@ -4,6 +4,7 @@
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title>轨迹观察 · pi-chat-helper</title>
+	<link rel="stylesheet" href="/tokens.css">
 	<link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -14,13 +15,21 @@
 		</div>
 		<div id="session-meta" class="session-meta">加载中…</div>
 		<div class="topbar-right">
+			<span id="scope-badge" class="scope-badge"></span>
 			<span id="sync" class="sync">—</span>
 			<button id="refresh" class="btn" title="立即刷新">刷新</button>
 		</div>
 	</header>
 	<div id="layout">
 		<aside id="sidebar">
-			<div id="filter-panel" class="filter-panel">
+			<section id="session-section" class="sidebar-block session-section">
+				<div class="section-head">
+					<span class="section-title">会话</span>
+					<span id="session-count" class="section-count"></span>
+				</div>
+				<div id="session-list" class="session-list" aria-label="会话列表"></div>
+			</section>
+			<div id="filter-panel" class="filter-panel sidebar-block">
 				<button id="filter-head" class="filter-head" aria-expanded="true">
 					<span>过滤</span>
 					<span id="filter-chev" class="chev">▾</span>

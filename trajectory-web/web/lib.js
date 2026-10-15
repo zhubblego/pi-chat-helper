@@ -122,6 +122,52 @@ export function esc(s) {
 }
 
 // ---------------------------------------------------------------------------
+// 会话列表（会话侧边栏）
+// ---------------------------------------------------------------------------
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+
+/** 相对时间：刚刚 / N 分钟前 / N 小时前 / N 天前 / 日期。 */
+export function fmtRelative(ts, now = Date.now()) {
+	if (typeof ts !== "number" || !Number.isFinite(ts)) return "";
+	const diff = now - ts;
+	if (diff < 45_000) return "刚刚";
+	if (diff < HOUR) return `${Math.max(1, Math.round(diff / MINUTE))} 分钟前`;
+	if (diff < DAY) return `${Math.round(diff / HOUR)} 小时前`;
+	if (diff < 7 * DAY) return `${Math.round(diff / DAY)} 天前`;
+	const d = new Date(ts);
+	return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+}
+
+/** 会话文件大小。 */
+export function fmtBytes(n) {
+	if (!Number.isFinite(n) || n <= 0) return "";
+	if (n < 1024) return `${n}B`;
+	if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)}KB`;
+	return `${(n / 1024 / 1024).toFixed(1)}MB`;
+}
+
+/** 项目显示名：路径末段；无 cwd 的旧会话返回占位。 */
+export function projectLabel(path) {
+	if (!path) return "(未知项目)";
+	const s = String(path).replace(/\/+$/, "");
+	return s.slice(s.lastIndexOf("/") + 1) || s;
+}
+
+/** 按项目分组（all 范围用）。列表本身按最近活跃倒序，分组保持该顺序。 */
+export function groupSessions(sessions) {
+	const groups = new Map();
+	for (const s of sessions) {
+		const key = s.projectPath || s.projectDir || "";
+		if (!groups.has(key)) groups.set(key, { key, label: projectLabel(key), sessions: [] });
+		groups.get(key).sessions.push(s);
+	}
+	return [...groups.values()];
+}
+
+// ---------------------------------------------------------------------------
 // 极简 Markdown：标题/代码块/行内代码/粗斜/删除线/链接/引用/列表/分隔线/段落
 // ---------------------------------------------------------------------------
 

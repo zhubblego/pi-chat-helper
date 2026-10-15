@@ -1,5 +1,5 @@
-// pi 扩展 /deepseek-trail start|stop：真实 spawn 后台服务、幂等、跨会话检测、停止清理
-// 依赖 PI_HOME 指向本机 pi 安装目录（提供 jiti）
+// pi 扩展 /deepseek-trail start|stop（模式 A：进程内服务，绑定 pi 实例）
+// 覆盖：注册与补全 / 项目范围 / 幂等 / 端口降级 / 换会话存活 / quit 关闭 / 停服
 const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
@@ -11,27 +11,17 @@ const check = (label, cond, extra = "") => {
 	if (!cond) failed++;
 };
 
-const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "tw-ext-"));
-process.env.HOME = tmpHome; // 隔离运行时状态目录（os.homedir() 优先读 $HOME）
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tw-ext-"));
+const sessionFile = path.join(tmp, "2026-01-01T00-00-00-000Z_ext-1.jsonl");
+const line = (o) => JSON.stringify(o);
+fs.writeFileSync(
+	sessionFile,
+	[
+		line({ type: "session", version: 3, id: "ext-1", timestamp: "2026-01-01T00:00:00.000Z", cwd: tmp }),
+		line({ type: "message", id: "u1", parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: "测试", timestamp: 1000 } }),
+	].join("\n") + "\n",
+);
 
-const sessionFile = path.join(tmpHome, "session-a.jsonl");
-const sessionFileB = path.join(tmpHome, "session-b.jsonl");
-const fixture = (id) =>
-	JSON.stringify({ type: "session", version: 3, id, timestamp: "2026-01-01T00:00:00.000Z", cwd: tmpHome }) +
-	"\n" +
-	JSON.stringify({
-		type: "message",
-		id: "u1",
-		parentId: null,
-		timestamp: "2026-01-01T00:00:01.000Z",
-		message: { role: "user", content: "测试", timestamp: 1000 },
-	}) +
-	"\n";
-fs.writeFileSync(sessionFile, fixture("a"));
-fs.writeFileSync(sessionFileB, fixture("b"));
-
-const STATE_FILE = path.join(tmpHome, ".pi", "agent", "trajectory-web", "state.json");
-// 取一个空闲端口，避免与本机正在运行的轨迹服务（默认 7717）撞车
 function freePort() {
 	return new Promise((resolve, reject) => {
 		const srv = net.createServer();
@@ -44,8 +34,7 @@ function freePort() {
 }
 
 (async () => {
-	let commands = {};
-	let pid = null;
+	let trail = null;
 	try {
 		if (!process.env.PI_HOME) throw new Error("需要 PI_HOME 环境变量");
 		const { createJiti } = require(path.join(process.env.PI_HOME, "node_modules", "jiti"));
@@ -55,17 +44,27 @@ function freePort() {
 				"@earendil-works/pi-tui": path.join(process.env.PI_HOME, "node_modules", "@earendil-works", "pi-tui", "dist", "index.js"),
 			},
 		});
+
+		const commands = {};
+		const shutdownHandlers = [];
 		const mod = jiti(path.join(__dirname, "..", "trajectory-web", "index.ts"));
-		mod.default({ registerCommand: (name, def) => (commands[name] = def) });
-		const trail = commands["deepseek-trail"];
+		mod.default({
+			registerCommand: (name, def) => (commands[name] = def),
+			on: (event, handler) => {
+				if (event === "session_shutdown") shutdownHandlers.push(handler);
+				return () => {};
+			},
+		});
+		trail = commands["deepseek-trail"];
 		check("注册单一命令 /deepseek-trail", typeof trail?.handler === "function" && typeof trail?.getArgumentCompletions === "function");
 		check("不再注册裸 /start 与 /stop", !commands.start && !commands.stop);
 		check("子命令补全 start/stop", trail.getArgumentCompletions("")?.map((c) => c.value).join(",") === "start,stop");
+		check("注册了 session_shutdown 处理", shutdownHandlers.length > 0);
 
 		// ---- 仓库根聚合入口（pi -e . 依赖） ----
 		const aggregateCommands = {};
 		const aggregate = jiti(path.join(__dirname, "..", "index.ts"));
-		aggregate.default({ registerCommand: (name, def) => (aggregateCommands[name] = def) });
+		aggregate.default({ registerCommand: (name, def) => (aggregateCommands[name] = def), on: () => () => {} });
 		check(
 			"根 index.ts 聚合注册 /questions 与 /deepseek-trail",
 			["questions", "deepseek-trail"].every((n) => typeof aggregateCommands[n]?.handler === "function"),
@@ -73,76 +72,90 @@ function freePort() {
 		);
 
 		const notices = [];
-		const ctxFor = (session) => ({
+		const ctx = {
 			hasUI: true,
 			ui: { notify: (message, type) => notices.push({ message, type }) },
-			sessionManager: { getSessionFile: () => session },
-		});
+			sessionManager: { getSessionFile: () => sessionFile },
+		};
 		const lastNotice = () => notices[notices.length - 1];
 
-		// ---- 子命令解析 ----
-		await trail.handler("", ctxFor(sessionFile));
+		// ---- 用法 ----
+		await trail.handler("", ctx);
 		check("空参数提示用法", lastNotice().type === "info" && /用法：\/deepseek-trail start/.test(lastNotice().message), lastNotice().message);
-		await trail.handler("bogus", ctxFor(sessionFile));
+		await trail.handler("bogus", ctx);
 		check("未知子命令提示用法", lastNotice().type === "warning" && /未知子命令/.test(lastNotice().message), lastNotice().message);
 
-		// ---- start ----
+		// ---- 启动（进程内，项目范围） ----
 		const port = await freePort();
-		await trail.handler(`start ${port}`, ctxFor(sessionFile));
-		const state = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
-		pid = state.pid;
-		check("start 提示 URL", /已启动：http:\/\/127\.0\.0\.1:\d+\//.test(lastNotice().message), lastNotice().message);
-		check("state 指向当前会话", state.session === sessionFile && state.port === port);
-		const health = await (await fetch(`http://127.0.0.1:${state.port}/api/health`)).json();
-		check("服务真实可访问", health.ok === true && health.pid === state.pid);
+		await trail.handler(`start ${port}`, ctx);
+		const m = /http:\/\/127\.0\.0\.1:(\d+)\//.exec(lastNotice().message);
+		check("start 提示 URL", !!m && Number(m[1]) === port, lastNotice().message);
+		const url = m?.[0] ?? null;
+		const health = await (await fetch(`${url}api/health`)).json();
+		check("服务真实可访问且为项目范围", health.ok === true && health.scope === "project");
+		const listing = await (await fetch(`${url}api/sessions`)).json();
+		check("会话列表只含本项目", listing.sessions.length === 1 && listing.sessions[0].id === "ext-1", JSON.stringify(listing.sessions.map((s) => s.id)));
+		const def = await (await fetch(`${url}api/session`)).json();
+		check("默认会话 = 当前 pi 会话", def.sessionId === "ext-1", String(def.sessionId));
 
 		// ---- 幂等 ----
-		await trail.handler(`start ${port}`, ctxFor(sessionFile));
-		check("重复 start 只提示已在运行", /已在运行/.test(lastNotice().message), lastNotice().message);
-		const state2 = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
-		check("重复 start 不新起进程", state2.pid === state.pid);
+		await trail.handler(`start ${port}`, ctx);
+		check("重复 start 只提示已在运行", /已在运行/.test(lastNotice().message) && lastNotice().message.includes(url), lastNotice().message);
+
+		// ---- 停止 ----
+		await trail.handler("stop", ctx);
+		check("stop 提示已停止", /已停止/.test(lastNotice().message), lastNotice().message);
+		let stopped = false;
+		try {
+			await fetch(`${url}api/health`, { signal: AbortSignal.timeout(800) });
+		} catch {
+			stopped = true;
+		}
+		check("stop 后端口关闭", stopped);
+
+		// ---- 端口被占用时降级 ----
+		const busy = await new Promise((resolve, reject) => {
+			const srv = net.createServer();
+			srv.once("error", reject);
+			srv.listen(0, "127.0.0.1", () => resolve(srv));
+		});
+		const busyPort = busy.address().port;
+		await trail.handler(`start ${busyPort}`, ctx);
+		const m2 = /http:\/\/127\.0\.0\.1:(\d+)\//.exec(lastNotice().message);
+		check("端口占用时降级并提示", !!m2 && Number(m2[1]) !== busyPort && /被占用/.test(lastNotice().message), lastNotice().message);
+		const url2 = m2?.[0] ?? null;
+		await new Promise((r) => busy.close(r));
+
+		// ---- 换会话（new/resume/fork）不停服务；quit 停 ----
+		for (const handler of shutdownHandlers) await handler({ type: "session_shutdown", reason: "new" });
+		check("换会话（new）后服务仍在", (await (await fetch(`${url2}api/health`)).json()).ok === true);
 
 		// ---- 非法端口 ----
-		await trail.handler("start 22", ctxFor(sessionFile));
+		await trail.handler("start 22", ctx);
 		check("非法端口被拒", lastNotice().type === "warning" && /端口非法/.test(lastNotice().message));
 
-		// ---- 另一会话 ----
-		await trail.handler(`start ${port}`, ctxFor(sessionFileB));
-		check("观察其它会话时给出提示", lastNotice().type === "warning" && /另一个会话/.test(lastNotice().message), lastNotice().message);
-
-		// ---- stop ----
-		await trail.handler("stop", ctxFor(sessionFile));
-		check("stop 提示已停止", /已停止/.test(lastNotice().message), lastNotice().message);
-		check("state 文件被清理", !fs.existsSync(STATE_FILE));
-		let alive = true;
+		for (const handler of shutdownHandlers) await handler({ type: "session_shutdown", reason: "quit" });
+		let closed = false;
 		try {
-			process.kill(pid, 0);
+			await fetch(`${url2}api/health`, { signal: AbortSignal.timeout(800) });
 		} catch {
-			alive = false;
+			closed = true;
 		}
-		check("服务进程已退出", !alive);
-		pid = null;
+		check("quit 后服务关闭", closed);
 
-		// ---- 重复 stop ----
-		await trail.handler("stop", ctxFor(sessionFile));
+		await trail.handler("stop", ctx);
 		check("重复 stop 提示未在运行", /未在运行/.test(lastNotice().message), lastNotice().message);
-
-		// ---- stop 清理已死进程的残留状态 ----
-		fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-		fs.writeFileSync(STATE_FILE, JSON.stringify({ pid: 999999, port: 1, host: "127.0.0.1", session: sessionFile, startedAt: "", url: "" }));
-		await trail.handler("stop", ctxFor(sessionFile));
-		check("残留状态被清理", !fs.existsSync(STATE_FILE) && /已清理残留状态文件/.test(lastNotice().message), lastNotice().message);
 	} catch (err) {
 		check("测试执行", false, err.stack);
 	} finally {
-		if (pid) {
+		if (trail) {
 			try {
-				process.kill(pid, "SIGKILL");
+				await trail.handler("stop", { hasUI: true, ui: { notify: () => {} }, sessionManager: { getSessionFile: () => sessionFile } });
 			} catch {
-				/* 已退出 */
+				/* 已停止 */
 			}
 		}
-		fs.rmSync(tmpHome, { recursive: true, force: true });
+		fs.rmSync(tmp, { recursive: true, force: true });
 		console.log(failed === 0 ? "\nALL PASS" : `\n${failed} FAILED`);
 		process.exit(failed === 0 ? 0 : 1);
 	}

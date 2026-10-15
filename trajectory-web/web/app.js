@@ -1,21 +1,27 @@
 /**
- * app.js — 轨迹观察页：左侧问题栏（过滤按钮组 + 问题导航），右侧整页轨迹（按问题分段）。
- * 数据来自本地服务 /api/session（light，2s 轮询增量）；条目详情按需拉 /api/event（full）。
+ * app.js — 轨迹观察页：左侧会话栏 + 问题栏（含过滤按钮组），右侧整页轨迹（按问题分段）。
+ *
+ * 数据：
+ *   - /api/sessions  会话列表（mode A 本项目；mode B 全部项目，按项目分组）
+ *   - /api/session   选中会话的 light 投影（2s 轮询 + etag 增量）
+ *   - /api/event     条目详情（full，按需拉取）
  *
  * DOM 全部用 createElement/textContent 构建，不使用 innerHTML；
  * Markdown 由 lib.renderMarkdown 生成（先整体转义再产出自有标签），经 DOMParser
- * 解析成惰性文档后逐个移入 wrapper（appendChild 会自动收养并摘除源节点，
- * 不能用 importNode——它是克隆，源 firstChild 不消失，while 会死循环）。
+ * 解析后逐个移入 wrapper（appendChild 自动收养并摘除源节点，循环必然收敛）。
  */
 import {
 	GROUP_LABELS,
 	eventPasses,
 	eventTagLabel,
+	fmtBytes,
 	fmtClock,
 	fmtCost,
 	fmtDuration,
+	fmtRelative,
 	fmtTime,
 	fmtTokens,
+	groupSessions,
 	kindGroup,
 	presetFilters,
 	renderMarkdown,
@@ -24,14 +30,20 @@ import {
 const LS_FILTERS = "tw.filters";
 const LS_COLLAPSED = "tw.filtersCollapsed";
 const POLL_MS = 2000;
+const SESSION_LIST_EVERY = 3; // 每 3 个 tick 刷一次会话列表（约 6s）
 
 const el = (id) => document.getElementById(id);
 const main = el("main");
 const mainInner = el("main-inner");
 const questionList = el("question-list");
+const sessionList = el("session-list");
 const drawer = el("drawer");
 
 const state = {
+	scope: null,
+	sessions: [],
+	sessionListKey: "",
+	selectedId: null,
 	data: null,
 	etag: null,
 	filters: presetFilters("all"),
@@ -39,8 +51,20 @@ const state = {
 	activeQ: null,
 	openId: null,
 	openFull: null,
-	polling: false,
+	pollingSession: false,
+	pollingSessions: false,
+	tick: 0,
 };
+
+// ---------------------------------------------------------------------------
+// 主题（deepseek token 的暗色契约：body[data-ds-dark-theme]）
+// ---------------------------------------------------------------------------
+
+function applyTheme() {
+	const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+	document.body.toggleAttribute("data-ds-dark-theme", dark);
+	document.documentElement.dataset.dsThemeSource = "system";
+}
 
 // ---------------------------------------------------------------------------
 // DOM 构建助手
@@ -111,7 +135,7 @@ function saveFilters() {
 }
 
 // ---------------------------------------------------------------------------
-// 顶部与过滤面板
+// 顶部
 // ---------------------------------------------------------------------------
 
 function setSync(text, kind) {
@@ -119,16 +143,16 @@ function setSync(text, kind) {
 	el("sync-dot").className = `dot ${kind ?? ""}`;
 }
 
-function basename(p) {
-	const s = String(p ?? "");
-	return s.slice(s.lastIndexOf("/") + 1) || s;
-}
-
 function renderTopbar() {
+	el("scope-badge").textContent = state.scope === "all" ? "全部项目" : state.scope === "project" ? "本项目" : "";
 	const meta = state.data?.meta;
-	if (!meta) return;
+	if (!meta) {
+		el("session-meta").textContent = "选择一个会话查看轨迹";
+		el("session-meta").title = "";
+		return;
+	}
 	const bits = [
-		meta.name || basename(meta.cwd) || basename(meta.file),
+		meta.name || meta.cwd || meta.file,
 		`${meta.questionCount} 问`,
 		`${meta.entryCount} 条目`,
 		meta.totals?.tools ? `${meta.totals.tools} 工具` : "",
@@ -139,6 +163,53 @@ function renderTopbar() {
 	el("session-meta").textContent = bits.filter(Boolean).join(" · ");
 	el("session-meta").title = meta.file ?? "";
 }
+
+// ---------------------------------------------------------------------------
+// 会话栏
+// ---------------------------------------------------------------------------
+
+function sessionItem(session) {
+	const title = session.name || session.firstMessage || "(空会话)";
+	const sub = [`#${String(session.id).slice(0, 8)}`, fmtBytes(session.size)].filter(Boolean).join(" · ");
+	return h(
+		"button",
+		{ class: `session-item${session.id === state.selectedId ? " active" : ""}`, dataset: { id: session.id }, title: session.file ?? "" },
+		h(
+			"span",
+			{ class: "session-title" },
+			session.live ? h("span", { class: "live-dot" }) : null,
+			h("span", { class: "session-name", text: title }),
+		),
+		h("span", { class: "session-time", text: fmtRelative(session.modified) }),
+		h("span", { class: "session-sub", text: sub }),
+	);
+}
+
+function renderSessions() {
+	const sessions = state.sessions;
+	el("session-count").textContent = sessions.length ? String(sessions.length) : "";
+	const nodes = [];
+	if (state.scope === "all") {
+		for (const group of groupSessions(sessions)) {
+			nodes.push(
+				h(
+					"div",
+					{ class: "project-head", title: group.key },
+					h("span", { class: "project-path", text: group.label }),
+					h("span", { text: String(group.sessions.length) }),
+				),
+			);
+			for (const session of group.sessions) nodes.push(sessionItem(session));
+		}
+	} else {
+		for (const session of sessions) nodes.push(sessionItem(session));
+	}
+	sessionList.replaceChildren(...nodes);
+}
+
+// ---------------------------------------------------------------------------
+// 过滤面板
+// ---------------------------------------------------------------------------
 
 function renderChips() {
 	el("chips").replaceChildren(
@@ -159,7 +230,7 @@ function applyFilterUI() {
 }
 
 // ---------------------------------------------------------------------------
-// 左侧问题导航
+// 问题导航
 // ---------------------------------------------------------------------------
 
 function qStats(q) {
@@ -192,7 +263,7 @@ function renderSidebar() {
 }
 
 // ---------------------------------------------------------------------------
-// 右侧轨迹
+// 轨迹主区
 // ---------------------------------------------------------------------------
 
 function renderEvent(ev) {
@@ -217,9 +288,13 @@ function renderEvent(ev) {
 }
 
 function renderMain() {
+	if (!state.selectedId) {
+		mainInner.replaceChildren(h("div", { class: "empty", text: "左侧选择一个会话查看轨迹" }));
+		return;
+	}
 	const questions = state.data?.questions ?? [];
 	if (questions.length === 0) {
-		mainInner.replaceChildren(h("div", { class: "empty", text: "当前会话还没有提问" }));
+		mainInner.replaceChildren(h("div", { class: "empty", text: "该会话还没有提问（或正在加载）" }));
 		return;
 	}
 	mainInner.replaceChildren(
@@ -273,12 +348,7 @@ function findEvent(id) {
 }
 
 function chipNode(label, value, cls) {
-	return h(
-		"span",
-		{ class: `chip${cls ? ` ${cls}` : ""}` },
-		label,
-		value ? h("b", { text: value }) : null,
-	);
+	return h("span", { class: `chip${cls ? ` ${cls}` : ""}` }, label, value ? h("b", { text: value }) : null);
 }
 
 function usageText(u) {
@@ -335,20 +405,18 @@ function nestedListNode(tool) {
 function toolBody(view) {
 	const t = view.tool ?? {};
 	const isFull = state.openFull && state.openFull.id === view.id;
-	return [
+	const nodes = [
 		h("div", { class: "kv" }, h("span", { text: "工具" }), h("b", { text: String(t.name ?? "") })),
 		h("h4", { text: "参数" }),
 		preNode(t.argsText ?? "", "wrap"),
 		h("h4", { text: `结果${t.isError ? "（出错）" : ""}` }),
 		t.result ? preNode(t.result, "wrap") : muted("（未返回）"),
 		...nestedListNode(t),
-	]
-		.filter(Boolean)
-		.concat(
-			isFull && t.details !== undefined
-				? [h("details", null, h("summary", { text: "结构化细节" }), preNode(JSON.stringify(t.details, null, 2), "wrap"))]
-				: [],
-		);
+	];
+	if (isFull && t.details !== undefined) {
+		nodes.push(h("details", null, h("summary", { text: "结构化细节" }), preNode(JSON.stringify(t.details, null, 2), "wrap")));
+	}
+	return nodes;
 }
 
 function bashBody(view) {
@@ -458,7 +526,9 @@ function renderDrawer() {
 
 async function loadFull(id) {
 	try {
-		const res = await fetch(`/api/event?id=${encodeURIComponent(id)}`);
+		const params = new URLSearchParams({ id });
+		if (state.selectedId) params.set("session", state.selectedId);
+		const res = await fetch(`/api/event?${params}`);
 		if (!res.ok) return;
 		const j = await res.json();
 		if (state.openId !== id || !j.event) return;
@@ -498,6 +568,79 @@ function closeDrawer() {
 }
 
 // ---------------------------------------------------------------------------
+// 轮询
+// ---------------------------------------------------------------------------
+
+async function pollSessions(force = false) {
+	if (state.pollingSessions) return;
+	state.pollingSessions = true;
+	try {
+		const res = await fetch(`/api/sessions${force ? `?t=${Date.now()}` : ""}`);
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		const j = await res.json();
+		state.scope = j.scope;
+		const key = JSON.stringify(j.sessions);
+		if (key !== state.sessionListKey) {
+			state.sessionListKey = key;
+			state.sessions = j.sessions ?? [];
+			renderSessions();
+			renderTopbar();
+		}
+		if (!state.selectedId && (j.current || j.sessions?.[0])) {
+			state.selectedId = j.current ?? j.sessions[0].id;
+			renderSessions();
+		}
+	} catch {
+		/* 列表失败不打断主循环 */
+	} finally {
+		state.pollingSessions = false;
+	}
+}
+
+async function pollSession(force = false) {
+	if (state.pollingSession) return;
+	state.pollingSession = true;
+	try {
+		const params = new URLSearchParams();
+		if (state.selectedId) params.set("id", state.selectedId);
+		if (!force && state.etag) params.set("v", state.etag);
+		const res = await fetch(`/api/session?${params}`);
+		if (res.status === 404) {
+			state.selectedId = null;
+			state.data = null;
+			state.etag = null;
+			renderMain();
+			setSync("会话已消失，刷新列表", "warn");
+			pollSessions(true);
+			return;
+		}
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		const j = await res.json();
+		if (j.changed === false) {
+			setSync(`已同步 ${fmtClock()}`, "ok");
+			return;
+		}
+		state.data = { meta: j.meta, questions: j.questions };
+		state.etag = j.etag;
+		if (j.sessionId && j.sessionId !== state.selectedId) {
+			state.selectedId = j.sessionId;
+			renderSessions();
+		}
+		const keepTop = main.scrollTop;
+		renderTopbar();
+		renderSidebar();
+		renderMain();
+		main.scrollTop = keepTop;
+		refreshOpen();
+		setSync(`已同步 ${fmtClock()}`, "ok");
+	} catch (err) {
+		setSync(`同步失败：${err.message}`, "err");
+	} finally {
+		state.pollingSession = false;
+	}
+}
+
+// ---------------------------------------------------------------------------
 // 事件绑定
 // ---------------------------------------------------------------------------
 
@@ -530,6 +673,23 @@ el("chips").addEventListener("change", (e) => {
 	renderMain();
 });
 
+sessionList.addEventListener("click", (e) => {
+	const item = e.target.closest(".session-item");
+	if (!item || item.dataset.id === state.selectedId) return;
+	state.selectedId = item.dataset.id;
+	state.data = null;
+	state.etag = null;
+	state.openId = null;
+	state.openFull = null;
+	drawer.hidden = true;
+	renderSessions();
+	renderTopbar();
+	renderSidebar();
+	renderMain();
+	main.scrollTop = 0;
+	pollSession(true);
+});
+
 mainInner.addEventListener("click", (e) => {
 	const row = e.target.closest(".ev");
 	if (row) openDrawer(row.dataset.eid);
@@ -554,45 +714,26 @@ el("drawer-close").addEventListener("click", closeDrawer);
 document.addEventListener("keydown", (e) => {
 	if (e.key === "Escape") closeDrawer();
 });
-el("refresh").addEventListener("click", () => poll(true));
+el("refresh").addEventListener("click", () => {
+	pollSessions(true);
+	pollSession(true);
+});
 main.addEventListener("scroll", updateActiveQuestion, { passive: true });
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
 
 // ---------------------------------------------------------------------------
-// 轮询
+// 启动
 // ---------------------------------------------------------------------------
 
-async function poll(force = false) {
-	if (state.polling) return;
-	state.polling = true;
-	try {
-		const qs = !force && state.etag ? `?v=${encodeURIComponent(state.etag)}` : "";
-		const res = await fetch(`/api/session${qs}`);
-		if (!res.ok) throw new Error(`HTTP ${res.status}`);
-		const j = await res.json();
-		if (j.changed === false) {
-			setSync(`已同步 ${fmtClock()}`, "ok");
-			return;
-		}
-		state.data = { meta: j.meta, questions: j.questions };
-		state.etag = j.etag;
-		const keepTop = main.scrollTop;
-		renderTopbar();
-		renderSidebar();
-		renderMain();
-		main.scrollTop = keepTop;
-		refreshOpen();
-		setSync((j.stale ? "会话暂不可读，显示缓存 " : "已同步 ") + fmtClock(), j.stale ? "warn" : "ok");
-	} catch (err) {
-		setSync(`同步失败：${err.message}`, "err");
-	} finally {
-		state.polling = false;
-	}
-}
-
+applyTheme();
 loadPrefs();
 renderChips();
 applyFilterUI();
-poll();
+pollSessions();
+pollSession();
 setInterval(() => {
-	if (!document.hidden) poll();
+	if (document.hidden) return;
+	state.tick++;
+	if (state.tick % SESSION_LIST_EVERY === 0) pollSessions();
+	pollSession();
 }, POLL_MS);

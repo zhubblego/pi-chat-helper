@@ -1,16 +1,19 @@
 /**
- * trajectory-web — 把当前 pi 会话的轨迹以 web 页面形式观察。
+ * trajectory-web — 轨迹观察服务（模式 A：绑定当前 pi 实例）。
  *
- * `/deepseek-trail start [端口]`：启动独立的本地 web 服务（默认 127.0.0.1:7717），
- *   浏览器打开提示的 URL 即可看到按「问题 → 轨迹条目」两级分组的完整会话轨迹。
- *   服务是 detached 后台进程：pi 退出、重开会话都不影响，浏览器页面可一直挂着看。
- * `/deepseek-trail stop`：停止服务并清理运行时状态。
+ * `/deepseek-trail start [端口]`：在 pi 进程内启动本地 web 服务（默认 127.0.0.1:7717，
+ *   端口被占用自动改用随机端口），观察**当前项目的全部会话**——默认选中当前会话，
+ *   页面左侧会话栏可切换项目内其它会话，运行中的会话自动刷新。
+ *   服务随本 pi 实例退出而停止（绑定语义）。
+ * `/deepseek-trail stop`：停止服务。
+ *
+ * 模式 B（观察全部 pi 历史与运行中的会话）由独立入口提供：`npm run dev`。
  *
  * 设计：
- *   - 服务只读会话 JSONL（~/.pi/agent/sessions/...），不依赖 pi 运行时，也不写回会话。
- *   - 运行时状态（state.json / server.log）放在 ~/.pi/agent/trajectory-web/。
- *   - 幂等：已在运行时再次 start 只提示当前 URL；观察的是别的会话时提示先 stop。
- *   - 终止前用 /proc/<pid>/cmdline 核实目标进程确实是本服务，避免 pid 复用误杀。
+ *   - 只读会话 JSONL，不写回会话；仅监听回环地址。
+ *   - 服务句柄挂在 globalThis：pi 换会话（new/resume/fork）会重建扩展 runtime，
+ *     句柄要能跨 runtime 复用，服务继续存活；只在 quit/reload 时关闭避免泄漏。
+ *   - 端口占用时降级为系统分配端口，并把实际 URL 提示给用户。
  *
  * 部署（本仓库是源码主本）：
  *   cp -r trajectory-web ~/.pi/agent/extensions/     # 目录即扩展（index.ts 为入口）
@@ -19,130 +22,61 @@
  *   pi -e ./trajectory-web/index.ts
  */
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SERVER_ENTRY = join(HERE, "server", "main.mjs");
 const WEB_DIR = join(HERE, "web");
-
-const STATE_DIR = join(homedir(), ".pi", "agent", "trajectory-web");
-const STATE_FILE = join(STATE_DIR, "state.json");
-const LOG_FILE = join(STATE_DIR, "server.log");
 
 const COMMAND_NAME = "deepseek-trail";
 const DEFAULT_PORT = 7717;
-const START_TIMEOUT_MS = 5000;
 const USAGE = `用法：/${COMMAND_NAME} start [端口]（默认 ${DEFAULT_PORT}）| /${COMMAND_NAME} stop`;
 
 type Notice = (message: string, type?: "info" | "warning" | "error") => void;
 
-interface ServiceState {
-	pid: number;
+interface ServerHandle {
 	port: number;
-	host: string;
-	session: string;
-	startedAt: string;
 	url: string;
+	close: () => Promise<void>;
 }
 
-interface Health {
-	ok?: boolean;
-	pid?: number;
-	port?: number;
-	session?: string;
+interface GlobalSlot {
+	handle: ServerHandle | null;
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+const GLOBAL_KEY = Symbol.for("pi-chat-helper.trajectory-web");
 
-function readState(): ServiceState | null {
+/** 跨扩展 runtime 复用的全局槽位（session 切换会重建 runtime）。 */
+function slot(): GlobalSlot {
+	// SAFETY: globalThis 的类型声明里没有这个 symbol 键；这里只在同一进程内按约定
+	// 读写本扩展自己的槽位，值的形状由本函数构造（GlobalSlot），不存在外部来源。
+	const g = globalThis as unknown as Record<symbol, unknown>;
+	if (!g[GLOBAL_KEY]) g[GLOBAL_KEY] = { handle: null };
+	return g[GLOBAL_KEY] as GlobalSlot;
+}
+
+async function closeSlot(): Promise<void> {
+	const existing = slot().handle;
+	if (!existing) return;
+	slot().handle = null;
+	await existing.close();
+}
+
+/** 进程内启动；端口占用时降级为系统分配端口（port 0）。 */
+async function startInProcess(port: number, sessionFile: string): Promise<ServerHandle> {
+	const { createTrajectoryServer } = await import("./server/app.mjs");
+	const base = { scope: "project" as const, sessionFile, webDir: WEB_DIR, host: "127.0.0.1" };
 	try {
-		const raw = JSON.parse(readFileSync(STATE_FILE, "utf8")) as ServiceState;
-		return raw && typeof raw.pid === "number" && typeof raw.port === "number" ? raw : null;
-	} catch {
-		return null;
+		return await createTrajectoryServer({ ...base, port });
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException)?.code === "EADDRINUSE" && port !== 0) {
+			return await createTrajectoryServer({ ...base, port: 0 });
+		}
+		throw err;
 	}
 }
-
-function clearState(): void {
-	try {
-		if (existsSync(STATE_FILE)) unlinkSync(STATE_FILE);
-	} catch {
-		/* 状态文件清理失败不阻塞主流程 */
-	}
-}
-
-function isAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-/** 用 /proc/<pid>/cmdline 核实进程归属；非 Linux 平台无 /proc，退化为"可终止"。 */
-function isOurServer(pid: number): boolean {
-	try {
-		const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
-		return cmdline.includes("trajectory-web") && cmdline.includes("main.mjs");
-	} catch {
-		return process.platform !== "linux";
-	}
-}
-
-async function healthOf(port: number, timeoutMs = 800): Promise<Health | null> {
-	try {
-		const res = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(timeoutMs) });
-		if (!res.ok) return null;
-		const health = (await res.json()) as Health;
-		return health?.ok ? health : null;
-	} catch {
-		return null;
-	}
-}
-
-async function stopPid(pid: number): Promise<void> {
-	try {
-		process.kill(pid, "SIGTERM");
-	} catch {
-		return;
-	}
-	for (let i = 0; i < 20; i++) {
-		await sleep(100);
-		if (!isAlive(pid)) return;
-	}
-	try {
-		process.kill(pid, "SIGKILL");
-	} catch {
-		/* 已退出 */
-	}
-	await sleep(150);
-}
-
-function logTail(lines = 6): string {
-	try {
-		const all = readFileSync(LOG_FILE, "utf8").trimEnd().split("\n");
-		return all.slice(-lines).join("\n");
-	} catch {
-		return "";
-	}
-}
-
-// ---------------------------------------------------------------------------
-// 子命令实现
-// ---------------------------------------------------------------------------
 
 async function runStart(portArg: string | undefined, ctx: ExtensionCommandContext, notify: Notice): Promise<void> {
-	const sessionFile = ctx.sessionManager.getSessionFile();
-	if (!sessionFile) {
-		notify("当前会话没有落盘文件，无法观察轨迹（内存会话不支持）", "error");
-		return;
-	}
-
 	let port = DEFAULT_PORT;
 	if (portArg) {
 		const n = Number(portArg);
@@ -153,101 +87,44 @@ async function runStart(portArg: string | undefined, ctx: ExtensionCommandContex
 		port = n;
 	}
 
-	// 已有服务：健康且属实时做幂等提示；残留（进程死亡/不健康/非本服务）则清理
-	const existing = readState();
+	const existing = slot().handle;
 	if (existing) {
-		if (isAlive(existing.pid) && isOurServer(existing.pid)) {
-			const health = await healthOf(existing.port);
-			if (health) {
-				if (health.session === sessionFile) {
-					notify(`轨迹服务已在运行：${existing.url}`);
-				} else {
-					notify(
-						`已有轨迹服务在观察另一个会话：${existing.url}；如需切换到本会话，请先 /${COMMAND_NAME} stop 再 start`,
-						"warning",
-					);
-				}
-				return;
-			}
-			await stopPid(existing.pid);
-		}
-		clearState();
+		notify(`轨迹服务已在运行：${existing.url}`);
+		return;
 	}
 
-	mkdirSync(STATE_DIR, { recursive: true });
+	const sessionFile = ctx.sessionManager.getSessionFile();
+	if (!sessionFile) {
+		notify("当前会话没有落盘文件，无法观察轨迹（内存会话不支持）", "error");
+		return;
+	}
+
 	try {
-		if (existsSync(STATE_FILE)) unlinkSync(STATE_FILE);
-	} catch {
-		/* 交给服务端覆盖写 */
+		const handle = await startInProcess(port, sessionFile);
+		slot().handle = handle;
+		const note = handle.port === port ? "" : `（端口 ${port} 被占用，改用 ${handle.port}）`;
+		notify(`轨迹服务已启动：${handle.url}${note}\n范围：当前项目的全部会话；随本 pi 实例退出而停止`);
+	} catch (err) {
+		notify(`轨迹服务启动失败：${(err as Error).message}`, "error");
 	}
-
-	const child = spawn(
-		process.execPath,
-		[
-			SERVER_ENTRY,
-			"--session",
-			sessionFile,
-			"--port",
-			String(port),
-			"--host",
-			"127.0.0.1",
-			"--web",
-			WEB_DIR,
-			"--state",
-			STATE_FILE,
-			"--log",
-			LOG_FILE,
-		],
-		{ detached: true, stdio: "ignore", cwd: HERE },
-	);
-	child.unref();
-
-	const deadline = Date.now() + START_TIMEOUT_MS;
-	while (Date.now() < deadline) {
-		await sleep(120);
-		const st = readState();
-		if (!st) continue;
-		const health = await healthOf(st.port, 500);
-		if (health && health.pid === st.pid) {
-			notify(`轨迹服务已启动：${st.url}`);
-			return;
-		}
-	}
-	notify(`轨迹服务启动超时；日志：${LOG_FILE}${logTail() ? `\n${logTail()}` : ""}`, "error");
 }
 
 async function runStop(notify: Notice): Promise<void> {
-	const st = readState();
-	if (!st) {
+	if (!slot().handle) {
 		notify("轨迹服务未在运行");
 		return;
 	}
-	if (!isAlive(st.pid)) {
-		clearState();
-		notify("轨迹服务未在运行（已清理残留状态文件）");
-		return;
-	}
-	if (!isOurServer(st.pid)) {
-		clearState();
-		notify(`状态文件指向的进程（pid ${st.pid}）不是轨迹服务，已清理状态文件，未终止该进程`, "warning");
-		return;
-	}
-	await stopPid(st.pid);
-	clearState();
+	await closeSlot();
 	notify("轨迹服务已停止");
 }
 
-// ---------------------------------------------------------------------------
-// 命令注册
-// ---------------------------------------------------------------------------
-
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand(COMMAND_NAME, {
-		description: `轨迹观察服务：start [端口] 启动（默认 ${DEFAULT_PORT}，独立后台进程，pi 退出后仍在），stop 停止`,
+		description: `轨迹观察服务（绑定本 pi 实例，观察本项目全部会话）：start [端口] 启动（默认 ${DEFAULT_PORT}），stop 停止`,
 		getArgumentCompletions: (prefix) => {
 			const items = [
-				{ value: "start", label: "start", description: "启动轨迹观察 web 服务" },
-				{ value: "stop", label: "stop", description: "停止服务并清理运行时状态" },
+				{ value: "start", label: "start", description: "启动轨迹观察 web 服务（当前项目全部会话）" },
+				{ value: "stop", label: "stop", description: "停止服务" },
 			];
 			const p = (prefix ?? "").trim();
 			return p ? items.filter((item) => item.value.startsWith(p)) : items;
@@ -268,5 +145,11 @@ export default function (pi: ExtensionAPI) {
 			}
 			notify(subcommand ? `未知子命令：${subcommand}；${USAGE}` : USAGE, subcommand ? "warning" : "info");
 		},
+	});
+
+	// 会话切换（new/resume/fork）会重建扩展 runtime 但不该停服务；
+	// 退出与 reload 时关闭，避免端口/句柄泄漏（reload 后新代码重新 start）。
+	pi.on("session_shutdown", async (event) => {
+		if (event.reason === "quit" || event.reason === "reload") await closeSlot();
 	});
 }

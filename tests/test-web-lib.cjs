@@ -11,7 +11,7 @@ const check = (label, cond, extra = "") => {
 
 (async () => {
 	const lib = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "lib.js")).href);
-	const { kindGroup, eventPasses, presetFilters, eventTagLabel, fmtDuration, fmtTokens, fmtCost, fmtTime, renderMarkdown } = lib;
+	const { kindGroup, eventPasses, presetFilters, eventTagLabel, fmtDuration, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions } = lib;
 
 	// ---- 过滤映射 ----
 	check("tool → tools 组", kindGroup("tool") === "tools" && kindGroup("bash") === "tools");
@@ -32,6 +32,23 @@ const check = (label, cond, extra = "") => {
 	check("fmtTokens", fmtTokens(999) === "999" && fmtTokens(1500) === "1.5k" && fmtTokens(125000) === "125k" && fmtTokens(2200000) === "2.20M");
 	check("fmtCost", fmtCost(0.0012) === "$0.0012" && fmtCost(1.5) === "$1.50");
 	check("fmtTime", /^\d{2}:\d{2}$/.test(fmtTime(Date.now())));
+
+	// ---- 会话列表助手 ----
+	const now = Date.now();
+	check("fmtRelative 刚刚", fmtRelative(now - 10_000, now) === "刚刚");
+	check(
+		"fmtRelative 分钟/小时/天",
+		fmtRelative(now - 5 * 60_000, now) === "5 分钟前" && fmtRelative(now - 3 * 3600_000, now) === "3 小时前" && fmtRelative(now - 2 * 86400_000, now) === "2 天前",
+	);
+	check("fmtRelative 超过 7 天回落日期", /^\d{4}-\d{2}-\d{2}$/.test(fmtRelative(now - 30 * 86400_000, now)), fmtRelative(now - 30 * 86400_000, now));
+	check("fmtBytes", fmtBytes(800) === "800B" && fmtBytes(2048) === "2.0KB" && fmtBytes(150000) === "146KB" && fmtBytes(2 * 1048576) === "2.0MB");
+	check("projectLabel", projectLabel("/home/u/proj") === "proj" && projectLabel("/home/u/proj/") === "proj" && projectLabel(null) === "(未知项目)");
+	const grouped = groupSessions([
+		{ id: "1", projectPath: "/a", modified: 3 },
+		{ id: "2", projectPath: "/b", modified: 2 },
+		{ id: "3", projectPath: "/a", modified: 1 },
+	]);
+	check("groupSessions 按项目分组且保持活跃顺序", grouped.length === 2 && grouped[0].label === "a" && grouped[0].sessions.map((s) => s.id).join(",") === "1,3" && grouped[1].label === "b");
 
 	// ---- Markdown：转义与注入 ----
 	const xss = renderMarkdown("<script>alert(1)</script>\n\n<img src=x onerror=alert(2)>");

@@ -83,7 +83,8 @@ export function activeBranch(entries) {
 // 小工具
 // ---------------------------------------------------------------------------
 
-function extractText(content) {
+/** 提取 message.content 中的文本（content 可能是 string 或 parts 数组）。 */
+export function extractText(content) {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
 	const parts = [];
@@ -98,14 +99,6 @@ function extractText(content) {
 function countImages(content) {
 	if (!Array.isArray(content)) return 0;
 	return content.filter((p) => p && typeof p === "object" && String(p.type ?? "").includes("image")).length;
-}
-
-function firstLine(text) {
-	for (const line of String(text ?? "").split("\n")) {
-		const t = line.trim();
-		if (t) return t;
-	}
-	return "";
 }
 
 /** 单行预览：折叠空白 + 截断。 */

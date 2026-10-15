@@ -1,0 +1,9 @@
+{
+	"name": "pi-chat-helper",
+	"version": "0.0.0",
+	"private": true,
+	"description": "pi coding agent 的轨迹观察 web 服务与提问面板扩展",
+	"scripts": {
+		"dev": "node trajectory-web/server/main.mjs --scope all --port 7788"
+	}
+}

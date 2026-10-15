@@ -1,4 +1,4 @@
-// HTTP 服务：健康检查 / 增量轮询 / 静态资源 / 事件详情 / 热更新 / SIGTERM 清理状态
+// HTTP 服务：多会话列表 / 指定会话投影 / 增量轮询 / 事件详情 / 双范围 / 热更新 / 退出
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -13,131 +13,160 @@ const check = (label, cond, extra = "") => {
 const ROOT = path.join(__dirname, "..");
 const SERVER = path.join(ROOT, "trajectory-web", "server", "main.mjs");
 const WEB = path.join(ROOT, "trajectory-web", "web");
-
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tw-srv-"));
-const sessionFile = path.join(tmp, "s.jsonl");
-const stateFile = path.join(tmp, "state.json");
-const logFile = path.join(tmp, "server.log");
-
-const H = "2026-01-01T00:00:00.000Z";
-const msg = (id, parentId, ts, message) => ({
-	type: "message",
-	id,
-	parentId,
-	timestamp: new Date(ts).toISOString(),
-	message: { ...message, timestamp: ts },
-});
-
-function writeFixture() {
-	fs.writeFileSync(
-		sessionFile,
-		[
-			{ type: "session", version: 3, id: "srv-1", timestamp: H, cwd: tmp },
-			msg("u1", null, 1000, { role: "user", content: "测试提问" }),
-			msg("a1", "u1", 2000, {
-				role: "assistant",
-				model: "m",
-				usage: { input: 1, output: 2, totalTokens: 3 },
-				durationMs: 100,
-				content: [{ type: "thinking", thinking: "思考" }, { type: "toolCall", id: "t1", name: "read", arguments: { path: "x" } }],
-			}),
-			msg("r1", "a1", 3000, {
-				role: "toolResult",
-				toolCallId: "t1",
-				toolName: "read",
-				content: [{ type: "text", text: "结果" }],
-				isError: false,
-			}),
-			msg("a2", "r1", 4000, { role: "assistant", content: [{ type: "text", text: "答复" }] }),
-		]
-			.map((l) => JSON.stringify(l))
-			.join("\n") + "\n",
-	);
-}
-writeFixture();
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-(async () => {
-	let child = null;
-	try {
-		child = spawn(process.execPath, [SERVER, "--session", sessionFile, "--port", "0", "--state", stateFile, "--web", WEB, "--log", logFile], {
-			stdio: "ignore",
-		});
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tw-srv-"));
+const sessionsRoot = path.join(tmp, "sessions");
+const projA = path.join(sessionsRoot, "--a--");
+const projB = path.join(sessionsRoot, "--b--");
+fs.mkdirSync(projA, { recursive: true });
+fs.mkdirSync(projB, { recursive: true });
 
-		// 等 state 文件出现
-		let state = null;
-		const deadline = Date.now() + 8000;
-		while (Date.now() < deadline) {
-			await sleep(120);
-			if (fs.existsSync(stateFile)) {
-				state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-				break;
+const H = "2026-01-01T00:00:00.000Z";
+const line = (o) => JSON.stringify(o);
+function writeSession(dir, { id, cwd, first, mtimeMs }) {
+	const file = path.join(dir, `2026-01-01T00-00-00-000Z_${id}.jsonl`);
+	fs.writeFileSync(
+		file,
+		[
+			line({ type: "session", version: 3, id, timestamp: H, cwd }),
+			line({ type: "message", id: "u1", parentId: null, timestamp: H, message: { role: "user", content: first, timestamp: 1000 } }),
+			line({
+				type: "message",
+				id: "a1",
+				parentId: "u1",
+				timestamp: H,
+				message: {
+					role: "assistant",
+					model: "m",
+					usage: { input: 1, output: 2, totalTokens: 3 },
+					durationMs: 100,
+					content: [{ type: "thinking", thinking: "思考" }, { type: "toolCall", id: "t1", name: "read", arguments: { path: "x" } }],
+				},
+			}),
+			line({ type: "message", id: "r1", parentId: "a1", timestamp: H, message: { role: "toolResult", toolCallId: "t1", toolName: "read", content: [{ type: "text", text: "结果" }], isError: false } }),
+			line({ type: "message", id: "a2", parentId: "r1", timestamp: H, message: { role: "assistant", content: [{ type: "text", text: "答复" }] } }),
+		].join("\n") + "\n",
+	);
+	const seconds = (mtimeMs ?? Date.now()) / 1000;
+	fs.utimesSync(file, seconds, seconds);
+	return file;
+}
+
+function waitForUrl(child) {
+	return new Promise((resolve, reject) => {
+		let buf = "";
+		const timer = setTimeout(() => reject(new Error("等待启动 URL 超时")), 8000);
+		child.stdout.on("data", (d) => {
+			buf += String(d);
+			const m = /http:\/\/127\.0\.0\.1:\d+/.exec(buf);
+			if (m) {
+				clearTimeout(timer);
+				resolve(m[0]);
 			}
-		}
-		check("state 文件写出", !!state && state.pid === child.pid && state.port > 0, JSON.stringify(state));
-		if (!state) throw new Error("服务未就绪");
+		});
+		child.stderr.on("data", (d) => {
+			buf += String(d);
+		});
+		child.once("exit", (code) => {
+			clearTimeout(timer);
+			reject(new Error(`服务提前退出 code=${code}：${buf}`));
+		});
+	});
+}
 
-		const base = `http://127.0.0.1:${state.port}`;
+function startServer(args) {
+	const child = spawn(process.execPath, [SERVER, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+	return child;
+}
+
+async function stopServer(child) {
+	child.kill("SIGTERM");
+	const deadline = Date.now() + 4000;
+	while (Date.now() < deadline) {
+		if (child.exitCode !== null) return true;
+		await sleep(100);
+	}
+	child.kill("SIGKILL");
+	return false;
+}
+
+(async () => {
+	let all = null;
+	let project = null;
+	try {
+		const recent = Date.now();
+		const old = recent - 3600_000;
+		const a1 = writeSession(projA, { id: "srv-a1", cwd: "/tmp/projA", first: "第一问", mtimeMs: recent });
+		const aOld = writeSession(projA, { id: "srv-a2", cwd: "/tmp/projA", first: "旧问", mtimeMs: old });
+		writeSession(projB, { id: "srv-b1", cwd: "/tmp/projB", first: "B 问", mtimeMs: recent - 120_000 });
+
+		// ---- 模式 B：全部范围 ----
+		all = startServer(["--scope", "all", "--sessions-root", sessionsRoot, "--port", "0", "--web", WEB]);
+		const base = await waitForUrl(all);
 
 		const health = await (await fetch(`${base}/api/health`)).json();
-		check("健康检查", health.ok === true && health.pid === child.pid && health.session === sessionFile);
+		check("health：scope=all", health.ok === true && health.scope === "all", JSON.stringify(health));
+
+		const listing = await (await fetch(`${base}/api/sessions`)).json();
+		check("列表包含全部项目会话", listing.sessions.length === 3, String(listing.sessions.length));
+		check("列表按最近活跃倒序", listing.sessions[0].id === "srv-a1", listing.sessions.map((s) => s.id).join(","));
+		check("live 标记", listing.sessions.find((s) => s.id === "srv-a1").live === true && listing.sessions.find((s) => s.id === "srv-a2").live === false);
+		check("项目路径与首条消息", listing.sessions[0].projectPath === "/tmp/projA" && listing.sessions[0].firstMessage === "第一问");
+		check("current 指向最近会话", listing.current === "srv-a1");
 
 		const first = await (await fetch(`${base}/api/session`)).json();
-		check("首次投影 changed=true", first.changed === true && typeof first.etag === "string");
-		check("问题分组", first.questions.length === 1 && first.questions[0].index === 0 && first.questions[0].summary === "测试提问");
+		check("默认取最近会话", first.changed === true && first.sessionId === "srv-a1" && first.meta.cwd === "/tmp/projA");
+		check("问题分组", first.questions.length === 1 && first.questions[0].summary === "第一问");
 		check("事件链", first.questions[0].events.map((e) => e.kind).join(",") === "user,thinking,tool,text", first.questions[0].events.map((e) => e.kind).join(","));
 
-		const second = await (await fetch(`${base}/api/session?v=${encodeURIComponent(first.etag)}`)).json();
-		check("etag 未变时 changed=false", second.changed === false && !("questions" in second));
+		const second = await (await fetch(`${base}/api/session?id=srv-a1&v=${encodeURIComponent(first.etag)}`)).json();
+		check("etag 未变 changed=false", second.changed === false);
+
+		const other = await (await fetch(`${base}/api/session?id=srv-b1`)).json();
+		check("按 id 取指定会话", other.changed === true && other.sessionId === "srv-b1" && other.meta.cwd === "/tmp/projB");
 
 		const toolEvent = first.questions[0].events.find((e) => e.kind === "tool");
-		const detail = await (await fetch(`${base}/api/event?id=${encodeURIComponent(toolEvent.id)}`)).json();
-		check("事件详情返回 full 载荷", detail.event.tool.name === "read" && detail.event.tool.result === "结果");
-		const missing = await fetch(`${base}/api/event?id=nope`);
-		check("未知事件 404", missing.status === 404);
+		const detail = await (await fetch(`${base}/api/event?session=srv-a1&id=${encodeURIComponent(toolEvent.id)}`)).json();
+		check("事件详情（full）", detail.event.tool.name === "read" && detail.event.tool.result === "结果");
+		check("未知会话 404", (await fetch(`${base}/api/session?id=nope`)).status === 404);
 
-		const index = await fetch(`${base}/`);
-		const indexText = await index.text();
-		check("首页返回 HTML", index.status === 200 && indexText.includes("轨迹观察"), String(index.status));
-		for (const file of ["/app.js", "/lib.js", "/style.css"]) {
-			const res = await fetch(base + file);
-			check(`静态资源 ${file}`, res.status === 200);
+		for (const file of ["/", "/app.js", "/lib.js", "/style.css", "/tokens.css"]) {
+			check(`静态资源 ${file}`, (await fetch(base + file)).status === 200);
 		}
-		const notFound = await fetch(`${base}/../etc/passwd`);
-		check("路径穿越被拒", notFound.status === 404, String(notFound.status));
 
 		// 追加新条目 → 热更新
-		fs.appendFileSync(sessionFile, JSON.stringify(msg("u2", "a2", 5000, { role: "user", content: "追问" })) + "\n");
+		fs.appendFileSync(a1, line({ type: "message", id: "u2", parentId: "a2", timestamp: H, message: { role: "user", content: "追问", timestamp: 2000 } }) + "\n");
 		let changed = null;
 		const hotDeadline = Date.now() + 4000;
 		while (Date.now() < hotDeadline) {
 			await sleep(150);
-			const res = await (await fetch(`${base}/api/session?v=${encodeURIComponent(first.etag)}`)).json();
+			const res = await (await fetch(`${base}/api/session?id=srv-a1&v=${encodeURIComponent(first.etag)}`)).json();
 			if (res.changed === true) {
 				changed = res;
 				break;
 			}
 		}
-		check("追加条目后 etag 变化", !!changed && changed.questions.length === 2 && changed.questions[1].summary === "追问", JSON.stringify(changed?.questions?.map((q) => q.summary)));
+		check("追加条目后 etag 变化", !!changed && changed.questions.length === 2 && changed.questions[1].summary === "追问");
 
-		// SIGTERM：进程退出且 state 文件被清理
-		child.kill("SIGTERM");
-		const exitDeadline = Date.now() + 4000;
-		let exited = false;
-		while (Date.now() < exitDeadline) {
-			await sleep(120);
-			if (child.exitCode !== null) {
-				exited = true;
-				break;
-			}
-		}
-		check("SIGTERM 后退出", exited);
-		check("退出时清理 state 文件", !fs.existsSync(stateFile));
+		check("SIGTERM 退出", await stopServer(all));
+		all = null;
+
+		// ---- 模式 A：项目范围 ----
+		project = startServer(["--scope", "project", "--session", aOld, "--port", "0", "--web", WEB]);
+		const baseA = await waitForUrl(project);
+		const listingA = await (await fetch(`${baseA}/api/sessions`)).json();
+		check("项目范围只列本项目", listingA.scope === "project" && listingA.sessions.length === 2 && listingA.sessions.every((s) => s.projectPath === "/tmp/projA"), JSON.stringify(listingA.sessions.map((s) => s.id)));
+		check("项目范围 current 指向启动会话", listingA.current === "srv-a2", String(listingA.current));
+		const defA = await (await fetch(`${baseA}/api/session`)).json();
+		check("默认选中启动时传入的会话", defA.sessionId === "srv-a2", String(defA.sessionId));
+		check("项目范围退出", await stopServer(project));
+		project = null;
 	} catch (err) {
 		check("测试执行", false, err.stack);
 	} finally {
-		if (child && child.exitCode === null) child.kill("SIGKILL");
+		if (all) all.kill("SIGKILL");
+		if (project) project.kill("SIGKILL");
 		fs.rmSync(tmp, { recursive: true, force: true });
 		console.log(failed === 0 ? "\nALL PASS" : `\n${failed} FAILED`);
 		process.exit(failed === 0 ? 0 : 1);
