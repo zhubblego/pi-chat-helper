@@ -32,6 +32,29 @@ export function eventPasses(filters, kind) {
 	return filters[kindGroup(kind)] !== false;
 }
 
+/** 当前会话出现过的工具名（按首次出现顺序去重；未出现过的工具不列出）。 */
+export function collectToolNames(questions) {
+	const names = [];
+	for (const question of questions ?? []) {
+		for (const event of question.events ?? []) {
+			if (event.kind !== "tool") continue;
+			const name = event.tool?.name;
+			if (name && !names.includes(name)) names.push(name);
+		}
+	}
+	return names;
+}
+
+/**
+ * 工具名过滤：未设置时全部通过；设置后只放行该工具的工具调用行，
+ * 其它类型行（思考/输出/上下文）不受影响，仍由各自的组开关决定。
+ */
+export function eventToolPasses(toolFilter, event) {
+	if (!toolFilter) return true;
+	if (event.kind !== "tool") return true;
+	return event.tool?.name === toolFilter;
+}
+
 /** 预设：全部 / 仅思考 / 仅工具 / 仅输出 */
 export function presetFilters(name) {
 	switch (name) {

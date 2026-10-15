@@ -440,6 +440,39 @@ svg.tb-icon {
 	stroke-linejoin: round;
 }
 
+.menu-value {
+	flex: none;
+	color: var(--dsw-alias-label-tertiary);
+}
+
+.menu-chev {
+	flex: none;
+	color: var(--dsw-alias-label-tertiary);
+	font-size: 9px;
+	line-height: 10px;
+}
+
+/* 工具名子菜单（照 deepseek Menu 的 .submenu：右侧卡片 + 10px 命中桥） */
+.menu-item-wrap {
+	position: relative;
+}
+
+.menu.submenu {
+	top: auto;
+	bottom: -4px;
+	left: calc(100% + 10px);
+	z-index: 101;
+}
+
+.menu.submenu::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: -10px;
+	width: 10px;
+}
+
 .menu-label {
 	padding: 3px 6px;
 	color: var(--dsw-alias-label-tertiary);

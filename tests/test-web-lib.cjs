@@ -11,7 +11,7 @@ const check = (label, cond, extra = "") => {
 
 (async () => {
 	const lib = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "lib.js")).href);
-	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, TrajectorySearchIndex } = lib;
+	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, TrajectorySearchIndex, collectToolNames, eventToolPasses } = lib;
 
 	// ---- 过滤映射 ----
 	check("tool → tools 组", kindGroup("tool") === "tools" && kindGroup("bash") === "tools");
@@ -23,6 +23,29 @@ const check = (label, cond, extra = "") => {
 	check("仅思考预设：thinking 通过、其余不过", eventPasses(onlyThinking, "thinking") === true && eventPasses(onlyThinking, "tool") === false && eventPasses(onlyThinking, "text") === false && eventPasses(onlyThinking, "system") === false);
 	const all = presetFilters("all");
 	check("全部预设：所有组通过", ["thinking", "tool", "text", "system", "user"].every((k) => eventPasses(all, k)));
+
+	// ---- 工具名子菜单助手 ----
+	const toolQuestions = [
+		{
+			index: 0,
+			summary: "",
+			events: [
+				{ id: "t1", kind: "tool", tool: { name: "read" } },
+				{ id: "t2", kind: "tool", tool: { name: "bash" } },
+				{ id: "t3", kind: "text", text: "x" },
+				{ id: "t4", kind: "tool", tool: { name: "read" } },
+			],
+		},
+		{ index: 1, summary: "", events: [{ id: "t5", kind: "tool", tool: { name: "edit" } }] },
+	];
+	check("collectToolNames 按首次出现去重", collectToolNames(toolQuestions).join(",") === "read,bash,edit", collectToolNames(toolQuestions).join(","));
+	check("eventToolPasses 未设置时全通过", eventToolPasses(null, { kind: "text" }) === true && eventToolPasses(null, { kind: "tool", tool: { name: "read" } }) === true);
+	check(
+		"eventToolPasses 只过滤工具行，其它类型不受影响",
+		eventToolPasses("bash", { kind: "tool", tool: { name: "bash" } }) === true &&
+			eventToolPasses("bash", { kind: "tool", tool: { name: "read" } }) === false &&
+			eventToolPasses("bash", { kind: "text" }) === true,
+	);
 
 	check("标签：文本行统一显示为输出（最终答复仅靠绿色竖条区分）", eventTagLabel({ kind: "text", isFinal: true }) === "输出" && eventTagLabel({ kind: "text" }) === "输出");
 	check("标签：出错工具", eventTagLabel({ kind: "tool", tool: { isError: true } }) === "工具✗");

@@ -24,6 +24,7 @@
 - 新增 deepseek 风格**会话侧边栏**：模式 B 按项目分组、live 亮点、相对时间、文件大小；点击切换会话
 - 保留两级轨迹（问题 sticky 分段 + 事件行）；详情抽屉 Markdown/参数/结果/tokens
 - **工具条**（复刻 deepseek `TrajectoryToolbar` 形态，不含时长控件）：「轮次」折叠按钮（⊟/⊞ 全部折叠/展开）+ 单个「过滤」按钮（显示 `过滤 n/5` 计数）——点击弹 deepseek 紧凑菜单卡（复刻 `Menu.module.css` + `MenuSurface`：4px 内边距、半透明底 + backdrop-filter、elevation-prominent）：显示类型 5 项为勾选菜单项（尾部勾 + `menuitemcheckbox`/`aria-checked`）；勾选后菜单保持打开可连续切换，关闭仅靠点菜单外 / Esc / 切换会话；支持 ↑↓/Home/End
+- **工具名子菜单**（复刻 deepseek Menu 的 `.submenu`：右侧卡片 + 10px 命中桥）：「工具」行右侧挂「全部 / 工具名…」单选子菜单（`menuitemradio`），工具名取自当前会话出现过的调用（按首次出现去重）；每次打开菜单与数据到达时同步（新工具自动进子菜单、失效选中回落「全部」）；hover 150ms 或 → 打开、←/Esc 退回，选中后菜单保持打开；过滤只作用于工具调用行
 - **轮次折叠**：点击问题头部的 ⊟/⊞ 折叠单轮，工具条按钮折叠全部；折叠仅隐藏正文，sticky 头仍可用于导航
 - **搜索**（复刻 deepseek `trajectory-search-index.ts`）：工具条搜索框（照搬其 search 规格）；会话级增量全文索引，按事件稳定 id 缓存来源数组、空格分隔 AND 匹配、大小写不敏感，切换会话重建
 - **时长格式**（复刻 `trajectory-record.ts` 的 `formatDurationMillis`/`formatElapsedSeconds`）：整数毫秒 + 千分位，未知显示 `—`

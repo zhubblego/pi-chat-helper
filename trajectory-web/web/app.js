@@ -13,8 +13,10 @@
 import {
 	GROUP_LABELS,
 	TrajectorySearchIndex,
+	collectToolNames,
 	eventPasses,
 	eventTagLabel,
+	eventToolPasses,
 	fmtBytes,
 	fmtClock,
 	fmtCost,
@@ -49,6 +51,9 @@ const state = {
 	searchIndex: new TrajectorySearchIndex(),
 	query: "",
 	menuOpen: false,
+	toolFilter: null,
+	toolNames: [],
+	submenuOpen: false,
 	folded: new Set(),
 	openId: null,
 	openFull: null,
@@ -253,22 +258,95 @@ function renderSessions() {
 // 工具条（deepseek 工具栏形态：轮次折叠 + 过滤菜单）
 // ---------------------------------------------------------------------------
 
-/** 过滤菜单：显示类型勾选（照 deepseek Menu 的紧凑卡与选中语义）。 */
+/** 过滤菜单：显示类型勾选（照 deepseek Menu 的紧凑卡与选中语义）；工具行带工具名子菜单。 */
 function renderFilterMenu() {
 	const nodes = [h("div", { class: "menu-label", role: "presentation", text: "显示类型" })];
 	for (const [group, label] of Object.entries(GROUP_LABELS)) {
 		const checked = state.filters[group] !== false;
-		nodes.push(
-			h(
-				"button",
-				{ class: "menu-item", type: "button", role: "menuitemcheckbox", "aria-checked": String(checked), dataset: { group } },
-				svgIcon(group, "menu-item-icon"),
-				h("span", { class: "menu-item-label", text: label }),
-				checked ? svgIcon("check", "menu-check") : null,
-			),
+		const row = h(
+			"button",
+			{
+				class: "menu-item",
+				type: "button",
+				role: "menuitemcheckbox",
+				"aria-checked": String(checked),
+				dataset: { group },
+				...(group === "tools" ? { "aria-haspopup": "menu", "aria-expanded": String(state.submenuOpen) } : {}),
+			},
+			svgIcon(group, "menu-item-icon"),
+			h("span", { class: "menu-item-label", text: label }),
+			group === "tools" ? h("span", { class: "menu-value", id: "tool-value", text: state.toolFilter ?? "全部" }) : null,
+			group === "tools" ? h("span", { class: "menu-chev", "aria-hidden": "true", text: "▸" }) : null,
+			checked ? svgIcon("check", "menu-check") : null,
 		);
+		if (group !== "tools") {
+			nodes.push(row);
+			continue;
+		}
+		// 工具行：包一层容器，hover 行或子菜单都保持打开（照 deepseek 子菜单的指针桥）
+		const wrap = h("div", { class: "menu-item-wrap" }, row, buildToolSubmenu());
+		let hoverTimer;
+		wrap.addEventListener("mouseenter", () => {
+			clearTimeout(hoverTimer);
+			hoverTimer = setTimeout(() => setSubmenuOpen(true), 150);
+		});
+		wrap.addEventListener("mouseleave", () => {
+			clearTimeout(hoverTimer);
+			hoverTimer = setTimeout(() => setSubmenuOpen(false), 150);
+		});
+		nodes.push(wrap);
 	}
 	el("filter-menu").replaceChildren(...nodes);
+}
+
+/** 工具子菜单：全部 + 当前会话出现过的工具名（单选，radio 语义）。 */
+function buildToolSubmenu() {
+	const items = [submenuItem("", "全部"), ...state.toolNames.map((name) => submenuItem(name, name))];
+	return h("div", { class: "menu submenu", id: "tool-submenu", role: "menu", hidden: true }, ...items);
+}
+
+function submenuItem(toolName, label) {
+	const checked = (state.toolFilter ?? "") === toolName;
+	return h(
+		"button",
+		{ class: "menu-item", type: "button", role: "menuitemradio", "aria-checked": String(checked), dataset: { tool: toolName } },
+		h("span", { class: "menu-item-label", text: label }),
+		checked ? svgIcon("check", "menu-check") : null,
+	);
+}
+
+/** 同步工具名列表：新出现的工具会在下次打开/刷新菜单时进子菜单；已失效的选中回落到「全部」。 */
+function syncToolNames() {
+	const names = collectToolNames(state.data?.questions ?? []);
+	const changed = names.length !== state.toolNames.length || names.some((name, i) => name !== state.toolNames[i]);
+	if (state.toolFilter && !names.includes(state.toolFilter)) state.toolFilter = null;
+	if (changed) state.toolNames = names;
+	return changed;
+}
+
+function setSubmenuOpen(open, focusFirst = false) {
+	const next = state.menuOpen && open;
+	state.submenuOpen = next;
+	const submenu = el("tool-submenu");
+	if (!submenu) return;
+	submenu.hidden = !next;
+	el("filter-menu").querySelector('button[data-group="tools"]')?.setAttribute("aria-expanded", String(next));
+	if (next && focusFirst) submenu.querySelector('button[role^="menuitem"]')?.focus();
+}
+
+/** 原地更新工具行右侧的当前值与子菜单勾选态。 */
+function updateToolsRow() {
+	const value = el("tool-value");
+	if (value) value.textContent = state.toolFilter ?? "全部";
+	const submenu = el("tool-submenu");
+	if (!submenu) return;
+	for (const item of submenu.querySelectorAll('button[role="menuitemradio"]')) {
+		const checked = (item.dataset.tool ?? "") === (state.toolFilter ?? "");
+		item.setAttribute("aria-checked", String(checked));
+		const existing = item.querySelector(".menu-check");
+		if (checked && !existing) item.appendChild(svgIcon("check", "menu-check"));
+		else if (!checked && existing) existing.remove();
+	}
 }
 
 /** 原地同步勾选态（不重建 DOM：重建会把点击目标摘出文档，导致文档级监听误判为“点外部”而关菜单）。 */
@@ -302,7 +380,14 @@ function setMenuOpen(open) {
 	state.menuOpen = open;
 	el("filter-menu").hidden = !open;
 	el("filter-btn").setAttribute("aria-expanded", String(open));
-	if (open) el("filter-menu").querySelector('button[role^="menuitem"]')?.focus();
+	if (!open) {
+		setSubmenuOpen(false);
+		return;
+	}
+	// 每次打开时同步工具名并重建菜单：会话新出现的工具能进子菜单
+	syncToolNames();
+	renderFilterMenu();
+	el("filter-menu").querySelector('button[role^="menuitem"]')?.focus();
 }
 
 /** 当前会话可折叠的轮次序号（问题分组，含「会话开始」）。 */
@@ -373,7 +458,9 @@ function renderMain() {
 	const matches = state.searchIndex.search(state.query);
 	mainInner.replaceChildren(
 		...questions.map((q) => {
-			const shown = (q.events ?? []).filter((ev) => eventPasses(state.filters, ev.kind) && (!matches || matches.has(ev.id)));
+			const shown = (q.events ?? []).filter(
+				(ev) => eventPasses(state.filters, ev.kind) && eventToolPasses(state.toolFilter, ev) && (!matches || matches.has(ev.id)),
+			);
 			const body = shown.length ? shown.map(renderEvent) : h("div", { class: "ev-empty" });
 			const folded = state.folded.has(q.index);
 			return h(
@@ -688,6 +775,7 @@ async function pollSession(force = false) {
 		}
 		state.data = { meta: j.meta, questions: j.questions };
 		state.searchIndex.update(state.data.questions);
+		if (state.menuOpen && syncToolNames()) renderFilterMenu();
 		state.etag = j.etag;
 		if (j.sessionId && j.sessionId !== state.selectedId) {
 			state.selectedId = j.sessionId;
@@ -720,6 +808,14 @@ el("filter-menu").addEventListener("click", (e) => {
 	e.stopPropagation();
 	const item = e.target.closest('button[role^="menuitem"]');
 	if (!item) return;
+	if (item.dataset.tool !== undefined) {
+		state.toolFilter = item.dataset.tool || null;
+		updateToolsRow();
+		renderMain();
+		setSubmenuOpen(false);
+		el("filter-menu").querySelector('button[data-group="tools"]')?.focus();
+		return;
+	}
 	if (item.dataset.group) {
 		const group = item.dataset.group;
 		state.filters[group] = state.filters[group] === false;
@@ -731,9 +827,10 @@ el("filter-menu").addEventListener("click", (e) => {
 	}
 });
 
-// 菜单键盘导航（照 deepseek Menu：上下循环 / Home / End / Escape 关闭）
+// 菜单键盘导航（照 deepseek Menu：上下循环 / Home / End / → 进子菜单 / ← 退回 / Escape 关闭）
 el("filter-menu").addEventListener("keydown", (e) => {
-	const items = [...el("filter-menu").querySelectorAll('button[role^="menuitem"]')];
+	const scope = document.activeElement?.closest('[role="menu"]') ?? el("filter-menu");
+	const items = [...scope.querySelectorAll('button[role^="menuitem"]')];
 	if (items.length === 0) return;
 	const index = items.indexOf(document.activeElement);
 	if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -747,9 +844,29 @@ el("filter-menu").addEventListener("keydown", (e) => {
 		items[e.key === "Home" ? 0 : items.length - 1].focus();
 		return;
 	}
+	if (e.key === "ArrowRight") {
+		if (scope === el("filter-menu") && document.activeElement?.dataset?.group === "tools") {
+			e.preventDefault();
+			setSubmenuOpen(true, true);
+		}
+		return;
+	}
+	if (e.key === "ArrowLeft") {
+		if (scope !== el("filter-menu")) {
+			e.preventDefault();
+			setSubmenuOpen(false);
+			el("filter-menu").querySelector('button[data-group="tools"]')?.focus();
+		}
+		return;
+	}
 	if (e.key === "Escape") {
 		e.preventDefault();
 		e.stopPropagation();
+		if (scope !== el("filter-menu")) {
+			setSubmenuOpen(false);
+			el("filter-menu").querySelector('button[data-group="tools"]')?.focus();
+			return;
+		}
 		setMenuOpen(false);
 		el("filter-btn").focus();
 	}
@@ -784,6 +901,8 @@ sessionList.addEventListener("click", (e) => {
 	state.etag = null;
 	state.folded = new Set();
 	state.query = "";
+	state.toolFilter = null;
+	state.toolNames = [];
 	state.searchIndex = new TrajectorySearchIndex();
 	setMenuOpen(false);
 	el("search").value = "";
