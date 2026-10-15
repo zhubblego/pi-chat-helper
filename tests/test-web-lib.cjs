@@ -24,7 +24,7 @@ const check = (label, cond, extra = "") => {
 	const all = presetFilters("all");
 	check("全部预设：所有组通过", ["thinking", "tool", "text", "system", "user"].every((k) => eventPasses(all, k)));
 
-	check("标签：末段文本标记为输出", eventTagLabel({ kind: "text", isFinal: true }) === "输出" && eventTagLabel({ kind: "text" }) === "文本");
+	check("标签：文本行统一显示为输出（最终答复仅靠绿色竖条区分）", eventTagLabel({ kind: "text", isFinal: true }) === "输出" && eventTagLabel({ kind: "text" }) === "输出");
 	check("标签：出错工具", eventTagLabel({ kind: "tool", tool: { isError: true } }) === "工具✗");
 
 	// ---- 格式化（时长格式复刻自 deepseek trajectory-record.ts） ----

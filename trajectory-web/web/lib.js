@@ -53,7 +53,7 @@ export function eventTagLabel(ev) {
 		case "thinking":
 			return "思考";
 		case "text":
-			return ev.isFinal ? "输出" : "文本";
+			return "输出";
 		case "tool":
 			return ev.tool?.isError ? "工具✗" : "工具";
 		case "bash":
