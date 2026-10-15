@@ -290,6 +290,19 @@ function renderFilterMenu() {
 	el("filter-menu").replaceChildren(...nodes);
 }
 
+/** 原地同步勾选态（不重建 DOM：重建会把点击目标摘出文档，导致文档级监听误判为“点外部”而关菜单）。 */
+function syncFilterItems() {
+	for (const group of Object.keys(GROUP_LABELS)) {
+		const item = el("filter-menu").querySelector(`button[data-group="${group}"]`);
+		if (!item) continue;
+		const checked = state.filters[group] !== false;
+		item.setAttribute("aria-checked", String(checked));
+		const existing = item.querySelector(".menu-check");
+		if (checked && !existing) item.appendChild(svgIcon("check", "menu-check"));
+		else if (!checked && existing) existing.remove();
+	}
+}
+
 function updateFilterButton() {
 	const groups = Object.keys(GROUP_LABELS);
 	const on = groups.filter((g) => state.filters[g] !== false).length;
@@ -717,31 +730,32 @@ async function pollSession(force = false) {
 // ---------------------------------------------------------------------------
 
 el("filter-btn").addEventListener("click", (e) => {
+	// 只负责打开：菜单靠点外部或 Esc 关闭，方便连续调整多项
 	e.stopPropagation();
-	setMenuOpen(!state.menuOpen);
+	if (!state.menuOpen) setMenuOpen(true);
 });
 
 el("filter-menu").addEventListener("click", (e) => {
-	const item = e.target.closest("button[role^=\"menuitem\"]");
+	e.stopPropagation();
+	const item = e.target.closest('button[role^="menuitem"]');
 	if (!item) return;
 	if (item.dataset.group) {
 		const group = item.dataset.group;
 		state.filters[group] = state.filters[group] === false;
 		saveFilters();
-		renderFilterMenu();
+		syncFilterItems();
 		updateFilterButton();
 		renderMain();
-		el("filter-menu").querySelector(`button[data-group="${group}"]`)?.focus();
+		item.focus();
 		return;
 	}
 	if (item.dataset.preset) {
 		state.filters = presetFilters(item.dataset.preset);
 		saveFilters();
-		renderFilterMenu();
+		syncFilterItems();
 		updateFilterButton();
 		renderMain();
-		setMenuOpen(false);
-		el("filter-btn").focus();
+		item.focus();
 	}
 });
 
@@ -769,10 +783,12 @@ el("filter-menu").addEventListener("keydown", (e) => {
 	}
 });
 
-// 点击菜单外关闭
+// 点击菜单外关闭（用 composedPath 判断：节点可能在派发过程中被替换）
 document.addEventListener("click", (e) => {
 	if (!state.menuOpen) return;
-	if (e.target.closest("#filter-root")) return;
+	const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+	if (path.some((node) => node instanceof Element && node.id === "filter-root")) return;
+	if (e.target.closest?.("#filter-root")) return;
 	setMenuOpen(false);
 });
 
