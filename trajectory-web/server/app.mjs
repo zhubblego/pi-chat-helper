@@ -62,16 +62,29 @@ export function createTrajectoryServer(options) {
 	const projectDir = scope === "project" ? dirname(sessionFile) : undefined;
 	const log = options.log ?? (() => {});
 
-	// 工具归属：模式 A 传精确映射（pi sourceInfo）；否则静态扫描安装目录，缓存 5 分钟
+	// 工具归属：模式 A 传精确映射提供者（每次请求现取，覆盖运行时才注册的工具，
+	// 如 context-mode 的 ctx_* 不在会话启动时的 getAllTools 里）；
+	// 精确结果与静态扫描合并（精确优先），扫描结果缓存 5 分钟。
 	const ORIGINS_TTL_MS = 5 * 60_000;
-	let originsCache = options.toolOrigins
-		? { generatedAt: new Date().toISOString(), source: "pi", tools: options.toolOrigins }
-		: null;
+	const originsProvider =
+		typeof options.toolOrigins === "function" ? options.toolOrigins : options.toolOrigins ? () => options.toolOrigins : null;
+	let scanCache = null;
+
+	function getScanOrigins() {
+		if (scanCache && Date.now() - Date.parse(scanCache.generatedAt) < ORIGINS_TTL_MS) return scanCache;
+		scanCache = scanToolOrigins({ piDir: options.piDir, agentDir: options.agentDir });
+		return scanCache;
+	}
 
 	function getToolOrigins() {
-		if (originsCache && (originsCache.source === "pi" || Date.now() - Date.parse(originsCache.generatedAt) < ORIGINS_TTL_MS)) return originsCache;
-		originsCache = scanToolOrigins({ piDir: options.piDir, agentDir: options.agentDir });
-		return originsCache;
+		if (!originsProvider) return getScanOrigins();
+		let exact = {};
+		try {
+			exact = originsProvider() ?? {};
+		} catch (err) {
+			log(`工具归属精确映射读取失败，改用扫描结果：${err.message}`);
+		}
+		return { generatedAt: new Date().toISOString(), source: "pi", tools: { ...getScanOrigins().tools, ...exact } };
 	}
 
 	/** 投影缓存 LRU：file -> { id, etag, full, light } */

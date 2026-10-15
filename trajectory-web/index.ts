@@ -105,7 +105,7 @@ async function closeSlot(): Promise<void> {
 }
 
 /** 进程内启动；端口占用时降级为系统分配端口（port 0）。 */
-async function startInProcess(port: number, sessionFile: string, toolOrigins: Record<string, ToolOriginEntry>): Promise<ServerHandle> {
+async function startInProcess(port: number, sessionFile: string, toolOrigins: () => Record<string, ToolOriginEntry>): Promise<ServerHandle> {
 	const { createTrajectoryServer } = await import("./server/app.mjs");
 	const base = { scope: "project" as const, sessionFile, webDir: WEB_DIR, host: "127.0.0.1", toolOrigins };
 	try {
@@ -142,7 +142,7 @@ async function runStart(portArg: string | undefined, ctx: ExtensionCommandContex
 	}
 
 	try {
-		const handle = await startInProcess(port, sessionFile, toolOriginsFromPi(pi));
+		const handle = await startInProcess(port, sessionFile, () => toolOriginsFromPi(pi));
 		slot().handle = handle;
 		const note = handle.port === port ? "" : `（端口 ${port} 被占用，改用 ${handle.port}）`;
 		notify(`轨迹服务已启动：${handle.url}${note}\n范围：当前项目的全部会话；随本 pi 实例退出而停止`);

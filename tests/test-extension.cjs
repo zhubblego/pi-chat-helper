@@ -54,13 +54,21 @@ function freePort() {
 				if (event === "session_shutdown") shutdownHandlers.push(handler);
 				return () => {};
 			},
-			// 模式 A 的精确归属来源（真实形状：sourceInfo.source = builtin / npm:<pkg>）
-			getAllTools: () => [
-				{ name: "read", sourceInfo: { path: "builtin:read", source: "builtin" } },
-				{ name: "memory_search", sourceInfo: { path: "/tmp/pi-hermes-memory/dist/index.ts", source: "npm:pi-hermes-memory" } },
-				{ name: "local_tool", sourceInfo: { path: "/tmp/my-ext/index.ts", source: "file:/tmp/my-ext/index.ts", baseDir: "/tmp/my-ext" } },
-				{ name: "mcp__docs__search", sourceInfo: { path: "/tmp/mcp/index.ts", source: "npm:@scope/mcp" } },
-			],
+			// 模式 A 的精确归属来源（真实形状：sourceInfo.source = builtin / npm:<pkg>）；
+			// 第 2 次调用起多一个 late_tool，用于验证「每次请求现取」而非启动快照
+			getAllTools: (() => {
+				let calls = 0;
+				const base = [
+					{ name: "read", sourceInfo: { path: "builtin:read", source: "builtin" } },
+					{ name: "memory_search", sourceInfo: { path: "/tmp/pi-hermes-memory/dist/index.ts", source: "npm:pi-hermes-memory" } },
+					{ name: "local_tool", sourceInfo: { path: "/tmp/my-ext/index.ts", source: "file:/tmp/my-ext/index.ts", baseDir: "/tmp/my-ext" } },
+					{ name: "mcp__docs__search", sourceInfo: { path: "/tmp/mcp/index.ts", source: "npm:@scope/mcp" } },
+				];
+				return () => {
+					calls++;
+					return calls === 1 ? base : [...base, { name: "late_tool", sourceInfo: { path: "/tmp/late/index.ts", source: "npm:late-pkg" } }];
+				};
+			})(),
 		});
 		trail = commands["deepseek-trail"];
 		check("注册单一命令 /deepseek-trail", typeof trail?.handler === "function" && typeof trail?.getArgumentCompletions === "function");
@@ -116,6 +124,9 @@ function freePort() {
 				origins.tools.mcp__docs__search?.label === "MCP: docs",
 			JSON.stringify(origins.tools).slice(0, 220),
 		);
+		check("模式 A 精确映射与静态扫描合并", origins.source === "pi" && Object.keys(origins.tools).length > 4, String(Object.keys(origins.tools).length));
+		const originsLater = await (await fetch(`${url}api/tool-origins`)).json();
+		check("每次请求现取：运行时才注册的工具能进映射", originsLater.tools.late_tool?.label === "late-pkg", JSON.stringify(originsLater.tools.late_tool));
 
 		// ---- 幂等 ----
 		await trail.handler(`start ${port}`, ctx);

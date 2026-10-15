@@ -16,8 +16,8 @@ export interface TrajectoryServerOptions {
 	port?: number;
 	liveWindowMs?: number;
 	log?: (message: string) => void;
-	/** 精确归属映射（模式 A：扩展从 pi.getAllTools().sourceInfo 生成）。 */
-	toolOrigins?: Record<string, ToolOriginEntry>;
+	/** 精确归属映射（模式 A：扩展从 pi.getAllTools().sourceInfo 生成）；可为提供者函数以便每次请求现取。 */
+	toolOrigins?: Record<string, ToolOriginEntry> | (() => Record<string, ToolOriginEntry>);
 	/** 静态扫描用的 pi 安装目录与 agent 目录（模式 B / 测试）。 */
 	piDir?: string;
 	agentDir?: string;

@@ -27,6 +27,7 @@ import {
 	groupSessions,
 	groupToolNames,
 	kindGroup,
+	mcpLabel,
 	presetFilters,
 	renderMarkdown,
 } from "./lib.js";
@@ -57,6 +58,7 @@ const state = {
 	toolOrigins: {},
 	toolOriginsAt: 0,
 	toolOriginsLoading: false,
+	toolOriginsMissAt: 0,
 	submenuOpen: false,
 	folded: new Set(),
 	openId: null,
@@ -325,11 +327,11 @@ function buildToolSubmenu() {
 	return h("div", { class: "menu submenu", id: "tool-submenu", role: "menu", hidden: true }, h("div", { class: "menu-viewport" }, ...itemNodes));
 }
 
-/** 拉取工具归属映射（模式 A 为 pi 精确映射，模式 B 为静态扫描），缓存 5 分钟。 */
+/** 拉取工具归属映射（模式 A：pi 精确映射 + 扫描合并；模式 B：静态扫描），缓存 5 分钟；force 跳过缓存。 */
 const TOOL_ORIGINS_TTL_MS = 5 * 60_000;
-async function ensureToolOrigins() {
+async function ensureToolOrigins(force = false) {
 	if (state.toolOriginsLoading) return;
-	if (state.toolOriginsAt && Date.now() - state.toolOriginsAt < TOOL_ORIGINS_TTL_MS) return;
+	if (!force && state.toolOriginsAt && Date.now() - state.toolOriginsAt < TOOL_ORIGINS_TTL_MS) return;
 	state.toolOriginsLoading = true;
 	try {
 		const res = await fetch("/api/tool-origins");
@@ -816,7 +818,16 @@ async function pollSession(force = false) {
 		}
 		state.data = { meta: j.meta, questions: j.questions };
 		state.searchIndex.update(state.data.questions);
-		if (state.menuOpen && syncToolNames()) renderFilterMenu();
+		const namesChanged = syncToolNames();
+		if (state.menuOpen && namesChanged) renderFilterMenu();
+		// 出现未归属的工具名（如运行时才注册的扩展工具）时强制刷新映射；持续未识别时 60s 内不重试
+		const hasUnknown = state.toolNames.some((name) => !state.toolOrigins[name] && !mcpLabel(name));
+		if (hasUnknown && Date.now() - state.toolOriginsMissAt > 60_000) {
+			state.toolOriginsMissAt = Date.now();
+			void ensureToolOrigins(true).then(() => {
+				if (state.menuOpen) renderFilterMenu();
+			});
+		}
 		state.etag = j.etag;
 		if (j.sessionId && j.sessionId !== state.selectedId) {
 			state.selectedId = j.sessionId;
