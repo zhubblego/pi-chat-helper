@@ -1,4 +1,5 @@
 // 面板渲染测试：边框完整、每行宽度精确、命中区域正确、窄宽度不溢出
+const path = require("node:path");
 const { createJiti } = require(process.env.PI_HOME + "/node_modules/jiti");
 const { visibleWidth } = require(process.env.PI_HOME + "/node_modules/@earendil-works/pi-tui/dist/index.js");
 
@@ -8,7 +9,7 @@ const jiti = createJiti(__filename, {
 		"@earendil-works/pi-coding-agent": process.env.PI_HOME + "/dist/index.js",
 	},
 });
-const { QuestionPanelComponent } = jiti("/home/bbz/.pi/agent/extensions/question-panel.ts");
+const { QuestionPanelComponent } = jiti(path.join(__dirname, "..", "question-panel.ts"));
 
 // 假主题：透传文本（不注入 ANSI），便于断言可见宽度
 const fakeTheme = {

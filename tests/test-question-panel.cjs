@@ -1,4 +1,5 @@
 // question-panel 纯数据逻辑单元测试（jiti 加载 TS，无需 pi 运行时）
+const path = require("node:path");
 const { createJiti } = require(process.env.PI_HOME + "/node_modules/jiti");
 const jiti = createJiti(__filename, {
 	alias: {
@@ -6,7 +7,7 @@ const jiti = createJiti(__filename, {
 		"@earendil-works/pi-coding-agent": process.env.PI_HOME + "/dist/index.js",
 	},
 });
-const mod = jiti("/home/bbz/.pi/agent/extensions/question-panel.ts");
+const mod = jiti(path.join(__dirname, "..", "question-panel.ts"));
 
 const { collectQuestions, markerOrdinalForQuestion } = mod;
 

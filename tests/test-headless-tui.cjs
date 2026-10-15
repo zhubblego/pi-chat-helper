@@ -1,4 +1,5 @@
 // 无头真渲染验证：伪造终端跑 TuiAltScreen 全链路，验证 findTranscript/jumpToMarker
+const path = require("node:path");
 const PI_TUI = process.env.PI_HOME + "/node_modules/@earendil-works/pi-tui";
 const { TuiAltScreen, ScrollView, Container } = require(PI_TUI + "/dist/index.js");
 const { getScrollViewBox } = require(PI_TUI + "/dist/layout.js");
@@ -10,7 +11,7 @@ const jiti = createJiti(__filename, {
 		"@earendil-works/pi-coding-agent": process.env.PI_HOME + "/dist/index.js",
 	},
 });
-const mod = jiti("/home/bbz/.pi/agent/extensions/question-panel.ts");
+const mod = jiti(path.join(__dirname, "..", "question-panel.ts"));
 const { findTranscript, jumpToMarker } = mod;
 
 // ---- 伪终端：收集输出，尺寸 100x30 ----

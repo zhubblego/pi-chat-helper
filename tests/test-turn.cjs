@@ -1,4 +1,5 @@
 // 回合分析：buildTurn 数据构建 + 回合视图渲染/交互
+const path = require("node:path");
 const { createJiti } = require(process.env.PI_HOME + "/node_modules/jiti");
 const { visibleWidth } = require(process.env.PI_HOME + "/node_modules/@earendil-works/pi-tui/dist/index.js");
 
@@ -8,7 +9,7 @@ const jiti = createJiti(__filename, {
 		"@earendil-works/pi-coding-agent": process.env.PI_HOME + "/dist/index.js",
 	},
 });
-const mod = jiti("/home/bbz/.pi/agent/extensions/question-panel.ts");
+const mod = jiti(path.join(__dirname, "..", "question-panel.ts"));
 const { buildTurn, QuestionPanelComponent } = mod;
 // 初始化内置主题，使 getMarkdownTheme()/Markdown 可用（真实 pi 运行时已初始化）
 try {
