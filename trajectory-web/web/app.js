@@ -831,8 +831,14 @@ el("filter-menu").addEventListener("click", (e) => {
 	}
 	if (item.dataset.tool !== undefined) {
 		const name = item.dataset.tool;
-		if (name === "") state.toolExcluded.clear();
-		else if (state.toolExcluded.has(name)) state.toolExcluded.delete(name);
+		if (name === "") {
+			// 全选开关：已全勾 → 全不勾（排除全部）；否则恢复全勾
+			if (state.toolExcluded.size === 0) {
+				for (const toolName of state.toolNames) state.toolExcluded.add(toolName);
+			} else {
+				state.toolExcluded.clear();
+			}
+		} else if (state.toolExcluded.has(name)) state.toolExcluded.delete(name);
 		else state.toolExcluded.add(name);
 		updateSubmenuChecks();
 		renderMain();

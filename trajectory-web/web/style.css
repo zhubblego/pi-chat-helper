@@ -380,8 +380,7 @@ svg.tb-icon {
 	display: flex;
 	flex-direction: column;
 	border-radius: var(--dsw-radius-md);
-	background: var(--dsw-menu-surface-fill);
-	backdrop-filter: var(--dsw-menu-backdrop-filter);
+	background: var(--dsw-alias-bg-layer-2);
 	box-shadow: var(--dsw-elevation-prominent);
 	--dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
 }
