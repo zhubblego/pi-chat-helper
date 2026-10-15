@@ -250,17 +250,10 @@ function renderSessions() {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// 工具条（deepseek 工具栏形态：预设 + 过滤开关 + 轮次折叠）
+// 工具条（deepseek 工具栏形态：轮次折叠 + 过滤菜单）
 // ---------------------------------------------------------------------------
 
-const PRESETS = [
-	["all", "全部"],
-	["thinking", "仅思考"],
-	["tools", "仅工具"],
-	["text", "仅输出"],
-];
-
-/** 过滤菜单：显示类型（勾选切换）+ 快捷预设（照 deepseek Menu 的紧凑卡与选中语义）。 */
+/** 过滤菜单：显示类型勾选（照 deepseek Menu 的紧凑卡与选中语义）。 */
 function renderFilterMenu() {
 	const nodes = [h("div", { class: "menu-label", role: "presentation", text: "显示类型" })];
 	for (const [group, label] of Object.entries(GROUP_LABELS)) {
@@ -272,18 +265,6 @@ function renderFilterMenu() {
 				svgIcon(group, "menu-item-icon"),
 				h("span", { class: "menu-item-label", text: label }),
 				checked ? svgIcon("check", "menu-check") : null,
-			),
-		);
-	}
-	nodes.push(h("div", { class: "menu-separator", role: "separator" }));
-	nodes.push(h("div", { class: "menu-label", role: "presentation", text: "快捷" }));
-	for (const [key, label] of PRESETS) {
-		nodes.push(
-			h(
-				"button",
-				{ class: "menu-item", type: "button", role: "menuitem", dataset: { preset: key } },
-				svgIcon(key, "menu-item-icon"),
-				h("span", { class: "menu-item-label", text: label }),
 			),
 		);
 	}
@@ -742,15 +723,6 @@ el("filter-menu").addEventListener("click", (e) => {
 	if (item.dataset.group) {
 		const group = item.dataset.group;
 		state.filters[group] = state.filters[group] === false;
-		saveFilters();
-		syncFilterItems();
-		updateFilterButton();
-		renderMain();
-		item.focus();
-		return;
-	}
-	if (item.dataset.preset) {
-		state.filters = presetFilters(item.dataset.preset);
 		saveFilters();
 		syncFilterItems();
 		updateFilterButton();

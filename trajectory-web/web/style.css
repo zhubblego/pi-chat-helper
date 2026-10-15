@@ -446,12 +446,6 @@ svg.tb-icon {
 	font: var(--dsw-font-xxxs-11);
 }
 
-.menu-separator {
-	height: 0.5px;
-	margin: 2px;
-	background: var(--dsw-alias-border-l2);
-}
-
 /* 搜索框（复刻 deepseek TrajectoryToolbar 的 search 规格） */
 .tb-search {
 	display: flex;

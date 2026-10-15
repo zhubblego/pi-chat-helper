@@ -23,7 +23,7 @@
 - 复刻 deepseek `ui-theme` 样式为 `web/tokens.css`（MIT，上游提交 `571902028a`：设计平台色板 + 语义别名 + 字体/圆角/动效 + 滚动条 + 焦点环），`web/style.css` 全部组件改用 `--dsw-*` token
 - 新增 deepseek 风格**会话侧边栏**：模式 B 按项目分组、live 亮点、相对时间、文件大小；点击切换会话
 - 保留两级轨迹（问题 sticky 分段 + 事件行）；详情抽屉 Markdown/参数/结果/tokens
-- **工具条**（复刻 deepseek `TrajectoryToolbar` 形态，不含时长控件）：「轮次」折叠按钮（⊟/⊞ 全部折叠/展开）+ 单个「过滤」按钮（显示 `过滤 n/5` 计数）——点击弹 deepseek 紧凑菜单卡（复刻 `Menu.module.css` + `MenuSurface`：4px 内边距、半透明底 + backdrop-filter、elevation-prominent、0.5px l2 分隔线）：显示类型 5 项为勾选菜单项（尾部勾 + `menuitemcheckbox`/`aria-checked`），快捷预设 4 项；勾选后菜单保持打开可连续切换，预设执行后关闭；支持 ↑↓/Home/End/Esc 与点击外部关闭
+- **工具条**（复刻 deepseek `TrajectoryToolbar` 形态，不含时长控件）：「轮次」折叠按钮（⊟/⊞ 全部折叠/展开）+ 单个「过滤」按钮（显示 `过滤 n/5` 计数）——点击弹 deepseek 紧凑菜单卡（复刻 `Menu.module.css` + `MenuSurface`：4px 内边距、半透明底 + backdrop-filter、elevation-prominent）：显示类型 5 项为勾选菜单项（尾部勾 + `menuitemcheckbox`/`aria-checked`）；勾选后菜单保持打开可连续切换，关闭仅靠点菜单外 / Esc / 切换会话；支持 ↑↓/Home/End
 - **轮次折叠**：点击问题头部的 ⊟/⊞ 折叠单轮，工具条按钮折叠全部；折叠仅隐藏正文，sticky 头仍可用于导航
 - **搜索**（复刻 deepseek `trajectory-search-index.ts`）：工具条搜索框（照搬其 search 规格）；会话级增量全文索引，按事件稳定 id 缓存来源数组、空格分隔 AND 匹配、大小写不敏感，切换会话重建
 - **时长格式**（复刻 `trajectory-record.ts` 的 `formatDurationMillis`/`formatElapsedSeconds`）：整数毫秒 + 千分位，未知显示 `—`
