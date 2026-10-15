@@ -2,7 +2,7 @@
 /**
  * main.mjs — 轨迹观察 web 服务（零依赖）。
  *
- * 由 pi 扩展 `/start` 以独立后台进程方式拉起，也可以手动运行：
+ * 由 pi 扩展 `/deepseek-trail start` 以独立后台进程方式拉起，也可以手动运行：
  *   node server/main.mjs --session <file> --port 7717
  *
  * 参数：

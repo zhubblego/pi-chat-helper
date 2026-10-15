@@ -10,14 +10,14 @@ pi coding agent 的个人扩展集合。
 浏览器里看一整页会话轨迹：一级是提问（问题 1、问题 2 …，同级分组），二级是该回合内的事件链（提问原文、思维链、工具调用与结果、输出文本、系统提示/压缩/模型切换等上下文事件）。左侧问题栏带一组可折叠的过滤按钮（提问/思考/工具/输出/上下文，含「仅思考」等预设），点条目在右侧抽屉看完整内容（Markdown 渲染、工具参数/结果、tokens 与耗时）。
 
 ```text
-/start            # 启动服务（默认 127.0.0.1:7717），浏览器打开提示的 URL
-/start 8899       # 指定端口
-/stop             # 停止服务并清理运行时状态
+/deepseek-trail start          # 启动服务（默认 127.0.0.1:7717），浏览器打开提示的 URL
+/deepseek-trail start 8899     # 指定端口
+/deepseek-trail stop           # 停止服务并清理运行时状态
 ```
 
 - **独立后台进程**：服务 detached 起在 pi 之外，pi 退出、`/new`、重开会话都不影响页面；只读会话 JSONL，不写回、不改上下文。
 - **增量刷新**：页面每 2s 轮询，会话在终端里继续推进时轨迹自动更新；重字段在列表里截断，点开详情时按需拉全文。
-- **幂等与安全**：重复 `/start` 只提示当前 URL；服务在观察别的会话时提示先 `/stop`；终止前用 `/proc/<pid>/cmdline` 核实进程归属，避免 pid 复用误杀。
+- **幂等与安全**：重复 `/deepseek-trail start` 只提示当前 URL；服务在观察别的会话时提示先 `/deepseek-trail stop` ；终止前用 `/proc/<pid>/cmdline` 核实进程归属，避免 pid 复用误杀。
 - 运行时状态在 `~/.pi/agent/trajectory-web/`（state.json、server.log）。
 
 ### 部署与开发
@@ -28,7 +28,7 @@ pi coding agent 的个人扩展集合。
 # 部署（新开会话生效）
 cp -r trajectory-web ~/.pi/agent/extensions/
 
-# 开发时加载仓库开发版（根 index.ts 是聚合入口，注册 /questions、/start、/stop）
+# 开发时加载仓库开发版（根 index.ts 是聚合入口，注册 /questions、/deepseek-trail）
 pi -e .
 # 只加载本仓库开发版、不叠加已装扩展（避免重名命令被拆成 /name:1、/name:2）：
 pi -ne -e .
