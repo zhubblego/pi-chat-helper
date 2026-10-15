@@ -28,8 +28,10 @@ pi coding agent 的个人扩展集合。
 # 部署（新开会话生效）
 cp -r trajectory-web ~/.pi/agent/extensions/
 
-# 开发时直接加载
-pi --extension ./trajectory-web/index.ts
+# 开发时直接加载（-e 指向扩展目录或入口文件；已实测可用）
+pi -e ./trajectory-web
+# 等价写法：pi -e ./trajectory-web/index.ts
+# 注意：不要用 pi -e .——仓库根目录没有 package.json(pi.extensions) 或 index.ts，会报 Cannot find module
 ```
 
 ## question-panel
