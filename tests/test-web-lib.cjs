@@ -11,7 +11,7 @@ const check = (label, cond, extra = "") => {
 
 (async () => {
 	const lib = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "lib.js")).href);
-	const { kindGroup, eventPasses, presetFilters, eventTagLabel, fmtDuration, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions } = lib;
+	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, TrajectorySearchIndex } = lib;
 
 	// ---- 过滤映射 ----
 	check("tool → tools 组", kindGroup("tool") === "tools" && kindGroup("bash") === "tools");
@@ -27,8 +27,12 @@ const check = (label, cond, extra = "") => {
 	check("标签：末段文本标记为输出", eventTagLabel({ kind: "text", isFinal: true }) === "输出" && eventTagLabel({ kind: "text" }) === "文本");
 	check("标签：出错工具", eventTagLabel({ kind: "tool", tool: { isError: true } }) === "工具✗");
 
-	// ---- 格式化 ----
-	check("fmtDuration", fmtDuration(800) === "800ms" && fmtDuration(1500) === "1.5s" && fmtDuration(65000) === "1m05s");
+	// ---- 格式化（时长格式复刻自 deepseek trajectory-record.ts） ----
+	check(
+		"formatDurationMillis",
+		formatDurationMillis(800) === "800ms" && formatDurationMillis(1500) === "1,500ms" && formatDurationMillis(65000) === "65,000ms" && formatDurationMillis(1234567) === "1,234,567ms" && formatDurationMillis(null) === "—",
+	);
+	check("formatElapsedSeconds", formatElapsedSeconds(1.5) === "1,500ms" && formatElapsedSeconds(null) === "—");
 	check("fmtTokens", fmtTokens(999) === "999" && fmtTokens(1500) === "1.5k" && fmtTokens(125000) === "125k" && fmtTokens(2200000) === "2.20M");
 	check("fmtCost", fmtCost(0.0012) === "$0.0012" && fmtCost(1.5) === "$1.50");
 	check("fmtTime", /^\d{2}:\d{2}$/.test(fmtTime(Date.now())));
@@ -48,7 +52,31 @@ const check = (label, cond, extra = "") => {
 		{ id: "2", projectPath: "/b", modified: 2 },
 		{ id: "3", projectPath: "/a", modified: 1 },
 	]);
-	check("groupSessions 按项目分组且保持活跃顺序", grouped.length === 2 && grouped[0].label === "a" && grouped[0].sessions.map((s) => s.id).join(",") === "1,3" && grouped[1].label === "b");
+	check("分组保序且不同项目分开", grouped[1].sessions.map((s) => s.id).join(",") === "2");
+
+	// ---- 搜索索引（复刻 deepseek TrajectorySearchIndex） ----
+	const questions = [
+		{
+			index: 0,
+			summary: "读取配置",
+			events: [
+				{ id: "e1", kind: "tool", preview: "read config.json", tool: { name: "read", argsText: '{"path":"config.json"}', result: "ok" } },
+				{ id: "e2", kind: "thinking", preview: "分析", text: "先看配置再改代码" },
+			],
+		},
+		{ index: 1, summary: "写测试", events: [{ id: "e3", kind: "text", preview: "完成", text: "测试通过" }] },
+	];
+	const index = new TrajectorySearchIndex();
+	check("索引 update 首次返回 true", index.update(questions) === true);
+	check("索引 update 同引用返回 false", index.update(questions) === false);
+	check("空查询返回 null", index.search("  ") === null);
+	const m1 = index.search("CONFIG");
+	check("大小写不敏感匹配", m1 instanceof Set && m1.has("e1") && !m1.has("e3"), JSON.stringify([...(m1 ?? [])]));
+	const m2 = index.search("配置 代码");
+	check("多词 AND 匹配同一事件", m2.size === 1 && m2.has("e2"), JSON.stringify([...m2]));
+	check("无命中返回空集", index.search("不存在的词").size === 0);
+	index.update([{ ...questions[0], events: [questions[0].events[0]] }]);
+	check("增量同步移除消失的事件", index.search("先看配置").size === 0);
 
 	// ---- Markdown：转义与注入 ----
 	const xss = renderMarkdown("<script>alert(1)</script>\n\n<img src=x onerror=alert(2)>");

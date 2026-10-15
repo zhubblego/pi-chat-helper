@@ -343,13 +343,61 @@ body {
 	outline-offset: 1px;
 }
 
-.tb-action {
-	margin-left: auto;
-}
-
 .tb-icon {
 	color: var(--dsw-alias-label-tertiary);
 	font: 14px/14px var(--ds-font-family-code);
+}
+
+/* 搜索框（复刻 deepseek TrajectoryToolbar 的 search 规格） */
+.tb-search {
+	display: flex;
+	flex: 0 1 164px;
+	align-items: center;
+	min-width: 84px;
+	height: 22px;
+	margin-left: auto;
+	padding: 0 6px;
+	gap: 4px;
+	border: 0.5px solid var(--dsw-alias-border-l4);
+	border-radius: var(--dsw-radius-sm);
+	color: var(--dsw-alias-label-caption);
+	background: var(--dsw-alias-bg-layer-2);
+}
+
+.tb-search:hover {
+	border-color: var(--dsw-alias-label-caption);
+}
+
+.tb-search:focus-within {
+	border-color: var(--dsw-alias-state-business-primary);
+	background: var(--dsw-alias-bg-layer-1);
+}
+
+.tb-search-icon {
+	flex: none;
+	width: 11px;
+	height: 11px;
+}
+
+.tb-search input {
+	min-width: 0;
+	width: 100%;
+	padding: 0;
+	border: 0;
+	outline: 0;
+	color: var(--dsw-alias-label-primary);
+	background: transparent;
+	font: var(--dsw-font-xxs-12);
+}
+
+.tb-search input::placeholder {
+	color: var(--dsw-alias-label-caption);
+}
+
+.tb-search input::-webkit-search-cancel-button {
+	width: 12px;
+	height: 12px;
+	cursor: pointer;
 }
 
 /* ---------------------------------------------------------------- 问题列表 */

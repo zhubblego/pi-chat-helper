@@ -1,5 +1,5 @@
 /**
- * app.js — 轨迹观察页：左侧会话栏 + 问题栏（含过滤按钮组），右侧整页轨迹（按问题分段）。
+ * app.js — 轨迹观察页：左侧会话栏，右侧轨迹（按轮次分段，工具条过滤/折叠）。
  *
  * 数据：
  *   - /api/sessions  会话列表（mode A 本项目；mode B 全部项目，按项目分组）
@@ -12,15 +12,16 @@
  */
 import {
 	GROUP_LABELS,
+	TrajectorySearchIndex,
 	eventPasses,
 	eventTagLabel,
 	fmtBytes,
 	fmtClock,
 	fmtCost,
-	fmtDuration,
 	fmtRelative,
 	fmtTime,
 	fmtTokens,
+	formatDurationMillis,
 	groupSessions,
 	kindGroup,
 	presetFilters,
@@ -34,7 +35,6 @@ const SESSION_LIST_EVERY = 3; // 每 3 个 tick 刷一次会话列表（约 6s�
 const el = (id) => document.getElementById(id);
 const main = el("main");
 const mainInner = el("main-inner");
-const questionList = el("question-list");
 const sessionList = el("session-list");
 const drawer = el("drawer");
 
@@ -46,8 +46,9 @@ const state = {
 	data: null,
 	etag: null,
 	filters: presetFilters("all"),
+	searchIndex: new TrajectorySearchIndex(),
+	query: "",
 	folded: new Set(),
-	activeQ: null,
 	openId: null,
 	openFull: null,
 	pollingSession: false,
@@ -111,6 +112,43 @@ function muted(text) {
 	return h("div", { class: "muted", text });
 }
 
+// 工具条图标（12×12，描边跟随字号颜色；deepseek 按钮形态：图标在左、名称在右）
+const ICONS = {
+	all: [
+		["rect", { x: 1.5, y: 1.5, width: 3.6, height: 3.6, rx: 1 }],
+		["rect", { x: 6.9, y: 1.5, width: 3.6, height: 3.6, rx: 1 }],
+		["rect", { x: 1.5, y: 6.9, width: 3.6, height: 3.6, rx: 1 }],
+		["rect", { x: 6.9, y: 6.9, width: 3.6, height: 3.6, rx: 1 }],
+	],
+	user: [
+		["circle", { cx: 6, cy: 4, r: 2.2 }],
+		["path", { d: "M2.2 10.8c.7-2.1 2.1-3.2 3.8-3.2s3.1 1.1 3.8 3.2" }],
+	],
+	thinking: [["path", { d: "M6 1.6 7.15 4.85 10.4 6 7.15 7.15 6 10.4 4.85 7.15 1.6 6 4.85 4.85z" }]],
+	tools: [
+		["rect", { x: 1.5, y: 2.5, width: 9, height: 7, rx: 1.5 }],
+		["path", { d: "M4 5.2 5.4 6.6 4 8" }],
+	],
+	text: [["path", { d: "M2 3.4h8M2 6h8M2 8.6h5" }]],
+	context: [
+		["path", { d: "M6 1.7 1.8 4.1 6 6.5l4.2-2.4z" }],
+		["path", { d: "M1.8 7.1 6 9.5l4.2-2.4" }],
+	],
+};
+
+function svgIcon(name) {
+	const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+	svg.setAttribute("viewBox", "0 0 12 12");
+	svg.setAttribute("aria-hidden", "true");
+	svg.setAttribute("class", "tb-icon");
+	for (const [tag, attrs] of ICONS[name] ?? []) {
+		const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+		for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+		svg.appendChild(node);
+	}
+	return svg;
+}
+
 // ---------------------------------------------------------------------------
 // 持久化
 // ---------------------------------------------------------------------------
@@ -155,7 +193,7 @@ function renderTopbar() {
 		`${meta.entryCount} 条目`,
 		meta.totals?.tools ? `${meta.totals.tools} 工具` : "",
 		fmtTokens(meta.totals?.tokens) ? `${fmtTokens(meta.totals.tokens)} tok` : "",
-		fmtDuration(meta.totals?.durationMs) ? fmtDuration(meta.totals.durationMs) : "",
+		meta.totals?.durationMs ? formatDurationMillis(meta.totals.durationMs) : "",
 		meta.updatedAt ? `最后更新 ${fmtTime(Date.parse(meta.updatedAt))}` : "",
 	];
 	el("session-meta").textContent = bits.filter(Boolean).join(" · ");
@@ -228,12 +266,22 @@ function presetActive(name) {
 function renderToolbar() {
 	el("presets").replaceChildren(
 		...PRESETS.map(([key, label]) =>
-			h("button", { class: "tb-btn", type: "button", dataset: { preset: key }, "aria-pressed": String(presetActive(key)), text: label }),
+			h(
+				"button",
+				{ class: "tb-btn", type: "button", dataset: { preset: key }, "aria-pressed": String(presetActive(key)), title: label },
+				svgIcon(key),
+				label,
+			),
 		),
 	);
 	el("filters").replaceChildren(
 		...Object.entries(GROUP_LABELS).map(([group, label]) =>
-			h("button", { class: "tb-btn", type: "button", dataset: { group }, "aria-pressed": String(state.filters[group] !== false), text: label }),
+			h(
+				"button",
+				{ class: "tb-btn", type: "button", dataset: { group }, "aria-pressed": String(state.filters[group] !== false), title: label },
+				svgIcon(group),
+				label,
+			),
 		),
 	);
 	updateFoldAll();
@@ -272,26 +320,10 @@ function qStats(q) {
 		st.tools ? `${st.tools} 工具` : "",
 		st.errors ? `${st.errors} 错误` : "",
 		fmtTokens(st.tokens),
-		fmtDuration(st.durationMs),
+		st.durationMs ? formatDurationMillis(st.durationMs) : "",
 	]
 		.filter(Boolean)
 		.join(" · ");
-}
-
-function renderSidebar() {
-	const questions = state.data?.questions ?? [];
-	questionList.replaceChildren(
-		...questions.map((q) =>
-			h(
-				"button",
-				{ class: "q-link", dataset: { q: String(q.index) }, title: q.summary || "" },
-				h("span", { class: "q-no", text: q.index < 0 ? "起" : String(q.index + 1) }),
-				h("span", { class: "q-time", text: fmtTime(q.ts) || "" }),
-				h("span", { class: "q-sum", text: q.summary || "" }),
-				h("span", { class: "q-mini", text: qStats(q) }),
-			),
-		),
-	);
 }
 
 // ---------------------------------------------------------------------------
@@ -304,9 +336,9 @@ function renderEvent(ev) {
 	if (ev.isFinal) classes.push("is-final");
 	const meta = [
 		fmtTime(ev.ts),
-		ev.msg?.durationMs !== undefined ? fmtDuration(ev.msg.durationMs) : "",
+		ev.msg?.durationMs !== undefined ? formatDurationMillis(ev.msg.durationMs) : "",
 		ev.msg?.usage ? fmtTokens(ev.msg.usage.totalTokens) : "",
-		ev.kind === "tool" && ev.tool?.durationMs !== undefined ? fmtDuration(ev.tool.durationMs) : "",
+		ev.kind === "tool" && ev.tool?.durationMs !== undefined ? formatDurationMillis(ev.tool.durationMs) : "",
 	]
 		.filter(Boolean)
 		.join(" · ");
@@ -329,17 +361,16 @@ function renderMain() {
 		mainInner.replaceChildren(h("div", { class: "empty", text: "该会话还没有提问（或正在加载）" }));
 		return;
 	}
+	const matches = state.searchIndex.search(state.query);
 	mainInner.replaceChildren(
 		...questions.map((q) => {
-			const shown = (q.events ?? []).filter((ev) => eventPasses(state.filters, ev.kind));
+			const shown = (q.events ?? []).filter((ev) => eventPasses(state.filters, ev.kind) && (!matches || matches.has(ev.id)));
 			const body = shown.length ? shown.map(renderEvent) : muted("（当前过滤下无条目）");
 			const folded = state.folded.has(q.index);
 			return h(
 				"section",
 				{ class: `question${folded ? " folded" : ""}`, id: `q-${q.index}`, dataset: { q: String(q.index) } },
-				h(
-					"header",
-					{ class: "q-head" },
+				h("header", { class: "q-head", title: folded ? "双击展开本轮" : "双击收起本轮" },
 					h("button", {
 						class: "q-fold",
 						type: "button",
@@ -348,7 +379,7 @@ function renderMain() {
 						"aria-expanded": String(!folded),
 						text: folded ? "⊞" : "⊟",
 					}),
-					h("span", { class: "q-no", text: q.index < 0 ? "会话开始" : `问题 ${q.index + 1}` }),
+					h("span", { class: "q-no", text: q.index < 0 ? "会话开始" : `第 ${q.index + 1} 轮` }),
 					h("span", { class: "q-time", text: fmtTime(q.ts) || "" }),
 					h("span", { class: "q-sum", title: q.summary, text: q.summary }),
 					h("span", { class: "q-stats", text: qStats(q) }),
@@ -357,23 +388,7 @@ function renderMain() {
 			);
 		}),
 	);
-	updateActiveQuestion();
 	updateFoldAll();
-}
-
-function updateActiveQuestion() {
-	const top = main.getBoundingClientRect().top + 60;
-	let active = null;
-	for (const sec of mainInner.querySelectorAll(".question")) {
-		if (sec.getBoundingClientRect().top <= top) active = sec.dataset.q;
-		else break;
-	}
-	if (active !== state.activeQ) {
-		state.activeQ = active;
-		for (const link of questionList.querySelectorAll(".q-link")) {
-			link.classList.toggle("active", link.dataset.q === active);
-		}
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -410,12 +425,12 @@ function drawerMetaNodes(view, light) {
 	const nodes = [];
 	if (view.iso) nodes.push(chipNode("时间", new Date(view.iso).toLocaleString()));
 	if (view.msg?.model) nodes.push(chipNode("模型", [view.msg.provider, view.msg.model].filter(Boolean).join("/")));
-	if (view.msg?.durationMs !== undefined) nodes.push(chipNode("耗时", fmtDuration(view.msg.durationMs)));
+	if (view.msg?.durationMs !== undefined) nodes.push(chipNode("耗时", formatDurationMillis(view.msg.durationMs)));
 	if (view.msg?.usage) nodes.push(chipNode("用量", usageText(view.msg.usage)));
 	if (view.msg?.stopReason) nodes.push(chipNode("结束", view.msg.stopReason));
 	if (view.thinkingLevel?.level) nodes.push(chipNode("思考等级", view.thinkingLevel.level));
 	if (view.modelChange) nodes.push(chipNode("切换到", `${view.modelChange.provider ?? "?"}/${view.modelChange.modelId ?? "?"}`));
-	if (view.tool?.durationMs !== undefined) nodes.push(chipNode("工具耗时", fmtDuration(view.tool.durationMs)));
+	if (view.tool?.durationMs !== undefined) nodes.push(chipNode("工具耗时", formatDurationMillis(view.tool.durationMs)));
 	if (view.compaction?.tokensBefore) nodes.push(chipNode("压缩前", fmtTokens(view.compaction.tokensBefore)));
 	if (view.tool?.isError) nodes.push(chipNode("出错", "", "err"));
 	if (light?.truncated && (!state.openFull || state.openFull.id !== view.id)) nodes.push(chipNode("加载全文中…", "", "loading"));
@@ -436,7 +451,7 @@ function nestedListNode(tool) {
 					null,
 					h("code", { text: String(n.name ?? "?") }),
 					n.status ? ` · ${n.status}` : "",
-					n.durationMs ? ` · ${fmtDuration(n.durationMs)}` : "",
+					n.durationMs ? ` · ${formatDurationMillis(n.durationMs)}` : "",
 					n.error ? h("span", { class: "err", text: ` · ${typeof n.error === "string" ? n.error : JSON.stringify(n.error)}` }) : "",
 				),
 			),
@@ -663,6 +678,7 @@ async function pollSession(force = false) {
 			return;
 		}
 		state.data = { meta: j.meta, questions: j.questions };
+		state.searchIndex.update(state.data.questions);
 		state.etag = j.etag;
 		if (j.sessionId && j.sessionId !== state.selectedId) {
 			state.selectedId = j.sessionId;
@@ -670,7 +686,6 @@ async function pollSession(force = false) {
 		}
 		const keepTop = main.scrollTop;
 		renderTopbar();
-		renderSidebar();
 		renderMain();
 		main.scrollTop = keepTop;
 		refreshOpen();
@@ -705,6 +720,11 @@ el("filters").addEventListener("click", (e) => {
 	renderMain();
 });
 
+el("search").addEventListener("input", (e) => {
+	state.query = e.target.value;
+	renderMain();
+});
+
 el("fold-all").addEventListener("click", () => {
 	const indexes = foldableQuestions();
 	const allFolded = indexes.length > 0 && indexes.every((i) => state.folded.has(i));
@@ -719,12 +739,14 @@ sessionList.addEventListener("click", (e) => {
 	state.data = null;
 	state.etag = null;
 	state.folded = new Set();
+	state.query = "";
+	state.searchIndex = new TrajectorySearchIndex();
+	el("search").value = "";
 	state.openId = null;
 	state.openFull = null;
 	drawer.hidden = true;
 	renderSessions();
 	renderTopbar();
-	renderSidebar();
 	renderMain();
 	main.scrollTop = 0;
 	pollSession(true);
@@ -752,10 +774,15 @@ mainInner.addEventListener("keydown", (e) => {
 	}
 });
 
-questionList.addEventListener("click", (e) => {
-	const link = e.target.closest(".q-link");
-	if (!link) return;
-	document.getElementById(`q-${link.dataset.q}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+mainInner.addEventListener("dblclick", (e) => {
+	if (e.target.closest(".q-fold")) return;
+	const head = e.target.closest(".q-head");
+	if (!head) return;
+	const index = Number(head.parentElement?.dataset.q);
+	if (Number.isNaN(index)) return;
+	if (state.folded.has(index)) state.folded.delete(index);
+	else state.folded.add(index);
+	renderMain();
 });
 
 el("drawer-close").addEventListener("click", closeDrawer);
@@ -766,7 +793,6 @@ el("refresh").addEventListener("click", () => {
 	pollSessions(true);
 	pollSession(true);
 });
-main.addEventListener("scroll", updateActiveQuestion, { passive: true });
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
 
 // ---------------------------------------------------------------------------

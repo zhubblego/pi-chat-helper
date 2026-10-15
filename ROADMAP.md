@@ -25,6 +25,9 @@
 - 保留两级轨迹（问题 sticky 分段 + 事件行）；详情抽屉 Markdown/参数/结果/tokens
 - **工具条**（复刻 deepseek `TrajectoryToolbar` 形态，不含时长控件）：预设按钮组（全部/仅思考/仅工具/仅输出）+ 过滤开关按钮组（提问/思考/工具/输出/上下文，aria-pressed 状态）+ 「轮次」折叠按钮（⊟/⊞ 全部折叠/展开）
 - **轮次折叠**：点击问题头部的 ⊟/⊞ 折叠单轮，工具条按钮折叠全部；折叠仅隐藏正文，sticky 头仍可用于导航
+- **搜索**（复刻 deepseek `trajectory-search-index.ts`）：工具条搜索框（照搬其 search 规格）；会话级增量全文索引，按事件稳定 id 缓存来源数组、空格分隔 AND 匹配、大小写不敏感，切换会话重建
+- **时长格式**（复刻 `trajectory-record.ts` 的 `formatDurationMillis`/`formatElapsedSeconds`）：整数毫秒 + 千分位，未知显示 `—`
+- 样式复刻清单：`tokens.css` 整份 token 层、工具条/搜索/会话侧栏 CSS 均照搬 deepseek 规格；**例外（不可移植）**：Markdown 渲染与 JSON 展示自研——源码为 React 组件 + mdast/shiki/katex 依赖链
 - 暗色由 `body[data-ds-dark-theme]` 承载，默认跟随系统
 
 ### 测试
@@ -41,10 +44,11 @@
 ## 待办（候选，按需）
 
 - 轨迹时间概览条（pi 数据无 TTFT，只能近似；主人已明确暂不需要时长维度）
-- 条目搜索（deepseek 工具条右侧有搜索框，我们尚未做）、长会话虚拟滚动
+- 长会话虚拟滚动（源码用 @tanstack/react-virtual，不可直接移植，需照逻辑自研）
+- JSON 树形展示（源码 JsonTree 是 React 组件，可照其结构自研）
 - 会话管理入口（重命名/删除）、会话列表搜索
 - 手动主题切换（当前跟随系统）
 
 ## 最近验证
 
-2026-10-15：9 套测试全绿（含新增 sessions 扫描与重写的 server/extension）；页面输出核验：工具条三部分（预设/过滤/轮次）齐备、无时长控件、旧侧栏过滤面板已移除；`tsc -p tsconfig.json` 零错误；真实 pi `pi -ne -e .` 退出码 0 且零加载失败；`npm run dev` 成功启动模式 B 并返回 465 个会话、tokens.css 608 变量。
+2026-10-15：9 套测试全绿（新增搜索索引与时长格式用例）；页面输出核验：工具条含搜索框、搜索接入索引、无时长控件；`tsc` 零错误；真实 pi `pi -ne -e .` 零加载失败；`npm run dev` 起模式 B（465 会话）；本轮按「能搬不写」原则移植：时长格式（trajectory-record.ts）、搜索索引（trajectory-search-index.ts）、工具条搜索样式。

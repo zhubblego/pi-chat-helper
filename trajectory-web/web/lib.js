@@ -96,13 +96,23 @@ export function fmtClock(ts = Date.now()) {
 	return `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
 }
 
-export function fmtDuration(ms) {
-	if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "";
-	if (ms < 1000) return `${Math.round(ms)}ms`;
-	const s = ms / 1000;
-	if (s < 60) return `${s < 10 ? s.toFixed(1) : Math.round(s)}s`;
-	const m = Math.floor(s / 60);
-	return `${m}m${p2(Math.round(s - m * 60))}s`;
+// ---------------------------------------------------------------------------
+// 时长格式（复刻 deepseek ui-trajectory trajectory-record.ts）
+// ---------------------------------------------------------------------------
+
+/**
+ * 毫秒时长：整数毫秒 + 千分位；未知返回 '—'。
+ * 复刻自 deepseek-harness（MIT）ui-trajectory/src/client/trajectory-record.ts
+ * 的 formatDurationMillis。
+ */
+export function formatDurationMillis(milliseconds) {
+	if (milliseconds === null || milliseconds === undefined || !Number.isFinite(milliseconds)) return "—";
+	return `${String(Math.round(milliseconds)).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}ms`;
+}
+
+/** 秒转毫秒后走 formatDurationMillis（对应源码 formatElapsedSeconds）。 */
+export function formatElapsedSeconds(seconds) {
+	return formatDurationMillis(seconds === null ? null : seconds * 1000);
 }
 
 export function fmtTokens(n) {
@@ -165,6 +175,90 @@ export function groupSessions(sessions) {
 		groups.get(key).sessions.push(s);
 	}
 	return [...groups.values()];
+}
+
+// ---------------------------------------------------------------------------
+// 轨迹搜索索引（复刻 deepseek ui-trajectory trajectory-search-index.ts）
+// ---------------------------------------------------------------------------
+
+function sameSources(left, right) {
+	return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+/** 一个事件的可检索字段（对应源码的 recordSources）。 */
+function eventSources(question, event) {
+	const tool = event.tool ?? {};
+	const bash = event.bash ?? {};
+	const system = event.system ?? {};
+	const compaction = event.compaction ?? {};
+	const custom = event.custom ?? {};
+	const msg = event.msg ?? {};
+	return [
+		question.index < 0 ? "会话开始" : `turn ${question.index + 1}`,
+		question.summary ?? "",
+		event.kind,
+		event.preview ?? "",
+		event.text ?? "",
+		tool.name ?? "",
+		tool.callId ?? "",
+		tool.argsText ?? "",
+		tool.result ?? "",
+		bash.command ?? "",
+		bash.output ?? "",
+		...(system.sections ?? []).map((s) => s.name),
+		...(system.toolsAdded ?? []),
+		compaction.summary ?? "",
+		custom.customType ?? "",
+		custom.text ?? "",
+		msg.model ?? "",
+		msg.provider ?? "",
+	];
+}
+
+/**
+ * 会话级增量全文索引：按事件稳定 id 缓存来源数组，仅在来源变化时重建该条文本；
+ * 查询为空格分隔的 AND 匹配（大小写不敏感），空查询返回 null（表示不过滤）。
+ */
+export class TrajectorySearchIndex {
+	constructor() {
+		this.entries = new Map();
+		this.layout = undefined;
+	}
+
+	/** 同步当前投影；与源码一致（layout 引用未变时返回 false）。 */
+	update(questions) {
+		if (this.layout === questions) return false;
+		this.layout = questions;
+		const seen = new Set();
+		for (const question of questions ?? []) {
+			for (const event of question.events ?? []) {
+				if (!event.id) continue;
+				const sources = eventSources(question, event);
+				const previous = this.entries.get(event.id);
+				const entry =
+					previous && sameSources(previous.sources, sources)
+						? previous
+						: { sources, text: sources.join("\n").toLocaleLowerCase() };
+				this.entries.set(event.id, entry);
+				seen.add(event.id);
+			}
+		}
+		for (const id of this.entries.keys()) {
+			if (!seen.has(id)) this.entries.delete(id);
+		}
+		return true;
+	}
+
+	/** 匹配的事件 id 集合；空查询返回 null。 */
+	search(query) {
+		const terms = String(query ?? "").trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+		if (terms.length === 0) return null;
+		const matches = new Set();
+		for (const [id, entry] of this.entries) {
+			if (terms.every((term) => entry.text.includes(term))) matches.add(id);
+		}
+		return matches;
+	}
 }
 
 // ---------------------------------------------------------------------------
