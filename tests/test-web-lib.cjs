@@ -39,12 +39,13 @@ const check = (label, cond, extra = "") => {
 		{ index: 1, summary: "", events: [{ id: "t5", kind: "tool", tool: { name: "edit" } }] },
 	];
 	check("collectToolNames 按首次出现去重", collectToolNames(toolQuestions).join(",") === "read,bash,edit", collectToolNames(toolQuestions).join(","));
-	check("eventToolPasses 未设置时全通过", eventToolPasses(null, { kind: "text" }) === true && eventToolPasses(null, { kind: "tool", tool: { name: "read" } }) === true);
+	check("eventToolPasses 空集时全通过", eventToolPasses(new Set(), { kind: "text" }) === true && eventToolPasses(new Set(), { kind: "tool", tool: { name: "read" } }) === true);
 	check(
-		"eventToolPasses 只过滤工具行，其它类型不受影响",
-		eventToolPasses("bash", { kind: "tool", tool: { name: "bash" } }) === true &&
-			eventToolPasses("bash", { kind: "tool", tool: { name: "read" } }) === false &&
-			eventToolPasses("bash", { kind: "text" }) === true,
+		"eventToolPasses 多选：命中集合的工具行通过，其它工具行与类型不受影响",
+		eventToolPasses(new Set(["bash", "read"]), { kind: "tool", tool: { name: "bash" } }) === true &&
+			eventToolPasses(new Set(["bash", "read"]), { kind: "tool", tool: { name: "read" } }) === true &&
+			eventToolPasses(new Set(["bash", "read"]), { kind: "tool", tool: { name: "edit" } }) === false &&
+			eventToolPasses(new Set(["bash"]), { kind: "text" }) === true,
 	);
 
 	check("标签：文本行统一显示为输出（最终答复仅靠绿色竖条区分）", eventTagLabel({ kind: "text", isFinal: true }) === "输出" && eventTagLabel({ kind: "text" }) === "输出");

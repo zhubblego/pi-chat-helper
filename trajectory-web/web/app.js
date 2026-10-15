@@ -51,7 +51,7 @@ const state = {
 	searchIndex: new TrajectorySearchIndex(),
 	query: "",
 	menuOpen: false,
-	toolFilter: null,
+	toolFilters: new Set(),
 	toolNames: [],
 	submenuOpen: false,
 	folded: new Set(),
@@ -275,7 +275,7 @@ function renderFilterMenu() {
 			},
 			svgIcon(group, "menu-item-icon"),
 			h("span", { class: "menu-item-label", text: label }),
-			group === "tools" ? h("span", { class: "menu-value", id: "tool-value", text: state.toolFilter ?? "全部" }) : null,
+			group === "tools" ? h("span", { class: "menu-value", id: "tool-value", text: toolValueText() }) : null,
 			group === "tools" ? h("span", { class: "menu-chev", "aria-hidden": "true", text: "▸" }) : null,
 			checked ? svgIcon("check", "menu-check") : null,
 		);
@@ -299,28 +299,40 @@ function renderFilterMenu() {
 	el("filter-menu").replaceChildren(...nodes);
 }
 
-/** 工具子菜单：全部 + 当前会话出现过的工具名（单选，radio 语义）。 */
+/** 工具子菜单：全部 + 当前会话出现过的工具名（多选；空选即「全部」）。 */
 function buildToolSubmenu() {
-	const items = [submenuItem("", "全部"), ...state.toolNames.map((name) => submenuItem(name, name))];
+	const items = [
+		submenuItem("", "全部", state.toolFilters.size === 0),
+		...state.toolNames.map((name) => submenuItem(name, name, state.toolFilters.has(name))),
+	];
 	return h("div", { class: "menu submenu", id: "tool-submenu", role: "menu", hidden: true }, ...items);
 }
 
-function submenuItem(toolName, label) {
-	const checked = (state.toolFilter ?? "") === toolName;
+function submenuItem(toolName, label, checked) {
 	return h(
 		"button",
-		{ class: "menu-item", type: "button", role: "menuitemradio", "aria-checked": String(checked), dataset: { tool: toolName } },
+		{ class: "menu-item", type: "button", role: "menuitemcheckbox", "aria-checked": String(checked), dataset: { tool: toolName } },
 		h("span", { class: "menu-item-label", text: label }),
 		checked ? svgIcon("check", "menu-check") : null,
 	);
+}
+
+/** 工具行右侧的当前值：空选「全部」，单个直接显示，多选「首个 +N」。 */
+function toolValueText() {
+	const names = state.toolNames.filter((name) => state.toolFilters.has(name));
+	if (names.length === 0) return "全部";
+	return names.length === 1 ? names[0] : `${names[0]} +${names.length - 1}`;
 }
 
 /** 同步工具名列表：新出现的工具会在下次打开/刷新菜单时进子菜单；已失效的选中回落到「全部」。 */
 function syncToolNames() {
 	const names = collectToolNames(state.data?.questions ?? []);
 	const changed = names.length !== state.toolNames.length || names.some((name, i) => name !== state.toolNames[i]);
-	if (state.toolFilter && !names.includes(state.toolFilter)) state.toolFilter = null;
-	if (changed) state.toolNames = names;
+	if (changed) {
+		state.toolNames = names;
+		// 会话里消失的工具从选中集合里摘掉（空集即「全部」）
+		for (const name of [...state.toolFilters]) if (!names.includes(name)) state.toolFilters.delete(name);
+	}
 	return changed;
 }
 
@@ -337,11 +349,12 @@ function setSubmenuOpen(open, focusFirst = false) {
 /** 原地更新工具行右侧的当前值与子菜单勾选态。 */
 function updateToolsRow() {
 	const value = el("tool-value");
-	if (value) value.textContent = state.toolFilter ?? "全部";
+	if (value) value.textContent = toolValueText();
 	const submenu = el("tool-submenu");
 	if (!submenu) return;
-	for (const item of submenu.querySelectorAll('button[role="menuitemradio"]')) {
-		const checked = (item.dataset.tool ?? "") === (state.toolFilter ?? "");
+	for (const item of submenu.querySelectorAll('button[role^="menuitem"]')) {
+		const name = item.dataset.tool ?? "";
+		const checked = name === "" ? state.toolFilters.size === 0 : state.toolFilters.has(name);
 		item.setAttribute("aria-checked", String(checked));
 		const existing = item.querySelector(".menu-check");
 		if (checked && !existing) item.appendChild(svgIcon("check", "menu-check"));
@@ -459,7 +472,7 @@ function renderMain() {
 	mainInner.replaceChildren(
 		...questions.map((q) => {
 			const shown = (q.events ?? []).filter(
-				(ev) => eventPasses(state.filters, ev.kind) && eventToolPasses(state.toolFilter, ev) && (!matches || matches.has(ev.id)),
+				(ev) => eventPasses(state.filters, ev.kind) && eventToolPasses(state.toolFilters, ev) && (!matches || matches.has(ev.id)),
 			);
 			const body = shown.length ? shown.map(renderEvent) : h("div", { class: "ev-empty" });
 			const folded = state.folded.has(q.index);
@@ -809,11 +822,13 @@ el("filter-menu").addEventListener("click", (e) => {
 	const item = e.target.closest('button[role^="menuitem"]');
 	if (!item) return;
 	if (item.dataset.tool !== undefined) {
-		state.toolFilter = item.dataset.tool || null;
+		const name = item.dataset.tool;
+		if (name === "") state.toolFilters.clear();
+		else if (state.toolFilters.has(name)) state.toolFilters.delete(name);
+		else state.toolFilters.add(name);
 		updateToolsRow();
 		renderMain();
-		setSubmenuOpen(false);
-		el("filter-menu").querySelector('button[data-group="tools"]')?.focus();
+		item.focus();
 		return;
 	}
 	if (item.dataset.group) {
@@ -901,7 +916,7 @@ sessionList.addEventListener("click", (e) => {
 	state.etag = null;
 	state.folded = new Set();
 	state.query = "";
-	state.toolFilter = null;
+	state.toolFilters = new Set();
 	state.toolNames = [];
 	state.searchIndex = new TrajectorySearchIndex();
 	setMenuOpen(false);
