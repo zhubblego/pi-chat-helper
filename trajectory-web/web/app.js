@@ -51,7 +51,7 @@ const state = {
 	searchIndex: new TrajectorySearchIndex(),
 	query: "",
 	menuOpen: false,
-	toolFilters: new Set(),
+	toolExcluded: new Set(),
 	toolNames: [],
 	submenuOpen: false,
 	folded: new Set(),
@@ -310,13 +310,14 @@ function renderFilterMenu() {
 	el("filter-menu").replaceChildren(...nodes);
 }
 
-/** 工具子菜单：全部 + 当前会话出现过的工具名（多选；空选即「全部」）。 */
+/** 工具子菜单：全部 + 当前会话出现过的工具名（默认全部勾选；勾选态 = 未排除）。 */
 function buildToolSubmenu() {
 	const items = [
-		submenuItem("", "全部", state.toolFilters.size === 0),
-		...state.toolNames.map((name) => submenuItem(name, name, state.toolFilters.has(name))),
+		submenuItem("", "全部", state.toolExcluded.size === 0),
+		...state.toolNames.map((name) => submenuItem(name, name, !state.toolExcluded.has(name))),
 	];
-	return h("div", { class: "menu submenu", id: "tool-submenu", role: "menu", hidden: true }, ...items);
+	// 内层视口承载滚动：卡片本体不设 overflow，保留左侧 10px 命中桥
+	return h("div", { class: "menu submenu", id: "tool-submenu", role: "menu", hidden: true }, h("div", { class: "menu-viewport" }, ...items));
 }
 
 function submenuItem(toolName, label, checked) {
@@ -328,14 +329,13 @@ function submenuItem(toolName, label, checked) {
 	);
 }
 
-/** 同步工具名列表：新出现的工具会在下次打开/刷新菜单时进子菜单；已失效的选中自动摘除。 */
+/** 同步工具名列表：新出现的工具（默认勾选）进子菜单，消失的工具从排除集里摘除。 */
 function syncToolNames() {
 	const names = collectToolNames(state.data?.questions ?? []);
 	const changed = names.length !== state.toolNames.length || names.some((name, i) => name !== state.toolNames[i]);
 	if (changed) {
 		state.toolNames = names;
-		// 会话里消失的工具从选中集合里摘掉（空集即「全部」）
-		for (const name of [...state.toolFilters]) if (!names.includes(name)) state.toolFilters.delete(name);
+		for (const name of [...state.toolExcluded]) if (!names.includes(name)) state.toolExcluded.delete(name);
 	}
 	return changed;
 }
@@ -356,7 +356,7 @@ function updateSubmenuChecks() {
 	if (!submenu) return;
 	for (const item of submenu.querySelectorAll('button[role^="menuitem"]')) {
 		const name = item.dataset.tool ?? "";
-		const checked = name === "" ? state.toolFilters.size === 0 : state.toolFilters.has(name);
+		const checked = name === "" ? state.toolExcluded.size === 0 : !state.toolExcluded.has(name);
 		item.setAttribute("aria-checked", String(checked));
 		const existing = item.querySelector(".menu-check");
 		if (checked && !existing) item.appendChild(svgIcon("check", "menu-check"));
@@ -475,7 +475,7 @@ function renderMain() {
 	mainInner.replaceChildren(
 		...questions.map((q) => {
 			const shown = (q.events ?? []).filter(
-				(ev) => eventPasses(state.filters, ev.kind) && eventToolPasses(state.toolFilters, ev) && (!matches || matches.has(ev.id)),
+				(ev) => eventPasses(state.filters, ev.kind) && eventToolPasses(state.toolExcluded, ev) && (!matches || matches.has(ev.id)),
 			);
 			const body = shown.length ? shown.map(renderEvent) : h("div", { class: "ev-empty" });
 			const folded = state.folded.has(q.index);
@@ -831,9 +831,9 @@ el("filter-menu").addEventListener("click", (e) => {
 	}
 	if (item.dataset.tool !== undefined) {
 		const name = item.dataset.tool;
-		if (name === "") state.toolFilters.clear();
-		else if (state.toolFilters.has(name)) state.toolFilters.delete(name);
-		else state.toolFilters.add(name);
+		if (name === "") state.toolExcluded.clear();
+		else if (state.toolExcluded.has(name)) state.toolExcluded.delete(name);
+		else state.toolExcluded.add(name);
 		updateSubmenuChecks();
 		renderMain();
 		item.focus();
@@ -924,7 +924,7 @@ sessionList.addEventListener("click", (e) => {
 	state.etag = null;
 	state.folded = new Set();
 	state.query = "";
-	state.toolFilters = new Set();
+	state.toolExcluded = new Set();
 	state.toolNames = [];
 	state.searchIndex = new TrajectorySearchIndex();
 	setMenuOpen(false);

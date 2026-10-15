@@ -460,16 +460,28 @@ svg.tb-icon {
 	color: var(--dsw-alias-label-primary);
 }
 
-/* 工具名子菜单（照 deepseek Menu 的 .submenu：右侧卡片 + 10px 命中桥） */
+/* 工具名子菜单（右侧卡片 + 10px 命中桥；deepseek 的 bottom 锚定会让长列表向上长到视口外，
+   工具名多时必须改顶部锚定 + 内层滚动） */
 .menu-item-wrap {
 	position: relative;
 }
 
 .menu.submenu {
-	top: auto;
-	bottom: -4px;
+	top: -4px;
+	bottom: auto;
 	left: calc(100% + 10px);
 	z-index: 101;
+	display: flex;
+	flex-direction: column;
+	max-height: calc(100vh - 200px);
+}
+
+/* 内层视口承载滚动：卡片本体不设 overflow，保留左侧命中桥 */
+.menu-viewport {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	overflow-y: auto;
 }
 
 .menu.submenu::before {

@@ -46,13 +46,13 @@ export function collectToolNames(questions) {
 }
 
 /**
- * 工具名过滤（多选）：空集时全部通过；否则只放行命中集合的工具调用行，
- * 其它类型行（思考/输出/上下文）不受影响，仍由各自的组开关决定。
+ * 工具名过滤（以「未勾选」集合表示）：空集 = 全部勾选，全部通过；
+ * 否则工具调用行仅放行未被排除的工具，其它类型行不受影响。
  */
-export function eventToolPasses(toolFilters, event) {
-	if (!toolFilters || toolFilters.size === 0) return true;
+export function eventToolPasses(toolExcluded, event) {
+	if (!toolExcluded || toolExcluded.size === 0) return true;
 	if (event.kind !== "tool") return true;
-	return toolFilters.has(event.tool?.name);
+	return !toolExcluded.has(event.tool?.name);
 }
 
 /** 预设：全部 / 仅思考 / 仅工具 / 仅输出 */
