@@ -317,10 +317,10 @@ function submenuItem(toolName, label, checked) {
 	);
 }
 
-/** 工具行右侧的当前值：空选「全部」，单个直接显示，多选「首个 +N」。 */
+/** 工具行右侧的当前值：未选不显示（空串由 CSS :empty 隐藏），单个直接显示，多选「首个 +N」。 */
 function toolValueText() {
 	const names = state.toolNames.filter((name) => state.toolFilters.has(name));
-	if (names.length === 0) return "全部";
+	if (names.length === 0) return "";
 	return names.length === 1 ? names[0] : `${names[0]} +${names.length - 1}`;
 }
 

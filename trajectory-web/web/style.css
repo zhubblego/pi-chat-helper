@@ -445,6 +445,10 @@ svg.tb-icon {
 	color: var(--dsw-alias-label-tertiary);
 }
 
+.menu-value:empty {
+	display: none;
+}
+
 .menu-chev {
 	flex: none;
 	color: var(--dsw-alias-label-tertiary);
