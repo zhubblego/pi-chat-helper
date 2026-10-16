@@ -70,6 +70,8 @@
 
 ## 最近验证
 
+2026-10-16（晚）：0.2.1 经自动审查后上线，`npm view` 确认 latest 指向 0.2.1，npm 包页 README 开始携带截图；小红书首篇笔记文案已交付主人待发。
+
 2026-10-16（截图）：无头截图两张（1680×1050 亮/暗），两主题 DOM 断言全过、零 JS 报错，已随 README 推送 GitHub（6a025ea）；演示服务已停止、端口已释放。截图主观美观度待主人目检。
 
 2026-10-16：npm 端到端——`npm view pi-chat-helper` 确认 0.2.0 上线且 `latest` 指向正确；`pi -e npm:pi-chat-helper --no-session -p` 从 npm 实装加载成功，模型正常应答，无本包相关警告（既有的两条 Warning 来自 @georgedong32/pi-review 与 pi-slopchop 的依赖声明问题，与包无关，反证本包 peerDependencies 配置正确）。
