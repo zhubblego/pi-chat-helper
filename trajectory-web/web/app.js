@@ -794,6 +794,7 @@ function openDrawer(id) {
 	renderDrawer();
 	const light = findEvent(id);
 	if (light?.truncated) loadFull(id);
+	writeViewHash();
 }
 
 function refreshOpen() {
@@ -803,6 +804,7 @@ function refreshOpen() {
 		state.openId = null;
 		state.openFull = null;
 		drawer.hidden = true;
+		writeViewHash();
 		return;
 	}
 	state.openFull = null;
@@ -814,6 +816,25 @@ function closeDrawer() {
 	state.openId = null;
 	state.openFull = null;
 	drawer.hidden = true;
+	writeViewHash();
+}
+
+// ---------------------------------------------------------------------------
+// 视图位置（URL hash）：#s=<会话id>&e=<事件id> —— 刷新不丢详情抽屉。
+// 事件 id 仅会话内唯一，必须连同会话一起记录；用 replaceState 不产生历史记录。
+// ---------------------------------------------------------------------------
+
+function readViewHash() {
+	if (!location.hash) return null;
+	const params = new URLSearchParams(location.hash.slice(1));
+	const s = params.get("s");
+	const e = params.get("e");
+	return s && e ? { s, e } : null;
+}
+
+function writeViewHash() {
+	const hash = state.openId && state.selectedId ? `#s=${encodeURIComponent(state.selectedId)}&e=${encodeURIComponent(state.openId)}` : "";
+	if (location.hash !== hash) history.replaceState(null, "", hash || `${location.pathname}${location.search}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -858,6 +879,8 @@ async function pollSession(force = false) {
 			state.selectedId = null;
 			state.data = null;
 			state.etag = null;
+			pendingOpen = null;
+			writeViewHash();
 			renderMain();
 			setSync("会话已消失，刷新列表", "warn");
 			pollSessions(true);
@@ -891,6 +914,13 @@ async function pollSession(force = false) {
 		renderMain();
 		main.scrollTop = keepTop;
 		refreshOpen();
+		// 刷新恢复：首次数据就绪后重开 hash 记录的事件；事件已不在会话里则清掉失效 hash
+		if (pendingOpen) {
+			const id = pendingOpen;
+			pendingOpen = null;
+			if (findEvent(id)) openDrawer(id);
+			else writeViewHash();
+		}
 		setSync(`已同步 ${fmtClock()}`, "ok");
 	} catch (err) {
 		setSync(`同步失败：${err.message}`, "err");
@@ -1040,6 +1070,7 @@ sessionList.addEventListener("click", (e) => {
 	state.openId = null;
 	state.openFull = null;
 	drawer.hidden = true;
+	writeViewHash();
 	renderSessions();
 	renderTopbar();
 	renderMain();
@@ -1096,6 +1127,14 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", app
 // ---------------------------------------------------------------------------
 // 启动
 // ---------------------------------------------------------------------------
+
+// hash 恢复：先占住选中会话（列表轮询的默认选中让位），数据到达后由 pollSession 重开抽屉
+let pendingOpen = null;
+const restoredView = readViewHash();
+if (restoredView) {
+	state.selectedId = restoredView.s;
+	pendingOpen = restoredView.e;
+}
 
 loadTheme();
 applyTheme();
