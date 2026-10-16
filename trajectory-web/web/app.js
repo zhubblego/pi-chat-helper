@@ -62,6 +62,7 @@ const state = {
 	toolOriginsMissAt: 0,
 	submenuOpen: false,
 	folded: new Set(),
+	collapsedGroups: new Set(),
 	openId: null,
 	openFull: null,
 	pollingSession: false,
@@ -284,15 +285,24 @@ function renderSessions() {
 	const nodes = [];
 	if (state.scope === "all") {
 		for (const group of groupSessions(sessions)) {
+			// 分组头可点击折叠（deepseek Menu 的 ▸ 箭头语义）：目录名用链接色高亮
+			const collapsed = state.collapsedGroups.has(group.key);
 			nodes.push(
 				h(
-					"div",
-					{ class: "project-head", title: group.key },
+					"button",
+					{
+						class: "project-head",
+						type: "button",
+						title: group.key,
+						dataset: { group: group.key },
+						"aria-expanded": String(!collapsed),
+					},
+					h("span", { class: "project-chev", "aria-hidden": "true", text: "▸" }),
 					h("span", { class: "project-path", text: group.label }),
-					h("span", { text: String(group.sessions.length) }),
+					h("span", { class: "project-count", text: String(group.sessions.length) }),
 				),
 			);
-			for (const session of group.sessions) nodes.push(sessionItem(session));
+			if (!collapsed) for (const session of group.sessions) nodes.push(sessionItem(session));
 		}
 	} else {
 		for (const session of sessions) nodes.push(sessionItem(session));
@@ -1007,6 +1017,14 @@ el("fold-all").addEventListener("click", () => {
 });
 
 sessionList.addEventListener("click", (e) => {
+	const head = e.target.closest(".project-head");
+	if (head) {
+		const key = head.dataset.group ?? "";
+		if (state.collapsedGroups.has(key)) state.collapsedGroups.delete(key);
+		else state.collapsedGroups.add(key);
+		renderSessions();
+		return;
+	}
 	const item = e.target.closest(".session-item");
 	if (!item || item.dataset.id === state.selectedId) return;
 	state.selectedId = item.dataset.id;

@@ -6,7 +6,6 @@
 	--tw-sidebar-width: 300px;
 	--tw-topbar-height: 48px;
 	--tw-toolbar-height: 28px;
-	--tw-session-max-height: 42vh;
 	color-scheme: light dark;
 }
 
@@ -167,8 +166,8 @@ body {
 .session-section {
 	display: flex;
 	flex-direction: column;
-	max-height: var(--tw-session-max-height);
-	flex: none;
+	flex: 1;
+	min-height: 0;
 }
 
 .section-head {
@@ -192,17 +191,46 @@ body {
 .project-head {
 	display: flex;
 	align-items: center;
-	justify-content: space-between;
-	gap: 6px;
+	gap: 5px;
+	width: 100%;
+	text-align: left;
 	padding: 8px 8px 3px;
+	background: none;
+	border: none;
+	border-radius: var(--dsw-radius-sm);
 	color: var(--dsw-alias-label-tertiary);
 	font: var(--dsw-font-xxxs-strong-11);
+	cursor: pointer;
+}
+
+.project-head:hover {
+	background: var(--dsw-specific-sidebar-nav-item-hover);
+}
+
+.project-chev {
+	flex: none;
+	font-size: 9px;
+	color: var(--dsw-alias-label-tertiary);
+	transition: transform 0.12s var(--ds-ease-in-out);
+	transform: rotate(90deg);
+}
+
+.project-head[aria-expanded="false"] .project-chev {
+	transform: rotate(0deg);
 }
 
 .project-head .project-path {
+	flex: 1;
+	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+	color: var(--dsw-alias-link);
+}
+
+.project-head .project-count {
+	flex: none;
+	color: var(--dsw-alias-label-tertiary);
 }
 
 .session-item {
@@ -561,68 +589,23 @@ svg.tb-icon {
 	cursor: pointer;
 }
 
-/* ---------------------------------------------------------------- 问题列表 */
-
-.question-list {
-	flex: 1;
-	min-height: 0;
-	overflow-y: auto;
-	display: flex;
-	flex-direction: column;
-	gap: 1px;
-}
-
-.q-link {
-	display: grid;
-	grid-template-columns: auto auto 1fr;
-	grid-template-areas:
-		"no time sum"
-		"mini mini mini";
-	gap: 2px 8px;
-	text-align: left;
-	background: none;
-	border: none;
-	border-radius: var(--dsw-radius-sm);
-	padding: 6px 8px;
-	color: var(--dsw-alias-label-primary);
-	cursor: pointer;
-	font: inherit;
-}
-
-.q-link:hover {
-	background: var(--dsw-specific-sidebar-nav-item-hover);
-}
-
-.q-link.active {
-	background: var(--dsw-specific-sidebar-nav-item-active);
-}
-
 .q-no {
-	grid-area: no;
 	color: var(--dsw-alias-state-business-primary);
 	font: var(--dsw-font-xxxs-strong-11);
 	white-space: nowrap;
 }
 
 .q-time {
-	grid-area: time;
 	color: var(--dsw-alias-label-tertiary);
 	font: var(--dsw-font-xxxs-11);
 	font-family: var(--ds-font-family-code);
 }
 
 .q-sum {
-	grid-area: sum;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	font: var(--dsw-font-xs-13);
-}
-
-.q-mini {
-	grid-area: mini;
-	color: var(--dsw-alias-label-tertiary);
-	font: var(--dsw-font-xxxs-11);
 }
 
 /* ---------------------------------------------------------------- 轨迹主区 */
