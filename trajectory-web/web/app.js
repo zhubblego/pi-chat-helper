@@ -65,6 +65,7 @@ const state = {
 	collapsedGroups: new Set(),
 	openId: null,
 	openFull: null,
+	openLightJson: "",
 	pollingSession: false,
 	pollingSessions: false,
 	tick: 0,
@@ -756,7 +757,13 @@ function drawerBodyNodes(view) {
 	}
 }
 
-function renderDrawer() {
+/** details 的稳定键：优先 summary 里 code 的名称（如提示词段落名），否则 summary 文本。 */
+function detailKey(d) {
+	return d.querySelector("summary code")?.textContent ?? d.querySelector("summary")?.textContent ?? "";
+}
+
+/** 重建抽屉内容；keepState=true 时保留滚动位置与各 <details> 展开态（轮询/全文到达不打断阅读）。 */
+function renderDrawer(keepState = false) {
 	const light = state.openId ? findEvent(state.openId) : null;
 	if (!light) {
 		drawer.hidden = true;
@@ -764,12 +771,16 @@ function renderDrawer() {
 	}
 	const full = state.openFull && state.openFull.id === light.id ? state.openFull : null;
 	const view = full ?? light;
+	const body = el("dv-body");
+	const prevScroll = keepState ? body.scrollTop : 0;
+	const openKeys = keepState ? new Set([...body.querySelectorAll("details[open]")].map(detailKey)) : null;
 	el("dv-kind").textContent = eventTagLabel(light);
 	el("dv-kind").className = `dv-kind k-${kindGroup(light.kind)}`;
 	el("dv-title").textContent = light.preview;
 	el("dv-meta").replaceChildren(...drawerMetaNodes(view, light));
-	el("dv-body").replaceChildren(...drawerBodyNodes(view));
-	el("dv-body").scrollTop = 0;
+	body.replaceChildren(...drawerBodyNodes(view));
+	if (openKeys) for (const d of body.querySelectorAll("details")) if (openKeys.has(detailKey(d))) d.open = true;
+	body.scrollTop = prevScroll;
 	drawer.hidden = false;
 }
 
@@ -782,7 +793,7 @@ async function loadFull(id) {
 		const j = await res.json();
 		if (state.openId !== id || !j.event) return;
 		state.openFull = j.event;
-		renderDrawer();
+		renderDrawer(true);
 	} catch {
 		/* 网络失败时保持 light 展示 */
 	}
@@ -791,8 +802,9 @@ async function loadFull(id) {
 function openDrawer(id) {
 	state.openId = id;
 	state.openFull = null;
-	renderDrawer();
 	const light = findEvent(id);
+	state.openLightJson = JSON.stringify(light ?? null);
+	renderDrawer();
 	if (light?.truncated) loadFull(id);
 	writeViewHash();
 }
@@ -803,12 +815,21 @@ function refreshOpen() {
 	if (!light) {
 		state.openId = null;
 		state.openFull = null;
+		state.openLightJson = "";
 		drawer.hidden = true;
 		writeViewHash();
 		return;
 	}
+	// 事件内容没变就完全不动 DOM：轮询期间不打断阅读（展开的段落、滚动位置、已加载全文都保留）
+	const json = JSON.stringify(light);
+	if (json === state.openLightJson) {
+		// 全文尚未到手（如上次拉取失败）则继续尝试；成功后 renderDrawer(true) 保留展开态
+		if (!state.openFull && light.truncated) loadFull(light.id);
+		return;
+	}
+	state.openLightJson = json;
 	state.openFull = null;
-	renderDrawer();
+	renderDrawer(true);
 	if (light.truncated) loadFull(light.id);
 }
 
