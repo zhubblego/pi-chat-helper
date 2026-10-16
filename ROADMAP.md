@@ -10,7 +10,10 @@
 
 - `package.json` 对齐 pi package 规范：`pi.extensions` 清单（入口 `./index.ts`）、`pi-package` 关键字（gallery 可发现）、`type: module`、`repository/homepage/bugs`、`engines`、宿主包 `peerDependencies`（`pi-coding-agent`/`pi-tui`，`*` 区间，optional meta）、版本 0.2.0
 - README 重写为标准结构：`pi install git:` 安装 → 快速上手（`/questions`、`/deepseek-trail`、`npm run dev`）→ 两功能详情 → 开发与测试 → License；删除手工 `cp -r` 部署方式
-- 已推送 GitHub `zhubblego/pi-chat-helper`（main 快进至 feat/trajectory-web，两个分支均已上传，推送前核查历史无密钥）
+- 已推送 GitHub `zhubblego/pi-chat-helper`；后按主人要求：main 退回原位并由其自管，仓库 git 身份改 noreply 匿名邮箱，提交历史重写后 force-push 两分支，GitHub 默认分支已切至 `feat/trajectory-web`
+- `package.json` 增加 `files` 裁剪 npm 发布内容（排除 tests/、ROADMAP、tsconfig、.pi/，29→17 文件）
+- npm 发布前隐私审计：个人路径/邮箱/电话/密钥均零命中，LICENSE 匿名署名，上游归属完整
+- npm 发布 `0.2.0`：新账号无 2FA 禁止直发，细粒度令牌为 stage-only 档 → 发布进暂存区（占位版 0.0.0-stage）→ 自动化安全审查通过后 0.2.0 上线，`latest` 标签正确
 
 ### trajectory-web 数据与服务端
 
@@ -58,6 +61,8 @@
 - 手动主题切换（当前跟随系统）
 
 ## 最近验证
+
+2026-10-16：npm 端到端——`npm view pi-chat-helper` 确认 0.2.0 上线且 `latest` 指向正确；`pi -e npm:pi-chat-helper --no-session -p` 从 npm 实装加载成功，模型正常应答，无本包相关警告（既有的两条 Warning 来自 @georgedong32/pi-review 与 pi-slopchop 的依赖声明问题，与包无关，反证本包 peerDependencies 配置正确）。
 
 2026-10-15（晚）：package 标准化——`pi -ne -e . --no-session -p "只回复ok"` 通过新 `pi.extensions` 清单加载两个扩展无报错、模型正常应答；两分支已推 GitHub 并经 `git ls-remote` 核对在线。
 
