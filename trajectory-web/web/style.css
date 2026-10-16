@@ -344,6 +344,13 @@ body {
 	outline-offset: 1px;
 }
 
+/* 主题开关：纯图标方钮，复用 tb-btn 形态 */
+.theme-btn {
+	width: 24px;
+	justify-content: center;
+	padding: 0;
+}
+
 .tb-icon {
 	color: var(--dsw-alias-label-tertiary);
 	font: 14px/14px var(--ds-font-family-code);

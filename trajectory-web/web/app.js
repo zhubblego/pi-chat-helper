@@ -33,6 +33,7 @@ import {
 } from "./lib.js";
 
 const LS_FILTERS = "tw.filters";
+const LS_THEME = "tw.theme";
 const POLL_MS = 2000;
 const SESSION_LIST_EVERY = 3; // 每 3 个 tick 刷一次会话列表（约 6s）
 
@@ -69,13 +70,46 @@ const state = {
 };
 
 // ---------------------------------------------------------------------------
-// 主题（deepseek token 的暗色契约：body[data-ds-dark-theme]）
+// 主题（deepseek token 的暗色契约：body[data-ds-dark-theme]；偏好三态 light/dark/system）
 // ---------------------------------------------------------------------------
 
+const THEMES = ["system", "light", "dark"];
+const THEME_LABEL = { system: "跟随系统", light: "浅色", dark: "深色" };
+let themePref = "system";
+
 function applyTheme() {
-	const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+	const dark = themePref === "dark" || (themePref === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
 	document.body.toggleAttribute("data-ds-dark-theme", dark);
-	document.documentElement.dataset.dsThemeSource = "system";
+	document.documentElement.dataset.dsThemeSource = themePref;
+	document.documentElement.style.colorScheme = dark ? "dark" : "light";
+}
+
+function loadTheme() {
+	try {
+		const saved = localStorage.getItem(LS_THEME);
+		if (THEMES.includes(saved)) themePref = saved;
+	} catch {
+		/* 忽略损坏的本地状态 */
+	}
+}
+
+function renderThemeButton() {
+	const btn = el("theme-btn");
+	btn.replaceChildren(svgIcon(themePref === "system" ? "auto" : themePref));
+	const title = `主题：${THEME_LABEL[themePref]}（点击切换）`;
+	btn.title = title;
+	btn.setAttribute("aria-label", title);
+}
+
+function cycleTheme() {
+	themePref = THEMES[(THEMES.indexOf(themePref) + 1) % THEMES.length];
+	try {
+		localStorage.setItem(LS_THEME, themePref);
+	} catch {
+		/* 无痕模式等场景忽略 */
+	}
+	applyTheme();
+	renderThemeButton();
 }
 
 // ---------------------------------------------------------------------------
@@ -147,6 +181,15 @@ const ICONS = {
 		["path", { d: "M1.8 7.1 6 9.5l4.2-2.4" }],
 	],
 	check: [["path", { d: "M2.6 6.3 4.9 8.7 9.4 3.6" }]],
+	light: [
+		["circle", { cx: 6, cy: 6, r: 2.5 }],
+		["path", { d: "M6 .8v1.5M6 9.7v1.5M.8 6h1.5M9.7 6h1.5M2.4 2.4l1.06 1.06M8.54 8.54l1.06 1.06M9.6 2.4 8.54 3.46M3.46 8.54 2.4 9.6" }],
+	],
+	dark: [["path", { d: "M10.4 7.4A4.7 4.7 0 1 1 4.6 1.6a3.7 3.7 0 0 0 5.8 5.8z" }]],
+	auto: [
+		["circle", { cx: 6, cy: 6, r: 4.4 }],
+		["path", { d: "M6 1.6a4.4 4.4 0 0 0 0 8.8z", fill: "currentColor", stroke: "none" }],
+	],
 };
 
 function svgIcon(name, className = "tb-icon") {
@@ -1020,6 +1063,7 @@ mainInner.addEventListener("dblclick", (e) => {
 });
 
 el("drawer-close").addEventListener("click", closeDrawer);
+el("theme-btn").addEventListener("click", cycleTheme);
 document.addEventListener("keydown", (e) => {
 	if (e.key === "Escape") closeDrawer();
 });
@@ -1035,7 +1079,9 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", app
 // 启动
 // ---------------------------------------------------------------------------
 
+loadTheme();
 applyTheme();
+renderThemeButton();
 loadPrefs();
 renderToolbar();
 void ensureToolOrigins();

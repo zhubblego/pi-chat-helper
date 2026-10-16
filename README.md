@@ -81,7 +81,7 @@ npm run dev        # 默认 http://127.0.0.1:7788
 
 ### 界面风格
 
-全部组件使用 deepseek 设计 token（`web/tokens.css`），复刻自 deepseek-harness 的 `ui-theme`（MIT，上游提交 `571902028a`）：设计平台色板、语义别名、字体/圆角/动效、滚动条与焦点环。暗色由 `body[data-ds-dark-theme]` 承载，默认跟随系统。`tokens.css` 是生成产物，请勿手改；更新时回上游同步后重新生成。
+全部组件使用 deepseek 设计 token（`web/tokens.css`），复刻自 deepseek-harness 的 `ui-theme`（MIT，上游提交 `571902028a`）：设计平台色板、语义别名、字体/圆角/动效、滚动条与焦点环。暗色由 `body[data-ds-dark-theme]` 承载，默认跟随系统；顶栏主题按钮可循环切换「跟随系统 → 浅色 → 深色」（偏好持久化于 `localStorage`，首帧内联脚本防闪屏）。`tokens.css` 是生成产物，请勿手改；更新时回上游同步后重新生成。
 
 ## question-panel：TUI 提问面板
 

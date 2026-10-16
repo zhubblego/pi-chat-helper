@@ -54,6 +54,13 @@
 
 - 0.2.1 发布：含截图 README 进入 npm 包页（0.2.0 包页为纯文字版）；版本号随发布升位
 
+### 页面主题开关（2026-10-17）
+
+- 顶栏右侧新增主题按钮，循环切换「跟随系统 → 浅色 → 深色」：偏好三态对齐上游 `ui-theme` 的 `THEME_PREFERENCES`，存 `localStorage`（键 `tw.theme`，默认 system）；解析后的暗色仍由 `body[data-ds-dark-theme]` 承载，`documentElement.dataset.dsThemeSource` 记录原始偏好，另同步 `color-scheme` 使原生控件/滚动条一致
+- `<body>` 起始处内联引导脚本：解析期即读 `tw.theme` 应用暗色属性，避免暗色用户首帧闪浅色（对应上游 boot-theme 的做法）
+- 按钮图标（sun/moon/auto）走现有 `svgIcon` 体系，`auto` 为半填充圆；复用 `tb-btn` 形态，方形纯图标钮（`.theme-btn`）；title/aria-label 随状态更新
+- 验证：10 套测试全绿、`tsc` 零错误、模式 B 起服 `/`、`/app.js`、`/style.css` 均 200；按钮点击交互待主人目检
+
 ## 待确认（未验证，不能算完成）
 
 - ~~浏览器实际视觉与交互~~：2026-10-16 主人目检亮/暗两张截图确认通过（会话栏/轨迹行/暗色）

@@ -8,6 +8,17 @@
 	<link rel="stylesheet" href="/style.css">
 </head>
 <body>
+	<script>
+		// 主题引导：解析期即应用持久化偏好，避免暗色用户首帧闪浅色（键与 app.js 的 tw.theme 一致）
+		(() => {
+			let pref = "system";
+			try { pref = localStorage.getItem("tw.theme") || "system"; } catch { /* 无痕模式等场景忽略 */ }
+			const dark = pref === "dark" || (pref === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+			if (dark) document.body.toggleAttribute("data-ds-dark-theme", true);
+			document.documentElement.dataset.dsThemeSource = pref;
+			document.documentElement.style.colorScheme = dark ? "dark" : "light";
+		})();
+	</script>
 	<header id="topbar">
 		<div class="brand">
 			<span id="sync-dot" class="dot"></span>
@@ -15,6 +26,7 @@
 		</div>
 		<div id="session-meta" class="session-meta">加载中…</div>
 		<div class="topbar-right">
+			<button id="theme-btn" class="tb-btn theme-btn" type="button" title="主题：跟随系统（点击切换）" aria-label="主题：跟随系统（点击切换）"></button>
 			<span id="scope-badge" class="scope-badge"></span>
 			<span id="sync" class="sync">—</span>
 		</div>
