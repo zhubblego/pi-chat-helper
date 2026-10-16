@@ -2,6 +2,14 @@
 
 [pi coding agent](https://github.com/earendil-works/pi-coding-agent) 的扩展包：**在浏览器里完整回看会话轨迹**（trajectory-web），**在 TUI 里快速跳转历史提问**（question-panel）。
 
+![浅色主题](https://raw.githubusercontent.com/zhubblego/pi-chat-helper/feat/trajectory-web/docs/screenshots/light.png)
+
+*浅色主题：会话栏 ＋ 问题栏 ＋ 按提问分段的轨迹，工具调用与结果成对展示*
+
+![深色主题](https://raw.githubusercontent.com/zhubblego/pi-chat-helper/feat/trajectory-web/docs/screenshots/dark.png)
+
+*深色主题：跟随系统，也可手动指定*
+
 ## 安装
 
 ```bash
