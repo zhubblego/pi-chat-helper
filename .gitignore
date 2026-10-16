@@ -5,3 +5,6 @@ node_modules/
 
 # pi 运行期任务状态（非项目配置，config 目录 .pi/ 其余内容可入库）
 .pi/tasks/
+
+# 项目进度文档仅本地维护，不入库
+ROADMAP.md
