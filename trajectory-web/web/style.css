@@ -770,25 +770,18 @@ svg.tb-icon {
 	z-index: 10;
 }
 
+/* 抽屉头部一排：类型标签 + 标题 + 翻译状态 + 翻译/设置按钮（照主区 tb-btn 形态） */
 .drawer-head {
 	display: flex;
 	align-items: center;
 	gap: 10px;
-	padding: 10px 14px;
+	padding: 8px 14px;
 	border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
-/* 抽屉工具栏（翻译/设置，照主区工具条的 tb-btn 形态） */
-.dv-toolbar {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	padding: 5px 14px;
-	border-bottom: 1px solid var(--dsw-alias-border-l1);
-}
-
-.dv-toolbar .tb-btn {
+.drawer-head .tb-btn {
 	height: 22px;
+	flex: none;
 }
 
 .dv-tool[aria-pressed="true"] {
@@ -797,8 +790,8 @@ svg.tb-icon {
 }
 
 .dv-trans-status {
-	flex: 1;
-	min-width: 0;
+	flex: none;
+	max-width: 40%;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;

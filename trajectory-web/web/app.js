@@ -907,7 +907,7 @@ const TRANSLATE_MODES = [
 	["only", "仅译文"],
 ];
 const TRANS_BLOCK = "p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th, dd, dt";
-let transPrefs = { service: "google", to: "zh-CN", mode: "bilingual" };
+let transPrefs = { service: "bing", to: "zh-CN", mode: "bilingual" };
 let transSeq = 0; // 每次翻译/重建/关闭递增，过期响应丢弃
 
 /** 收集可翻译块：.md 内最外层文本块；容器块（含更深层可翻译块）跳过避免重复，代码占比高的块（命令/路径）不翻。 */

@@ -345,7 +345,9 @@ export function createTrajectoryServer(options) {
 				}
 				const texts = Array.isArray(payload.q) ? payload.q.map((s) => String(s ?? "")) : null;
 				const to = String(payload.to ?? "");
-				const service = TRANSLATE_SERVICES.has(payload.service) ? payload.service : null;
+				let service = payload.service;
+				if (service === undefined) service = "bing"; // 未传时默认微软
+				if (!TRANSLATE_SERVICES.has(service)) service = null;
 				if (!texts || texts.length === 0 || texts.length > 40) {
 					sendJson(res, 400, { error: "q 需为 1~40 段文本数组" });
 					return;
