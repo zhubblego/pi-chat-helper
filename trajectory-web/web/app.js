@@ -933,7 +933,7 @@ function resetTranslateUi() {
 	const btn = el("dv-translate");
 	btn.disabled = false;
 	btn.setAttribute("aria-pressed", "false");
-	el("dv-trans-status").textContent = "";
+	btn.title = "翻译正文（再次点击恢复原文）";
 }
 
 function restoreTranslation() {
@@ -951,13 +951,12 @@ async function translateDrawer() {
 	}
 	const blocks = translatableBlocks();
 	if (blocks.length === 0) {
-		el("dv-trans-status").textContent = "没有可翻译的正文";
+		el("dv-translate").title = "没有可翻译的正文";
 		return;
 	}
 	const seq = ++transSeq;
 	state.translating = true;
 	el("dv-translate").disabled = true;
-	el("dv-trans-status").textContent = `翻译中（${blocks.length} 段）…`;
 	try {
 		const res = await fetch("/api/translate", {
 			method: "POST",
@@ -980,9 +979,9 @@ async function translateDrawer() {
 		});
 		state.translated = true;
 		el("dv-translate").setAttribute("aria-pressed", "true");
-		el("dv-trans-status").textContent = `已翻译（${blocks.length} 段），再次点击恢复原文`;
 	} catch (err) {
-		if (seq === transSeq) el("dv-trans-status").textContent = `翻译失败：${err.message}`;
+		// 不再显示状态文字：错误挂到按钮悬停提示，避免静默失败
+		if (seq === transSeq) el("dv-translate").title = `翻译失败：${err.message}`;
 	} finally {
 		if (seq === transSeq) {
 			state.translating = false;

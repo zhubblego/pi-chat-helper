@@ -64,15 +64,16 @@
 		</main>
 	</div>
 	<aside id="drawer" class="drawer" hidden>
-		<header class="drawer-head" role="toolbar" aria-label="抽屉工具栏">
-			<span id="dv-kind" class="dv-kind"></span>
-			<span id="dv-title" class="dv-title"></span>
-			<span id="dv-trans-status" class="dv-trans-status" aria-live="polite"></span>
+		<div id="dv-toolbar" class="dv-toolbar" role="toolbar" aria-label="抽屉工具栏">
 			<button id="dv-translate" class="tb-btn dv-tool" type="button" title="翻译正文（再次点击恢复原文）" aria-pressed="false"><span>翻译</span></button>
 			<div id="dv-settings-root" class="menu-root">
 				<button id="dv-settings" class="tb-btn dv-tool" type="button" title="抽屉设置" aria-haspopup="menu" aria-expanded="false"><span>设置</span></button>
 				<div id="dv-settings-menu" class="menu" role="menu" hidden></div>
 			</div>
+		</div>
+		<header class="drawer-head">
+			<span id="dv-kind" class="dv-kind"></span>
+			<span id="dv-title" class="dv-title"></span>
 			<button id="drawer-close" class="btn icon" title="关闭（Esc）">✕</button>
 		</header>
 		<div id="dv-meta" class="dv-meta"></div>
