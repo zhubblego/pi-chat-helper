@@ -237,6 +237,7 @@ function loadTranslatePrefs() {
 	try {
 		const saved = JSON.parse(localStorage.getItem(LS_TRANSLATE) ?? "null");
 		if (saved && typeof saved === "object") {
+			if (TRANSLATE_SERVICES.some(([v]) => v === saved.service)) transPrefs.service = saved.service;
 			if (TRANSLATE_LANGS.some(([v]) => v === saved.to)) transPrefs.to = saved.to;
 			if (TRANSLATE_MODES.some(([v]) => v === saved.mode)) transPrefs.mode = saved.mode;
 		}
@@ -891,6 +892,10 @@ function writeViewHash() {
 // 抽屉工具栏：翻译（/api/translate 免费通道）/ 设置（目标语言、显示方式）
 // ---------------------------------------------------------------------------
 
+const TRANSLATE_SERVICES = [
+	["google", "Google"],
+	["bing", "微软（Bing）"],
+];
 const TRANSLATE_LANGS = [
 	["zh-CN", "中文（简体）"],
 	["zh-TW", "中文（繁體）"],
@@ -902,7 +907,7 @@ const TRANSLATE_MODES = [
 	["only", "仅译文"],
 ];
 const TRANS_BLOCK = "p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th, dd, dt";
-let transPrefs = { to: "zh-CN", mode: "bilingual" };
+let transPrefs = { service: "google", to: "zh-CN", mode: "bilingual" };
 let transSeq = 0; // 每次翻译/重建/关闭递增，过期响应丢弃
 
 /** 收集可翻译块：.md 内最外层文本块；容器块（含更深层可翻译块）跳过避免重复，代码占比高的块（命令/路径）不翻。 */
@@ -957,7 +962,7 @@ async function translateDrawer() {
 		const res = await fetch("/api/translate", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ q: blocks.map((b) => b.text), to: transPrefs.to }),
+			body: JSON.stringify({ q: blocks.map((b) => b.text), to: transPrefs.to, service: transPrefs.service }),
 		});
 		const j = await res.json().catch(() => null);
 		if (!res.ok || !Array.isArray(j?.texts)) throw new Error(j?.error ?? `HTTP ${res.status}`);
@@ -987,7 +992,18 @@ async function translateDrawer() {
 }
 
 function renderSettingsMenu() {
-	const nodes = [h("div", { class: "menu-label", role: "presentation", text: "目标语言" })];
+	const nodes = [h("div", { class: "menu-label", role: "presentation", text: "翻译服务" })];
+	for (const [value, label] of TRANSLATE_SERVICES) {
+		nodes.push(
+			h(
+				"button",
+				{ class: "menu-item", type: "button", role: "menuitemradio", "aria-checked": String(transPrefs.service === value), dataset: { service: value } },
+				h("span", { class: "menu-item-label", text: label }),
+				transPrefs.service === value ? svgIcon("check", "menu-check") : null,
+			),
+		);
+	}
+	nodes.push(h("div", { class: "menu-label", role: "presentation", text: "目标语言" }));
 	for (const [value, label] of TRANSLATE_LANGS) {
 		nodes.push(
 			h(
@@ -1020,6 +1036,7 @@ function setSettingsOpen(open) {
 }
 
 function applyTranslateSetting(patch) {
+	if (patch.service) transPrefs.service = patch.service;
 	if (patch.lang) transPrefs.to = patch.lang;
 	if (patch.mode) transPrefs.mode = patch.mode;
 	saveTranslatePrefs();
@@ -1313,9 +1330,10 @@ el("dv-settings").addEventListener("click", (e) => {
 });
 el("dv-settings-menu").addEventListener("click", (e) => {
 	e.stopPropagation();
-	const item = e.target.closest("button[data-lang], button[data-mode]");
+	const item = e.target.closest("button[data-service], button[data-lang], button[data-mode]");
 	if (!item) return;
-	if (item.dataset.lang) applyTranslateSetting({ lang: item.dataset.lang });
+	if (item.dataset.service) applyTranslateSetting({ service: item.dataset.service });
+	else if (item.dataset.lang) applyTranslateSetting({ lang: item.dataset.lang });
 	else if (item.dataset.mode) applyTranslateSetting({ mode: item.dataset.mode });
 });
 el("theme-btn").addEventListener("click", cycleTheme);

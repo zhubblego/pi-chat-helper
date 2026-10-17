@@ -136,6 +136,7 @@ async function stopServer(child) {
 		check("translate 非法 JSON 400", (await trPost("{")).status === 400);
 		check("translate 缺 q 400", (await trPost(JSON.stringify({ to: "zh-CN" }))).status === 400);
 		check("translate 非法语言 400", (await trPost(JSON.stringify({ q: ["hi"], to: "xx" }))).status === 400);
+		check("translate 非法服务 400", (await trPost(JSON.stringify({ q: ["hi"], to: "zh-CN", service: "deepl" }))).status === 400);
 		check("translate 空数组 400", (await trPost(JSON.stringify({ q: [], to: "zh-CN" }))).status === 400);
 		check("translate 超长段 400", (await trPost(JSON.stringify({ q: ["x".repeat(20001)], to: "zh-CN" }))).status === 400);
 		check("未知 POST 路径 405", (await fetch(`${base}/api/nothing`, { method: "POST" })).status === 405);

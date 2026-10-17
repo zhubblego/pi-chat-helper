@@ -24,9 +24,13 @@ import { buildProjection, toLight, findEvent } from "./session.mjs";
 import { listSessions, DEFAULT_SESSIONS_ROOT, LIVE_WINDOW_MS } from "./sessions.mjs";
 import { scanToolOrigins } from "./tool-origins.mjs";
 
-// 翻译转发：Google 免费通道（translate_a/single，无 key）；目标语言白名单
-const TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single";
+// 翻译转发：免费通道（无 key）；目标语言白名单。Google translate_a/single 逐段，
+// 微软 Edge translatetext 批量纯数组（照 sider 同源接口：from 空 = 自动检测）。
+const GOOGLE_TL_URL = "https://translate.googleapis.com/translate_a/single";
+const BING_TL_URL = "https://edge.microsoft.com/translate/translatetext";
 const TRANSLATE_LANGS = new Set(["zh-CN", "zh-TW", "en", "ja", "ko", "fr", "de", "es", "ru"]);
+const TRANSLATE_SERVICES = new Set(["google", "bing"]);
+const BING_LANG = { "zh-CN": "zh-Hans", "zh-TW": "zh-Hant" };
 
 /** 读请求体（上限 1MB，超出拖断）。 */
 function readBody(req, limit = 1 << 20) {
@@ -47,29 +51,28 @@ function readBody(req, limit = 1 << 20) {
 	});
 }
 
-/** 单段翻译：优先 https_proxy/HTTPS_PROXY/all_proxy 环境变量（curl -x），无代理则直连。 */
-async function googleTranslate(text, to) {
-	const form = new URLSearchParams({ client: "gtx", sl: "auto", tl: to, dt: "t", q: text }).toString();
+/** 远程 POST（优先 https_proxy/HTTPS_PROXY/all_proxy 环境变量经 curl -x，否则直连），返回响应体文本。 */
+async function postRemote(url, contentType, body) {
 	const proxy = process.env.https_proxy ?? process.env.HTTPS_PROXY ?? process.env.all_proxy ?? process.env.ALL_PROXY ?? "";
-	let payload;
 	if (proxy) {
-		payload = await new Promise((resolve, reject) => {
+		return await new Promise((resolve, reject) => {
 			execFile(
 				"curl",
-				["-sS", "--max-time", "20", "-x", proxy, "-X", "POST", "-H", "content-type: application/x-www-form-urlencoded", "--data-binary", form, TRANSLATE_URL],
+				["-sS", "--max-time", "20", "-x", proxy, "-X", "POST", "-H", `content-type: ${contentType}`, "--data-binary", body, url],
 				{ maxBuffer: 16 << 20 },
 				(err, stdout) => (err ? reject(new Error(err.message)) : resolve(stdout)),
 			);
 		});
-	} else {
-		const res = await fetch(TRANSLATE_URL, {
-			method: "POST",
-			headers: { "content-type": "application/x-www-form-urlencoded;charset=utf-8" },
-			body: form,
-		});
-		if (!res.ok) throw new Error(`Google HTTP ${res.status}`);
-		payload = await res.text();
 	}
+	const res = await fetch(url, { method: "POST", headers: { "content-type": contentType }, body });
+	if (!res.ok) throw new Error(`HTTP ${res.status}`);
+	return await res.text();
+}
+
+/** Google 免费通道：单段 POST form，拼接分段译文。 */
+async function googleTranslate(text, to) {
+	const form = new URLSearchParams({ client: "gtx", sl: "auto", tl: to, dt: "t", q: text }).toString();
+	const payload = await postRemote(GOOGLE_TL_URL, "application/x-www-form-urlencoded", form);
 	let data;
 	try {
 		data = JSON.parse(payload);
@@ -79,6 +82,22 @@ async function googleTranslate(text, to) {
 	const out = (data?.[0] ?? []).map((seg) => (Array.isArray(seg) ? seg[0] ?? "" : "")).join("");
 	if (!out) throw new Error("翻译返回为空");
 	return out;
+}
+
+/** 微软 Edge 免费通道：批量纯字符串数组一次 POST（from 空 = 自动检测），保持顺序。 */
+async function bingTranslate(texts, to) {
+	const lang = BING_LANG[to] ?? to;
+	const payload = await postRemote(`${BING_TL_URL}?from=&to=${encodeURIComponent(lang)}`, "application/json", JSON.stringify(texts));
+	let data;
+	try {
+		data = JSON.parse(payload);
+	} catch {
+		throw new Error(`翻译返回非 JSON（可能代理报错）：${payload.slice(0, 120)}`);
+	}
+	if (!Array.isArray(data) || data.length !== texts.length || data.some((d) => !d?.translations?.[0]?.text)) {
+		throw new Error("微软翻译返回格式异常");
+	}
+	return data.map((d) => d.translations[0].text);
 }
 
 const STATIC = new Map([
@@ -326,6 +345,7 @@ export function createTrajectoryServer(options) {
 				}
 				const texts = Array.isArray(payload.q) ? payload.q.map((s) => String(s ?? "")) : null;
 				const to = String(payload.to ?? "");
+				const service = TRANSLATE_SERVICES.has(payload.service) ? payload.service : null;
 				if (!texts || texts.length === 0 || texts.length > 40) {
 					sendJson(res, 400, { error: "q 需为 1~40 段文本数组" });
 					return;
@@ -338,16 +358,21 @@ export function createTrajectoryServer(options) {
 					sendJson(res, 400, { error: `不支持的目标语言：${to || "(空)"}` });
 					return;
 				}
+				if (!service) {
+					sendJson(res, 400, { error: `不支持的翻译服务：${payload.service ?? "(空)"}（可选 google / bing）` });
+					return;
+				}
 				try {
-					const out = [];
-					for (let i = 0; i < texts.length; i += 4) {
-						const batch = texts.slice(i, i + 4);
-						const done = await Promise.all(batch.map((t) => googleTranslate(t, to)));
-						out.push(...done);
-					}
+					const out = service === "bing" ? await bingTranslate(texts, to) : await Promise.all(
+						(function chunk(list, size) {
+							const all = [];
+							for (let i = 0; i < list.length; i += size) all.push(list.slice(i, i + size));
+							return all;
+						})(texts, 4).map((batch) => Promise.all(batch.map((t) => googleTranslate(t, to)))),
+					).then((groups) => groups.flat());
 					sendJson(res, 200, { texts: out });
 				} catch (err) {
-					sendJson(res, 502, { error: `翻译服务不可达（服务环境需可直连 Google 或配置 https_proxy）：${err.message}` });
+					sendJson(res, 502, { error: `翻译服务不可达（服务环境需可直连或配置 https_proxy）：${err.message}` });
 				}
 				return;
 			}
