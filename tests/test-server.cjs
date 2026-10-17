@@ -131,6 +131,15 @@ async function stopServer(child) {
 		check("事件详情（full）", detail.event.tool.name === "read" && detail.event.tool.result === "结果");
 		check("未知会话 404", (await fetch(`${base}/api/session?id=nope`)).status === 404);
 
+		// 翻译转发接口：只验参数校验（真实外呼靠手动冒烟，避免测试依赖网络）
+		const trPost = (body) => fetch(`${base}/api/translate`, { method: "POST", headers: { "content-type": "application/json" }, body });
+		check("translate 非法 JSON 400", (await trPost("{")).status === 400);
+		check("translate 缺 q 400", (await trPost(JSON.stringify({ to: "zh-CN" }))).status === 400);
+		check("translate 非法语言 400", (await trPost(JSON.stringify({ q: ["hi"], to: "xx" }))).status === 400);
+		check("translate 空数组 400", (await trPost(JSON.stringify({ q: [], to: "zh-CN" }))).status === 400);
+		check("translate 超长段 400", (await trPost(JSON.stringify({ q: ["x".repeat(20001)], to: "zh-CN" }))).status === 400);
+		check("未知 POST 路径 405", (await fetch(`${base}/api/nothing`, { method: "POST" })).status === 405);
+
 		for (const file of ["/", "/app.js", "/lib.js", "/style.css", "/tokens.css"]) {
 			check(`静态资源 ${file}`, (await fetch(base + file)).status === 200);
 		}

@@ -778,6 +778,56 @@ svg.tb-icon {
 	border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
+/* 抽屉工具栏（翻译/设置，照主区工具条的 tb-btn 形态） */
+.dv-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 5px 14px;
+	border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.dv-toolbar .tb-btn {
+	height: 22px;
+}
+
+.dv-tool[aria-pressed="true"] {
+	color: var(--dsw-alias-label-primary);
+	background: var(--dsw-specific-sidebar-nav-item-active);
+}
+
+.dv-trans-status {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--dsw-alias-label-tertiary);
+	font: var(--dsw-font-xxxs-11);
+}
+
+/* 译文块：左侧竖线 + 「译」标，与原文区分 */
+.md-trans {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	margin: 2px 0;
+	padding-left: 8px;
+	border-left: 2px solid var(--dsw-alias-border-l3);
+	color: var(--dsw-alias-label-secondary);
+	font: var(--dsw-font-xs-13);
+}
+
+.md-trans-tag {
+	flex: none;
+	color: var(--dsw-alias-link);
+	font: var(--dsw-font-xxxs-strong-11);
+}
+
+.md-trans-text {
+	min-width: 0;
+}
+
 .dv-kind {
 	font: var(--dsw-font-xxxs-strong-11);
 	padding: 2px 8px;

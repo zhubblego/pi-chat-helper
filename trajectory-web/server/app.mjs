@@ -12,15 +12,74 @@
  *   GET /api/sessions           会话列表（按最近活跃倒序，live = 30s 内有写入）
  *   GET /api/session?id=&v=     指定会话的 light 投影；etag 未变时 {changed:false}
  *   GET /api/event?session=&id= 单个事件的 full 载荷
+ *   POST /api/translate        抽屉正文翻译转发（Google 免费通道；https_proxy 环境变量出代理）
  *
  * 只读：不写入会话文件；仅监听回环地址。
  */
 import { createServer } from "node:http";
+import { execFile } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { buildProjection, toLight, findEvent } from "./session.mjs";
 import { listSessions, DEFAULT_SESSIONS_ROOT, LIVE_WINDOW_MS } from "./sessions.mjs";
 import { scanToolOrigins } from "./tool-origins.mjs";
+
+// 翻译转发：Google 免费通道（translate_a/single，无 key）；目标语言白名单
+const TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single";
+const TRANSLATE_LANGS = new Set(["zh-CN", "zh-TW", "en", "ja", "ko", "fr", "de", "es", "ru"]);
+
+/** 读请求体（上限 1MB，超出拖断）。 */
+function readBody(req, limit = 1 << 20) {
+	return new Promise((resolve, reject) => {
+		let size = 0;
+		const chunks = [];
+		req.on("data", (chunk) => {
+			size += chunk.length;
+			if (size > limit) {
+				reject(new Error("请求体超过 1MB"));
+				req.destroy();
+				return;
+			}
+			chunks.push(chunk);
+		});
+		req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+		req.on("error", reject);
+	});
+}
+
+/** 单段翻译：优先 https_proxy/HTTPS_PROXY/all_proxy 环境变量（curl -x），无代理则直连。 */
+async function googleTranslate(text, to) {
+	const form = new URLSearchParams({ client: "gtx", sl: "auto", tl: to, dt: "t", q: text }).toString();
+	const proxy = process.env.https_proxy ?? process.env.HTTPS_PROXY ?? process.env.all_proxy ?? process.env.ALL_PROXY ?? "";
+	let payload;
+	if (proxy) {
+		payload = await new Promise((resolve, reject) => {
+			execFile(
+				"curl",
+				["-sS", "--max-time", "20", "-x", proxy, "-X", "POST", "-H", "content-type: application/x-www-form-urlencoded", "--data-binary", form, TRANSLATE_URL],
+				{ maxBuffer: 16 << 20 },
+				(err, stdout) => (err ? reject(new Error(err.message)) : resolve(stdout)),
+			);
+		});
+	} else {
+		const res = await fetch(TRANSLATE_URL, {
+			method: "POST",
+			headers: { "content-type": "application/x-www-form-urlencoded;charset=utf-8" },
+			body: form,
+		});
+		if (!res.ok) throw new Error(`Google HTTP ${res.status}`);
+		payload = await res.text();
+	}
+	let data;
+	try {
+		data = JSON.parse(payload);
+	} catch {
+		throw new Error(`翻译返回非 JSON（可能代理报错）：${payload.slice(0, 120)}`);
+	}
+	const out = (data?.[0] ?? []).map((seg) => (Array.isArray(seg) ? seg[0] ?? "" : "")).join("");
+	if (!out) throw new Error("翻译返回为空");
+	return out;
+}
 
 const STATIC = new Map([
 	["/", ["index.html", "text/html; charset=utf-8"]],
@@ -144,14 +203,20 @@ export function createTrajectoryServer(options) {
 		res.end(text);
 	}
 
-	const server = createServer((req, res) => {
+	const server = createServer(async (req, res) => {
 		try {
-			if (req.method !== "GET" && req.method !== "HEAD") {
+			const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+			const pathname = url.pathname;
+			if (req.method === "POST") {
+				// 只开放翻译转发；其余 POST 一律 405
+				if (pathname !== "/api/translate") {
+					sendJson(res, 405, { error: "method not allowed" });
+				return;
+				}
+			} else if (req.method !== "GET" && req.method !== "HEAD") {
 				sendJson(res, 405, { error: "method not allowed" });
 				return;
 			}
-			const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-			const pathname = url.pathname;
 
 			if (pathname === "/api/health") {
 				sendJson(res, 200, {
@@ -247,6 +312,43 @@ export function createTrajectoryServer(options) {
 					return;
 				}
 				sendJson(res, 200, { etag: entry.etag, sessionId: session.id, event });
+				return;
+			}
+
+			if (pathname === "/api/translate") {
+				const body = await readBody(req);
+				let payload;
+				try {
+					payload = JSON.parse(body || "{}");
+				} catch {
+					sendJson(res, 400, { error: "请求体不是合法 JSON" });
+				return;
+				}
+				const texts = Array.isArray(payload.q) ? payload.q.map((s) => String(s ?? "")) : null;
+				const to = String(payload.to ?? "");
+				if (!texts || texts.length === 0 || texts.length > 40) {
+					sendJson(res, 400, { error: "q 需为 1~40 段文本数组" });
+					return;
+				}
+				if (texts.some((t) => t.length > 20_000)) {
+					sendJson(res, 400, { error: "单段文本超过 20000 字符" });
+					return;
+				}
+				if (!TRANSLATE_LANGS.has(to)) {
+					sendJson(res, 400, { error: `不支持的目标语言：${to || "(空)"}` });
+					return;
+				}
+				try {
+					const out = [];
+					for (let i = 0; i < texts.length; i += 4) {
+						const batch = texts.slice(i, i + 4);
+						const done = await Promise.all(batch.map((t) => googleTranslate(t, to)));
+						out.push(...done);
+					}
+					sendJson(res, 200, { texts: out });
+				} catch (err) {
+					sendJson(res, 502, { error: `翻译服务不可达（服务环境需可直连 Google 或配置 https_proxy）：${err.message}` });
+				}
 				return;
 			}
 

@@ -34,6 +34,7 @@ import {
 
 const LS_FILTERS = "tw.filters";
 const LS_THEME = "tw.theme";
+const LS_TRANSLATE = "tw.translate";
 const POLL_MS = 2000;
 const SESSION_LIST_EVERY = 3; // 每 3 个 tick 刷一次会话列表（约 6s）
 
@@ -66,6 +67,9 @@ const state = {
 	openId: null,
 	openFull: null,
 	openLightJson: "",
+	translated: false,
+	translating: false,
+	settingsOpen: false,
 	pollingSession: false,
 	pollingSessions: false,
 	tick: 0,
@@ -224,6 +228,26 @@ function loadPrefs() {
 function saveFilters() {
 	try {
 		localStorage.setItem(LS_FILTERS, JSON.stringify(state.filters));
+	} catch {
+		/* 无痕模式等场景忽略 */
+	}
+}
+
+function loadTranslatePrefs() {
+	try {
+		const saved = JSON.parse(localStorage.getItem(LS_TRANSLATE) ?? "null");
+		if (saved && typeof saved === "object") {
+			if (TRANSLATE_LANGS.some(([v]) => v === saved.to)) transPrefs.to = saved.to;
+			if (TRANSLATE_MODES.some(([v]) => v === saved.mode)) transPrefs.mode = saved.mode;
+		}
+	} catch {
+		/* 忽略损坏的本地状态 */
+	}
+}
+
+function saveTranslatePrefs() {
+	try {
+		localStorage.setItem(LS_TRANSLATE, JSON.stringify(transPrefs));
 	} catch {
 		/* 无痕模式等场景忽略 */
 	}
@@ -771,6 +795,8 @@ function renderDrawer(keepState = false) {
 	}
 	const full = state.openFull && state.openFull.id === light.id ? state.openFull : null;
 	const view = full ?? light;
+	transSeq++;
+	resetTranslateUi();
 	const body = el("dv-body");
 	const prevScroll = keepState ? body.scrollTop : 0;
 	const openKeys = keepState ? new Set([...body.querySelectorAll("details[open]")].map(detailKey)) : null;
@@ -836,7 +862,10 @@ function refreshOpen() {
 function closeDrawer() {
 	state.openId = null;
 	state.openFull = null;
+	state.openLightJson = "";
 	drawer.hidden = true;
+	transSeq++;
+	setSettingsOpen(false);
 	writeViewHash();
 }
 
@@ -856,6 +885,150 @@ function readViewHash() {
 function writeViewHash() {
 	const hash = state.openId && state.selectedId ? `#s=${encodeURIComponent(state.selectedId)}&e=${encodeURIComponent(state.openId)}` : "";
 	if (location.hash !== hash) history.replaceState(null, "", hash || `${location.pathname}${location.search}`);
+}
+
+// ---------------------------------------------------------------------------
+// 抽屉工具栏：翻译（/api/translate 免费通道）/ 设置（目标语言、显示方式）
+// ---------------------------------------------------------------------------
+
+const TRANSLATE_LANGS = [
+	["zh-CN", "中文（简体）"],
+	["zh-TW", "中文（繁體）"],
+	["en", "English"],
+	["ja", "日本語"],
+];
+const TRANSLATE_MODES = [
+	["bilingual", "双语对照"],
+	["only", "仅译文"],
+];
+const TRANS_BLOCK = "p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th, dd, dt";
+let transPrefs = { to: "zh-CN", mode: "bilingual" };
+let transSeq = 0; // 每次翻译/重建/关闭递增，过期响应丢弃
+
+/** 收集可翻译块：.md 内最外层文本块；容器块（含更深层可翻译块）跳过避免重复，代码占比高的块（命令/路径）不翻。 */
+function translatableBlocks() {
+	const blocks = [];
+	for (const md of el("dv-body").querySelectorAll(".md")) {
+		for (const node of md.querySelectorAll(TRANS_BLOCK)) {
+			if (node.querySelector(TRANS_BLOCK)) continue;
+			const text = node.textContent.trim();
+			if (text.length < 2 || !/\p{L}/u.test(text)) continue;
+			let codeChars = 0;
+			for (const c of node.querySelectorAll("code, pre")) codeChars += c.textContent.length;
+			if (codeChars * 3 > text.length) continue;
+			blocks.push({ node, text });
+		}
+	}
+	return blocks;
+}
+
+function resetTranslateUi() {
+	state.translated = false;
+	state.translating = false;
+	const btn = el("dv-translate");
+	btn.disabled = false;
+	btn.setAttribute("aria-pressed", "false");
+	el("dv-trans-status").textContent = "";
+}
+
+function restoreTranslation() {
+	const body = el("dv-body");
+	for (const t of body.querySelectorAll(".md-trans")) t.remove();
+	for (const src of body.querySelectorAll(".md [hidden]")) src.hidden = false;
+	resetTranslateUi();
+}
+
+async function translateDrawer() {
+	if (state.translating || !state.openId) return;
+	if (state.translated) {
+		restoreTranslation();
+		return;
+	}
+	const blocks = translatableBlocks();
+	if (blocks.length === 0) {
+		el("dv-trans-status").textContent = "没有可翻译的正文";
+		return;
+	}
+	const seq = ++transSeq;
+	state.translating = true;
+	el("dv-translate").disabled = true;
+	el("dv-trans-status").textContent = `翻译中（${blocks.length} 段）…`;
+	try {
+		const res = await fetch("/api/translate", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ q: blocks.map((b) => b.text), to: transPrefs.to }),
+		});
+		const j = await res.json().catch(() => null);
+		if (!res.ok || !Array.isArray(j?.texts)) throw new Error(j?.error ?? `HTTP ${res.status}`);
+		if (seq !== transSeq) return; // 已切换事件/重建，丢弃过期响应
+		const only = transPrefs.mode === "only";
+		blocks.forEach((b, i) => {
+			const translated = h(
+				"div",
+				{ class: "md-trans" },
+				h("span", { class: "md-trans-tag", text: "译" }),
+				h("span", { class: "md-trans-text", text: String(j.texts[i] ?? "") }),
+			);
+			if (only) b.node.hidden = true;
+			b.node.after(translated);
+		});
+		state.translated = true;
+		el("dv-translate").setAttribute("aria-pressed", "true");
+		el("dv-trans-status").textContent = `已翻译（${blocks.length} 段），再次点击恢复原文`;
+	} catch (err) {
+		if (seq === transSeq) el("dv-trans-status").textContent = `翻译失败：${err.message}`;
+	} finally {
+		if (seq === transSeq) {
+			state.translating = false;
+			el("dv-translate").disabled = false;
+		}
+	}
+}
+
+function renderSettingsMenu() {
+	const nodes = [h("div", { class: "menu-label", role: "presentation", text: "目标语言" })];
+	for (const [value, label] of TRANSLATE_LANGS) {
+		nodes.push(
+			h(
+				"button",
+				{ class: "menu-item", type: "button", role: "menuitemradio", "aria-checked": String(transPrefs.to === value), dataset: { lang: value } },
+				h("span", { class: "menu-item-label", text: label }),
+				transPrefs.to === value ? svgIcon("check", "menu-check") : null,
+			),
+		);
+	}
+	nodes.push(h("div", { class: "menu-label", role: "presentation", text: "显示" }));
+	for (const [value, label] of TRANSLATE_MODES) {
+		nodes.push(
+			h(
+				"button",
+				{ class: "menu-item", type: "button", role: "menuitemradio", "aria-checked": String(transPrefs.mode === value), dataset: { mode: value } },
+				h("span", { class: "menu-item-label", text: label }),
+				transPrefs.mode === value ? svgIcon("check", "menu-check") : null,
+			),
+		);
+	}
+	el("dv-settings-menu").replaceChildren(...nodes);
+}
+
+function setSettingsOpen(open) {
+	state.settingsOpen = open;
+	el("dv-settings-menu").hidden = !open;
+	el("dv-settings").setAttribute("aria-expanded", String(open));
+	if (open) renderSettingsMenu();
+}
+
+function applyTranslateSetting(patch) {
+	if (patch.lang) transPrefs.to = patch.lang;
+	if (patch.mode) transPrefs.mode = patch.mode;
+	saveTranslatePrefs();
+	renderSettingsMenu();
+	// 已翻译时按新设置重翻：先恢复原文再立即重译
+	if (state.translated) {
+		restoreTranslation();
+		void translateDrawer();
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1133,9 +1306,35 @@ mainInner.addEventListener("dblclick", (e) => {
 });
 
 el("drawer-close").addEventListener("click", closeDrawer);
+el("dv-translate").addEventListener("click", () => void translateDrawer());
+el("dv-settings").addEventListener("click", (e) => {
+	e.stopPropagation();
+	setSettingsOpen(!state.settingsOpen);
+});
+el("dv-settings-menu").addEventListener("click", (e) => {
+	e.stopPropagation();
+	const item = e.target.closest("button[data-lang], button[data-mode]");
+	if (!item) return;
+	if (item.dataset.lang) applyTranslateSetting({ lang: item.dataset.lang });
+	else if (item.dataset.mode) applyTranslateSetting({ mode: item.dataset.mode });
+});
 el("theme-btn").addEventListener("click", cycleTheme);
 document.addEventListener("keydown", (e) => {
-	if (e.key === "Escape") closeDrawer();
+	if (e.key === "Escape") {
+		if (state.settingsOpen) {
+			setSettingsOpen(false);
+			return;
+		}
+		closeDrawer();
+	}
+});
+// 点击设置菜单外关闭（照过滤菜单的 composedPath 判断）
+document.addEventListener("click", (e) => {
+	if (!state.settingsOpen) return;
+	const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+	if (path.some((node) => node instanceof Element && node.id === "dv-settings-root")) return;
+	if (e.target.closest?.("#dv-settings-root")) return;
+	setSettingsOpen(false);
 });
 // 回到前台立即同步一次（标签页隐藏期间轮询暂停；走 etag 增量，未变则开销极小）
 document.addEventListener("visibilitychange", () => {
@@ -1161,6 +1360,7 @@ loadTheme();
 applyTheme();
 renderThemeButton();
 loadPrefs();
+loadTranslatePrefs();
 renderToolbar();
 void ensureToolOrigins();
 pollSessions();
