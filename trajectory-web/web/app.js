@@ -1031,15 +1031,30 @@ function restoreTranslation() {
 	resetTranslateUi();
 }
 
+/** 翻译按钮瞬时反馈：字符闪一下后恢复（不占用状态位，失败/无正文不静默）。 */
+let transFlashTimer = 0;
+function flashTranslate(char) {
+	const btn = el("dv-translate");
+	clearTimeout(transFlashTimer);
+	btn.replaceChildren(h("span", { "aria-hidden": "true", text: char }));
+	transFlashTimer = setTimeout(() => btn.replaceChildren(h("span", { "aria-hidden": "true", text: "译" })), 1200);
+}
+
 async function translateDrawer() {
 	if (state.translating || !state.openId) return;
 	if (state.translated) {
 		restoreTranslation();
 		return;
 	}
+	// 正文被截断且全文未到手时先等全文：否则全文到达重建正文区，在途翻译会被 seq 守卫丢弃（表现为点了没反应）
+	const wantId = state.openId;
+	const light0 = findEvent(wantId);
+	if (light0?.truncated && (!state.openFull || state.openFull.id !== wantId)) await loadFull(wantId);
+	if (state.openId !== wantId || !findEvent(wantId)) return;
 	const blocks = translatableBlocks();
 	if (blocks.length === 0) {
-		el("dv-translate").title = "没有可翻译的正文";
+		el("dv-translate").title = "没有可翻译的正文（工具结果/命令输出/加密思维不可翻）";
+		flashTranslate("∅");
 		return;
 	}
 	const seq = ++transSeq;
@@ -1067,9 +1082,13 @@ async function translateDrawer() {
 		});
 		state.translated = true;
 		el("dv-translate").setAttribute("aria-pressed", "true");
+		flashTranslate("✓");
 	} catch (err) {
-		// 不再显示状态文字：错误挂到按钮悬停提示，避免静默失败
-		if (seq === transSeq) el("dv-translate").title = `翻译失败：${err.message}`;
+		// 不再显示状态文字：错误挂悬停提示 + 按钮闪 ✕，避免静默失败
+		if (seq === transSeq) {
+			el("dv-translate").title = `翻译失败：${err.message}`;
+			flashTranslate("✕");
+		}
 	} finally {
 		if (seq === transSeq) {
 			state.translating = false;
