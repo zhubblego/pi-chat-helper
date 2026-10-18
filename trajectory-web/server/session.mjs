@@ -161,7 +161,11 @@ function pushEvent(question, event, msgMeta) {
  * @returns {{meta: object, questions: object[]}}
  */
 export function buildProjection(sessionFile) {
-	const { header, entries } = parseSessionFile(sessionFile);
+	return buildProjectionFrom({ ...parseSessionFile(sessionFile), file: sessionFile });
+}
+
+/** 投影主体：吃 { header, entries, file? }（pi 原生或 codex 翻译层产出），供多源复用。 */
+export function buildProjectionFrom({ header, entries, file }) {
 	const branch = activeBranch(entries);
 
 	/** @type {object[]} */
@@ -518,7 +522,7 @@ export function buildProjection(sessionFile) {
 
 	return {
 		meta: {
-			file: sessionFile,
+			file: file ?? null,
 			id: header?.id,
 			cwd: header?.cwd,
 			version: header?.version,

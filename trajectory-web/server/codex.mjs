@@ -1,0 +1,291 @@
+/**
+ * codex.mjs — Codex 轨迹源：扫描 ~/.codex/sessions/年/月/日/rollout-*.jsonl，
+ * 把 rollout 事件流翻译成 pi 会话条目流（喂 session.mjs 的 buildProjectionFrom，
+ * 投影/前端全复用）。
+ *
+ * 翻译映射（保留对话与工具，丢弃 UI 流与内部状态）：
+ *   session_meta                              → header {type:"session", id, cwd, timestamp}
+ *   response_item/message (user|assistant)    → 消息条目（developer/system 为每轮注入指令，跳过）
+ *   response_item/reasoning                   → assistant thinking part（summary 有明文用明文，否则 redacted）
+ *   response_item/function_call               → assistant toolCall part（arguments JSON 字符串→对象）
+ *   response_item/custom_tool_call            → assistant toolCall part（input 脚本原文作 arguments）
+ *   response_item/function_call_output 等     → toolResult 消息（按 call_id 与 toolCall 配对）
+ *   compacted                                 → compaction 条目
+ *   turn_context                              → model 变化时产 model_change（相邻相同不重复）
+ *   其余（event_msg/world_state/token_usage_record/agent_message…）跳过
+ *
+ * 条目 id 用 rollout 自带 id（msg_/fc_/rs_…，重读稳定），parentId 顺序链接，
+ * activeBranch 沿链回溯即得全量（rollout 为线性追加，无分支）。
+ * 列表走「stat + 头 64KB」轻量解析（cwd + 首条用户消息），mtime+size 缓存。
+ */
+import { closeSync, openSync, readSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { LIVE_WINDOW_MS } from "./sessions.mjs";
+
+export const DEFAULT_CODEX_ROOT = join(homedir(), ".codex", "sessions");
+
+const HEAD_CAP = 64 * 1024;
+
+/** file -> { mtimeMs, size, info }（与 sessions.mjs 同策略） */
+const headCache = new Map();
+
+export function clearCodexCache() {
+	headCache.clear();
+}
+
+/** `rollout-2026-07-13T09-49-15-<uuid>.jsonl` → { id, created }；不匹配返回 null。 */
+export function fromRolloutName(name) {
+	const m = /^rollout-(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-([0-9a-fA-F-]{30,})\.jsonl$/.exec(name);
+	if (!m) return null;
+	const created = Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}Z`);
+	return { id: m[5], created: Number.isFinite(created) ? created : undefined };
+}
+
+function readHead(file, size) {
+	const cap = Math.min(size, HEAD_CAP);
+	const fd = openSync(file, "r");
+	try {
+		const buf = Buffer.alloc(cap);
+		const read = readSync(fd, buf, 0, cap, 0);
+		return buf.toString("utf8", 0, read);
+	} finally {
+		closeSync(fd);
+	}
+}
+
+/** 头部轻量解析：session_meta 的 cwd + 首条用户消息预览。 */
+function parseHead(text, file, fallbackId) {
+	let cwd;
+	let firstMessage = "";
+	let id = fallbackId;
+	for (const line of text.split("\n")) {
+		if (!line.trim()) continue;
+		let entry;
+		try {
+			entry = JSON.parse(line);
+		} catch {
+			continue; // 半行
+		}
+		if (entry.type === "session_meta") {
+			cwd = entry.payload?.cwd ?? cwd;
+			if (entry.payload?.id) id = entry.payload.id;
+			continue;
+		}
+		if (!firstMessage && entry.type === "response_item" && entry.payload?.type === "message" && entry.payload?.role === "user") {
+			const text = (entry.payload.content ?? []).map((c) => (typeof c?.text === "string" ? c.text : "")).join("").trim();
+			if (text) firstMessage = text.slice(0, 120).replace(/\s+/g, " ");
+		}
+		if (cwd && firstMessage) break;
+	}
+	return { id, cwd, firstMessage };
+}
+
+/** 读取单个 codex 会话的列表信息（带缓存）。解析失败返回 null。 */
+function sessionInfoFor(file, stat, projectDir) {
+	const cached = headCache.get(file);
+	if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.info;
+	let info;
+	try {
+		const fromName = fromRolloutName(file.split("/").pop());
+		if (!fromName) return null;
+		const parsed = parseHead(readHead(file, stat.size), file, fromName.id);
+		info = {
+			id: parsed.id,
+			file,
+			dir: join(file, ".."),
+			projectPath: parsed.cwd ?? null,
+			projectDir,
+			name: undefined,
+			firstMessage: parsed.firstMessage,
+			created: fromName.created,
+			modified: stat.mtimeMs,
+			size: stat.size,
+		};
+	} catch {
+		return null;
+	}
+	headCache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, info });
+	return info;
+}
+
+/** 遍历 root/年/月/日 三层目录收集 rollout 文件（最内层是文件）。 */
+function* rolloutFiles(root) {
+	let years;
+	try {
+		years = readdirSync(root, { withFileTypes: true });
+	} catch {
+		return;
+	}
+	for (const y of years) {
+		if (!y.isDirectory()) continue;
+		for (const m of subdirs(join(root, y.name))) {
+			for (const d of subdirs(join(root, y.name, m.name))) {
+				let files;
+				try {
+					files = readdirSync(join(root, y.name, m.name, d.name), { withFileTypes: true });
+				} catch {
+					continue;
+				}
+				for (const f of files) {
+					if (f.isFile() && f.name.startsWith("rollout-") && f.name.endsWith(".jsonl")) {
+						yield join(root, y.name, m.name, d.name, f.name);
+					}
+				}
+			}
+		}
+	}
+}
+
+function subdirs(dir) {
+	try {
+		return readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory());
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * 列出 codex 会话（按最近活跃倒序）。
+ * @param {{codexRoot?: string, projectDir?: string, liveWindowMs?: number, now?: number}} options
+ */
+export function listCodexSessions(options = {}) {
+	const now = options.now ?? Date.now();
+	const liveWindowMs = options.liveWindowMs ?? LIVE_WINDOW_MS;
+	const root = options.codexRoot ?? DEFAULT_CODEX_ROOT;
+	const sessions = [];
+	for (const file of rolloutFiles(root)) {
+		try {
+			const stat = statSync(file);
+			if (!stat.isFile()) continue;
+			const info = sessionInfoFor(file, stat, options.projectDir ?? null);
+			if (info) sessions.push(info);
+		} catch {
+			/* 单个文件不可读不影响列表 */
+		}
+	}
+	if (options.projectDir) {
+		// 项目范围：按 cwd 前缀过滤（projectDir 是 pi 的会话目录概念，这里用路径匹配）
+		const keep = sessions.filter((s) => s.projectPath && (s.projectPath === options.projectDir || options.projectDir.startsWith(`${s.projectPath}/`) || s.projectPath.startsWith(`${options.projectDir}/`)));
+		sessions.length = 0;
+		sessions.push(...keep);
+	}
+	sessions.sort((a, b) => b.modified - a.modified);
+	for (const s of sessions) s.live = now - s.modified < liveWindowMs;
+	return sessions;
+}
+
+// ---------------------------------------------------------------------------
+// 翻译层：rollout 事件流 → pi 会话条目流
+// ---------------------------------------------------------------------------
+
+/** content 数组（input_text/output_text）拼纯文本。 */
+function textOfParts(parts) {
+	if (typeof parts === "string") return parts;
+	if (!Array.isArray(parts)) return "";
+	return parts.map((c) => (typeof c?.text === "string" ? c.text : "")).join("");
+}
+
+/**
+ * 读 codex 会话并翻译为 pi 条目流。
+ * @returns {{header: object|null, entries: object[]}}
+ */
+export function readCodexSession(file) {
+	const out = [];
+	let header = null;
+	let lastId = null;
+	let lastModel;
+	const link = (entry) => {
+		entry.parentId = lastId;
+		lastId = entry.id;
+		return entry;
+	};
+	for (const line of readFileSync(file, "utf8").split("\n")) {
+		if (!line.trim()) continue;
+		let o;
+		try {
+			o = JSON.parse(line);
+		} catch {
+			continue; // 半行/坏行跳过
+		}
+		const ts = o.timestamp;
+		const p = o.payload ?? {};
+		if (o.type === "session_meta") {
+			if (!header) header = { type: "session", id: p.id ?? p.session_id, timestamp: ts, cwd: p.cwd };
+			continue;
+		}
+		if (o.type === "turn_context") {
+			const model = typeof p.model === "string" ? p.model : "";
+			if (model && model !== lastModel) {
+				lastModel = model;
+				out.push(link({ type: "model_change", id: `cx-model-${out.length}`, timestamp: ts, provider: p.model_provider ?? "openai", modelId: model }));
+			}
+			continue;
+		}
+		if (o.type === "compacted") {
+			out.push(link({ type: "compaction", id: `cx-comp-${out.length}`, timestamp: ts, compaction: { summary: "（Codex 会话已压缩）" } }));
+			continue;
+		}
+		if (o.type !== "response_item") continue;
+		if (p.type === "message") {
+			if (p.role !== "user" && p.role !== "assistant") continue; // developer/system 注入指令
+			out.push(
+				link({
+					type: "message",
+					id: p.id ?? `cx-msg-${out.length}`,
+					timestamp: ts,
+					message: { role: p.role, content: [{ type: "text", text: textOfParts(p.content) }] },
+				}),
+			);
+			continue;
+		}
+		if (p.type === "reasoning") {
+			let summary = "";
+			if (Array.isArray(p.summary)) {
+				summary = p.summary.map((s) => (typeof s?.text === "string" ? s.text : "")).filter(Boolean).join("\n");
+			}
+			out.push(
+				link({
+					type: "message",
+					id: p.id ?? `cx-rs-${out.length}`,
+					timestamp: ts,
+					message: { role: "assistant", content: [{ type: "thinking", text: summary, redacted: !summary }] },
+				}),
+			);
+			continue;
+		}
+		if (p.type === "function_call" || p.type === "custom_tool_call") {
+			let args;
+			if (typeof p.arguments === "string") {
+				try {
+					args = JSON.parse(p.arguments);
+				} catch {
+					args = p.arguments;
+				}
+			} else if (p.input !== undefined) args = p.input;
+			out.push(
+				link({
+					type: "message",
+					id: p.id ?? `cx-call-${out.length}`,
+					timestamp: ts,
+					message: { role: "assistant", content: [{ type: "toolCall", id: p.call_id, name: p.name ?? "(unknown)", arguments: args }] },
+				}),
+			);
+			continue;
+		}
+		if (p.type === "function_call_output" || p.type === "custom_tool_call_output") {
+			const text = typeof p.output === "string" ? p.output : textOfParts(p.output);
+			out.push(
+				link({
+					type: "message",
+					id: p.id ?? `cx-out-${out.length}`,
+					timestamp: ts,
+					message: { role: "toolResult", toolCallId: p.call_id, content: [{ type: "text", text }] },
+				}),
+			);
+			continue;
+		}
+		// 其余 response_item（agent_message 等）跳过
+	}
+	return { header, entries: out };
+}

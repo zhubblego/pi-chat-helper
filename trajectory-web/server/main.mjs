@@ -10,6 +10,7 @@
  *   --scope all|project    默认 all；project 范围需 --session
  *   --session <file>       all 范围下作为默认选中会话
  *   --sessions-root <dir>  会话根目录，默认 ~/.pi/agent/sessions
+ *   --codex-root <dir>     codex 会话根目录，默认 ~/.codex/sessions
  *   --port <n>             默认 7788；0 = 随机端口
  *   --host <addr>          默认 127.0.0.1
  *   --web <dir>            静态资源目录，默认 ../web
@@ -27,6 +28,7 @@ function parseArgs(argv) {
 		scope: "all",
 		session: undefined,
 		sessionsRoot: undefined,
+		codexRoot: undefined,
 		port: 7788,
 		host: "127.0.0.1",
 		web: join(HERE, "..", "web"),
@@ -45,6 +47,9 @@ function parseArgs(argv) {
 				break;
 			case "--sessions-root":
 				out.sessionsRoot = next();
+				break;
+			case "--codex-root":
+				out.codexRoot = next();
 				break;
 			case "--port":
 				out.port = Number(next());
@@ -88,6 +93,7 @@ createTrajectoryServer({
 	scope: options.scope,
 	sessionFile: options.session,
 	sessionsRoot: options.sessionsRoot,
+	codexRoot: options.codexRoot,
 	webDir: options.web,
 	host: options.host,
 	port: options.port,

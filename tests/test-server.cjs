@@ -102,7 +102,19 @@ async function stopServer(child) {
 		writeSession(projB, { id: "srv-b1", cwd: "/tmp/projB", first: "B 问", mtimeMs: recent - 120_000 });
 
 		// ---- 模式 B：全部范围 ----
-		all = startServer(["--scope", "all", "--sessions-root", sessionsRoot, "--agent-dir", path.join(tmp, "agent"), "--port", "0", "--web", WEB]);
+		// codex 源 fixture：年/月/日三层 + rollout 文件
+		const codexRoot = path.join(tmp, "codex");
+		const codexDay = path.join(codexRoot, "2026", "01", "01");
+		fs.mkdirSync(codexDay, { recursive: true });
+		fs.writeFileSync(
+			path.join(codexDay, "rollout-2026-01-01T00-00-00-019f592a-0d06-7e41-b3bc-df1f510cdbbd.jsonl"),
+			[
+				JSON.stringify({ timestamp: "2026-01-01T00:00:00.100Z", type: "session_meta", payload: { id: "cx-a1", cwd: "/tmp/projC" } }),
+				JSON.stringify({ timestamp: "2026-01-01T00:00:00.400Z", type: "response_item", payload: { type: "message", id: "msg_u1", role: "user", content: [{ type: "input_text", text: "codex 第一问" }] } }),
+				JSON.stringify({ timestamp: "2026-01-01T00:00:01.000Z", type: "response_item", payload: { type: "message", id: "msg_a1", role: "assistant", content: [{ type: "output_text", text: "codex 回答" }] } }),
+			].join("\n"),
+		);
+		all = startServer(["--scope", "all", "--sessions-root", sessionsRoot, "--codex-root", codexRoot, "--agent-dir", path.join(tmp, "agent"), "--port", "0", "--web", WEB]);
 		const base = await waitForUrl(all);
 
 		const health = await (await fetch(`${base}/api/health`)).json();
@@ -143,10 +155,19 @@ async function stopServer(child) {
 
 		// 轨迹源：/api/sources 列出 + source 参数白名单
 		const sources = await (await fetch(`${base}/api/sources`)).json();
-		check("源列表含 pi", Array.isArray(sources.sources) && sources.sources[0]?.id === "pi" && sources.sources[0]?.sessions >= 2, JSON.stringify(sources));
+		check("源列表含 pi", Array.isArray(sources.sources) && sources.sources.some((s) => s.id === "pi" && s.sessions >= 2), JSON.stringify(sources));
+		check("源列表含 codex（存在才显示）", sources.sources.some((s) => s.id === "codex" && s.sessions === 1));
 		check("sessions 带 source 200", (await fetch(`${base}/api/sessions?source=pi`)).status === 200);
 		check("sessions 非法 source 400", (await fetch(`${base}/api/sessions?source=claude`)).status === 400);
 		check("session 非法 source 400", (await fetch(`${base}/api/session?id=srv-a1&source=xx`)).status === 400);
+
+		// codex 源：列表 + 投影 + current 不串源
+		const cxList = await (await fetch(`${base}/api/sessions?source=codex`)).json();
+		check("codex 列表 1 会话", cxList.sessions?.length === 1 && cxList.sessions[0].id === "cx-a1", JSON.stringify(cxList).slice(0, 140));
+		check("codex current 取自身首个", cxList.current === "cx-a1");
+		const cxProj = await (await fetch(`${base}/api/session?source=codex&id=cx-a1`)).json();
+		const cxKinds = (cxProj.questions ?? []).flatMap((q) => q.events.map((e) => e.kind)).join(",");
+		check("codex 投影 user/text", cxProj.changed === true && cxKinds === "user,text", cxKinds);
 
 		for (const file of ["/", "/app.js", "/lib.js", "/style.css", "/tokens.css"]) {
 			check(`静态资源 ${file}`, (await fetch(base + file)).status === 200);

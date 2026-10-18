@@ -913,7 +913,7 @@ function writeViewHash() {
 // Agent 选择栏（最左竖条）：每个按钮一个轨迹源；源由 /api/sources 列出（存在才显示）
 // ---------------------------------------------------------------------------
 
-const SOURCE_BADGE = { pi: "π" };
+const SOURCE_BADGE = { pi: "π", codex: "Cx" };
 
 async function pollSources() {
 	try {

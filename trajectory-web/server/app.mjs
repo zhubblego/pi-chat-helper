@@ -21,8 +21,9 @@ import { createServer } from "node:http";
 import { execFile } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { buildProjection, toLight, findEvent } from "./session.mjs";
+import { buildProjection, buildProjectionFrom, toLight, findEvent } from "./session.mjs";
 import { listSessions, DEFAULT_SESSIONS_ROOT, LIVE_WINDOW_MS } from "./sessions.mjs";
+import { listCodexSessions, readCodexSession, DEFAULT_CODEX_ROOT } from "./codex.mjs";
 import { scanToolOrigins } from "./tool-origins.mjs";
 
 // 翻译转发：免费通道（无 key）；目标语言白名单。Google translate_a/single 逐段，
@@ -132,6 +133,7 @@ const MAX_CACHED_PROJECTIONS = 4;
 export function createTrajectoryServer(options) {
 	const webDir = resolve(options.webDir);
 	const sessionsRoot = options.sessionsRoot ? resolve(options.sessionsRoot) : DEFAULT_SESSIONS_ROOT;
+	const codexRoot = options.codexRoot ? resolve(options.codexRoot) : DEFAULT_CODEX_ROOT;
 	const liveWindowMs = options.liveWindowMs ?? LIVE_WINDOW_MS;
 	const host = options.host ?? "127.0.0.1";
 	const port = options.port ?? 7717;
@@ -169,12 +171,16 @@ export function createTrajectoryServer(options) {
 	/** 投影缓存 LRU：file -> { id, etag, full, light } */
 	const projections = new Map();
 
-	function readSessions() {
+	function readSessions(sourceId) {
+		if (sourceId === "codex") return listCodexSessions({ codexRoot, projectDir, liveWindowMs });
 		return listSessions({ projectDir, sessionsRoot, liveWindowMs });
 	}
 
-	// 轨迹源注册表：后续每接一个 agent（claude/codex/opencode…）加一项；存在性在 /api/sources 里检测
-	const SOURCES = [{ id: "pi", label: "Pi", kind: "pi" }];
+	// 轨迹源注册表：宿主机存在才在 /api/sources 列出；后续每接一个 agent 加一项
+	const SOURCES = [
+		{ id: "pi", label: "Pi", available: () => true },
+		{ id: "codex", label: "Codex", available: () => existsSync(codexRoot) },
+	];
 
 	/** 请求的 source 参数：白名单内的 id，非法值 400；缺省默认第一项。 */
 	function sourceParam(url) {
@@ -193,7 +199,7 @@ export function createTrajectoryServer(options) {
 		return sessions[0] ?? null;
 	}
 
-	function getProjection(session) {
+	function getProjection(session, sourceId) {
 		let etag;
 		try {
 			const st = statSync(session.file);
@@ -207,7 +213,7 @@ export function createTrajectoryServer(options) {
 			projections.set(session.file, cached);
 			return cached;
 		}
-		const full = buildProjection(session.file);
+		const full = sourceId === "codex" ? buildProjectionFrom({ ...readCodexSession(session.file), file: session.file }) : buildProjection(session.file);
 		const entry = { id: session.id, etag, full, light: toLight(full) };
 		projections.delete(session.file);
 		projections.set(session.file, entry);
@@ -267,11 +273,10 @@ export function createTrajectoryServer(options) {
 			}
 
 			if (pathname === "/api/sources") {
-			const sessions = readSessions();
-			sendJson(res, 200, {
-				sources: SOURCES.map((s) => ({ id: s.id, label: s.label, sessions: sessions.length })),
-			});
-			return;
+				sendJson(res, 200, {
+				sources: SOURCES.filter((s) => s.available()).map((s) => ({ id: s.id, label: s.label, sessions: readSessions(s.id).length })),
+				});
+				return;
 			}
 
 			if (pathname === "/api/sessions") {
@@ -280,10 +285,10 @@ export function createTrajectoryServer(options) {
 					sendJson(res, 400, { error: src.error });
 				return;
 			}
-			const sessions = readSessions();
+			const sessions = readSessions(src.id);
 				sendJson(res, 200, {
-					scope,
-					current: defaultSessionId() ?? sessions[0]?.id ?? null,
+				scope,
+				current: src.id === "codex" ? sessions[0]?.id ?? null : defaultSessionId() ?? sessions[0]?.id ?? null,
 					sessions: sessions.map((s) => ({
 						id: s.id,
 						file: s.file,
@@ -306,15 +311,15 @@ export function createTrajectoryServer(options) {
 					sendJson(res, 400, { error: src.error });
 				return;
 			}
-			const sessions = readSessions();
-				const session = resolveSession(sessions, url.searchParams.get("id"));
+			const sessions = readSessions(src.id);
+			const session = resolveSession(sessions, url.searchParams.get("id"));
 				if (!session) {
 					sendJson(res, 404, { error: "会话不存在（可能已被删除或列表已刷新）" });
 					return;
 				}
 				let entry;
 				try {
-					entry = getProjection(session);
+					entry = getProjection(session, src.id);
 				} catch (err) {
 					sendJson(res, 500, { error: err.message });
 					return;
@@ -346,7 +351,7 @@ export function createTrajectoryServer(options) {
 					sendJson(res, 400, { error: "缺少 id" });
 					return;
 				}
-				const sessions = readSessions();
+				const sessions = readSessions(src.id);
 				const session = resolveSession(sessions, url.searchParams.get("session"));
 				if (!session) {
 					sendJson(res, 404, { error: "会话不存在" });
@@ -354,7 +359,7 @@ export function createTrajectoryServer(options) {
 				}
 				let entry;
 				try {
-					entry = getProjection(session);
+					entry = getProjection(session, src.id);
 				} catch (err) {
 					sendJson(res, 500, { error: err.message });
 					return;
