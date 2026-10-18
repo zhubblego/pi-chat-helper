@@ -895,6 +895,11 @@ border-bottom: 1px solid var(--dsw-alias-border-l1);
 	border-radius: 0 0 var(--dsw-radius-sm) var(--dsw-radius-sm);
 }
 
+/* 收起后只剩把手：不再需要与按钮组之间的分割线 */
+.dv-side[data-open="false"] .dv-side-toggle {
+	border-top: none;
+}
+
 /* 侧条菜单：向右弹出（覆 .menu 默认的向下弹） */
 .dv-side .menu {
 	top: 0;
