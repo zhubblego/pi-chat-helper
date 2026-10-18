@@ -70,6 +70,7 @@ const state = {
 	translated: false,
 	translating: false,
 	settingsOpen: false,
+	copyOpen: false,
 	pollingSession: false,
 	pollingSessions: false,
 	tick: 0,
@@ -867,6 +868,7 @@ function closeDrawer() {
 	drawer.hidden = true;
 	transSeq++;
 	setSettingsOpen(false);
+	setCopyMenuOpen(false);
 	writeViewHash();
 }
 
@@ -1044,6 +1046,60 @@ function applyTranslateSetting(patch) {
 	if (state.translated) {
 		restoreTranslation();
 		void translateDrawer();
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 侧边工具条：弹出/收起 + 复制正文（翻译状态下可选仅译文/全部）
+// ---------------------------------------------------------------------------
+
+const LS_SIDETOOL = "tw.sidetool";
+let copyFlashTimer = 0;
+
+function setSideOpen(open) {
+	const side = el("dv-side");
+	side.dataset.open = String(open);
+	const toggle = el("dv-side-toggle");
+	toggle.replaceChildren(h("span", { "aria-hidden": "true", text: open ? "«" : "»" }));
+	toggle.title = open ? "收起工具条" : "展开工具条";
+	if (!open) setCopyMenuOpen(false);
+	try {
+		localStorage.setItem(LS_SIDETOOL, open ? "1" : "0");
+	} catch {
+		/* 无痕模式等场景忽略 */
+	}
+}
+
+function setCopyMenuOpen(open) {
+	state.copyOpen = open;
+	el("dv-copy-menu").hidden = !open;
+	el("dv-copy").setAttribute("aria-expanded", String(open));
+}
+
+/** 组装复制文本：src = 原文 / trans = 仅译文 / all = 原文＋译文；无 .md 正文时退回整个详情文本。 */
+function drawerCopyText(mode) {
+	const blocks = translatableBlocks();
+	if (blocks.length === 0) return el("dv-body").innerText;
+	const parts = [];
+	for (const b of blocks) {
+		const transNode = b.node.nextElementSibling;
+		const trans = transNode?.classList.contains("md-trans") ? (transNode.querySelector(".md-trans-text")?.textContent ?? "") : "";
+		if (mode === "src") parts.push(b.text);
+		else if (mode === "trans") parts.push(trans || b.text);
+		else parts.push([b.text, trans].filter(Boolean).join("\n"));
+	}
+	return parts.join("\n\n");
+}
+
+async function copyDrawer(mode) {
+	const btn = el("dv-copy");
+	try {
+		await navigator.clipboard.writeText(drawerCopyText(mode));
+		clearTimeout(copyFlashTimer);
+		btn.replaceChildren(h("span", { "aria-hidden": "true", text: "✓" }));
+		copyFlashTimer = setTimeout(() => btn.replaceChildren(h("span", { "aria-hidden": "true", text: "⧉" })), 1200);
+	} catch (err) {
+		btn.title = `复制失败：${err.message}`;
 	}
 }
 
@@ -1322,7 +1378,21 @@ mainInner.addEventListener("dblclick", (e) => {
 });
 
 el("drawer-close").addEventListener("click", closeDrawer);
+el("dv-side-toggle").addEventListener("click", () => setSideOpen(el("dv-side").dataset.open !== "true"));
 el("dv-translate").addEventListener("click", () => void translateDrawer());
+el("dv-copy").addEventListener("click", (e) => {
+	e.stopPropagation();
+	// 已翻译时弹菜单选「仅译文/全部」，否则一键复制原文
+	if (state.translated) setCopyMenuOpen(!state.copyOpen);
+	else void copyDrawer("src");
+});
+el("dv-copy-menu").addEventListener("click", (e) => {
+	e.stopPropagation();
+	const item = e.target.closest("button[data-copy]");
+	if (!item) return;
+	setCopyMenuOpen(false);
+	void copyDrawer(item.dataset.copy);
+});
 el("dv-settings").addEventListener("click", (e) => {
 	e.stopPropagation();
 	setSettingsOpen(!state.settingsOpen);
@@ -1338,6 +1408,10 @@ el("dv-settings-menu").addEventListener("click", (e) => {
 el("theme-btn").addEventListener("click", cycleTheme);
 document.addEventListener("keydown", (e) => {
 	if (e.key === "Escape") {
+		if (state.copyOpen) {
+			setCopyMenuOpen(false);
+			return;
+		}
 		if (state.settingsOpen) {
 			setSettingsOpen(false);
 			return;
@@ -1345,13 +1419,13 @@ document.addEventListener("keydown", (e) => {
 		closeDrawer();
 	}
 });
-// 点击设置菜单外关闭（照过滤菜单的 composedPath 判断）
+// 点击侧条菜单（设置/复制）外关闭（照过滤菜单的 composedPath 判断）
 document.addEventListener("click", (e) => {
-	if (!state.settingsOpen) return;
+	if (!state.settingsOpen && !state.copyOpen) return;
 	const path = typeof e.composedPath === "function" ? e.composedPath() : [];
-	if (path.some((node) => node instanceof Element && node.id === "dv-settings-root")) return;
-	if (e.target.closest?.("#dv-settings-root")) return;
-	setSettingsOpen(false);
+	const inside = (id) => path.some((node) => node instanceof Element && node.id === id) || e.target.closest?.(`#${id}`);
+	if (state.settingsOpen && !inside("dv-settings-root")) setSettingsOpen(false);
+	if (state.copyOpen && !inside("dv-copy-root")) setCopyMenuOpen(false);
 });
 // 回到前台立即同步一次（标签页隐藏期间轮询暂停；走 etag 增量，未变则开销极小）
 document.addEventListener("visibilitychange", () => {
@@ -1378,6 +1452,11 @@ applyTheme();
 renderThemeButton();
 loadPrefs();
 loadTranslatePrefs();
+try {
+	if (localStorage.getItem(LS_SIDETOOL) === "0") setSideOpen(false);
+} catch {
+	/* 无痕模式等场景忽略 */
+}
 renderToolbar();
 void ensureToolOrigins();
 pollSessions();

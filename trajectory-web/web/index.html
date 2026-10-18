@@ -64,12 +64,22 @@
 		</main>
 	</div>
 	<aside id="drawer" class="drawer" hidden>
-		<div id="dv-toolbar" class="dv-toolbar" role="toolbar" aria-label="抽屉工具栏">
-			<button id="dv-translate" class="tb-btn dv-tool" type="button" title="翻译正文（再次点击恢复原文）" aria-pressed="false"><span>翻译</span></button>
-			<div id="dv-settings-root" class="menu-root">
-				<button id="dv-settings" class="tb-btn dv-tool" type="button" title="抽屉设置" aria-haspopup="menu" aria-expanded="false"><span>设置</span></button>
-				<div id="dv-settings-menu" class="menu" role="menu" hidden></div>
+		<div id="dv-side" class="dv-side" data-open="true">
+			<div class="dv-side-tools">
+				<button id="dv-translate" class="dv-side-btn" type="button" title="翻译正文（再次点击恢复原文）" aria-pressed="false"><span aria-hidden="true">译</span></button>
+				<div id="dv-copy-root" class="menu-root">
+					<button id="dv-copy" class="dv-side-btn" type="button" title="复制正文" aria-haspopup="menu" aria-expanded="false"><span aria-hidden="true">⧉</span></button>
+					<div id="dv-copy-menu" class="menu" role="menu" hidden>
+						<button class="menu-item" type="button" role="menuitem" data-copy="trans"><span class="menu-item-label">仅复制译文</span></button>
+						<button class="menu-item" type="button" role="menuitem" data-copy="all"><span class="menu-item-label">全部（原文＋译文）</span></button>
+					</div>
+				</div>
+				<div id="dv-settings-root" class="menu-root">
+					<button id="dv-settings" class="dv-side-btn" type="button" title="抽屉设置" aria-haspopup="menu" aria-expanded="false"><span aria-hidden="true">⚙</span></button>
+					<div id="dv-settings-menu" class="menu" role="menu" hidden></div>
+				</div>
 			</div>
+			<button id="dv-side-toggle" class="dv-side-toggle" type="button" title="收起工具条"><span aria-hidden="true">«</span></button>
 		</div>
 		<header class="drawer-head">
 			<span id="dv-kind" class="dv-kind"></span>
