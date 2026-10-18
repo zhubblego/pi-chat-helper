@@ -141,6 +141,13 @@ async function stopServer(child) {
 		check("translate 超长段 400", (await trPost(JSON.stringify({ q: ["x".repeat(20001)], to: "zh-CN" }))).status === 400);
 		check("未知 POST 路径 405", (await fetch(`${base}/api/nothing`, { method: "POST" })).status === 405);
 
+		// 轨迹源：/api/sources 列出 + source 参数白名单
+		const sources = await (await fetch(`${base}/api/sources`)).json();
+		check("源列表含 pi", Array.isArray(sources.sources) && sources.sources[0]?.id === "pi" && sources.sources[0]?.sessions >= 2, JSON.stringify(sources));
+		check("sessions 带 source 200", (await fetch(`${base}/api/sessions?source=pi`)).status === 200);
+		check("sessions 非法 source 400", (await fetch(`${base}/api/sessions?source=claude`)).status === 400);
+		check("session 非法 source 400", (await fetch(`${base}/api/session?id=srv-a1&source=xx`)).status === 400);
+
 		for (const file of ["/", "/app.js", "/lib.js", "/style.css", "/tokens.css"]) {
 			check(`静态资源 ${file}`, (await fetch(base + file)).status === 200);
 		}

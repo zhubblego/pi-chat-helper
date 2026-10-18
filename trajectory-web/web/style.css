@@ -161,6 +161,57 @@ body {
 	margin-top: 6px;
 }
 
+/* ---------------------------------------------------------------- Agent 选择栏 */
+
+.agent-rail {
+	width: 44px;
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+	padding: 10px 0;
+	background: var(--dsw-specific-sidebar-fill);
+	border-right: 1px solid var(--dsw-alias-border-l1);
+}
+
+.rail-btn {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 30px;
+	height: 30px;
+	padding: 0;
+	border: none;
+	border-radius: var(--dsw-radius-sm);
+	background: transparent;
+	color: var(--dsw-alias-label-tertiary);
+	cursor: pointer;
+	font: var(--dsw-font-s-strong-14);
+}
+
+.rail-btn:hover {
+	background: var(--dsw-specific-sidebar-nav-item-hover);
+	color: var(--dsw-alias-label-primary);
+}
+
+.rail-btn.active {
+	background: var(--dsw-specific-sidebar-nav-item-active);
+	color: var(--dsw-alias-label-primary);
+}
+
+.rail-btn.active::before {
+	content: "";
+	position: absolute;
+	left: -10px;
+	top: 7px;
+	bottom: 7px;
+	width: 2px;
+	border-radius: 1px;
+	background: var(--dsw-alias-label-primary);
+}
+
 /* ---------------------------------------------------------------- 会话栏 */
 
 .session-section {

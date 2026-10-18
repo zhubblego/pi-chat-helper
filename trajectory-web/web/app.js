@@ -63,7 +63,10 @@ const state = {
 	toolOriginsMissAt: 0,
 	submenuOpen: false,
 	folded: new Set(),
-	collapsedGroups: new Set(),
+	source: "pi",
+	sources: [],
+	sourceSel: {},
+	collapsedGroupsBy: {},
 	openId: null,
 	openFull: null,
 	openLightJson: "",
@@ -265,7 +268,11 @@ function setSync(text, kind) {
 }
 
 function renderTopbar() {
-	el("scope-badge").textContent = state.scope === "all" ? "全部项目" : state.scope === "project" ? "本项目" : "";
+	let scopeText = "";
+	if (state.scope === "all") scopeText = "全部项目";
+	else if (state.scope === "project") scopeText = "本项目";
+	const label = state.sources.find((s) => s.id === state.source)?.label ?? state.source;
+	el("scope-badge").textContent = scopeText ? `${label} · ${scopeText}` : label;
 	const meta = state.data?.meta;
 	if (!meta) {
 		el("session-meta").textContent = "选择一个会话查看轨迹";
@@ -288,6 +295,12 @@ function renderTopbar() {
 // ---------------------------------------------------------------------------
 // 会话栏
 // ---------------------------------------------------------------------------
+
+/** 当前源的折叠分组集合（按源隔离，切源不串）。 */
+function groupSet() {
+	if (!state.collapsedGroupsBy[state.source]) state.collapsedGroupsBy[state.source] = new Set();
+	return state.collapsedGroupsBy[state.source];
+}
 
 function sessionItem(session) {
 	const title = session.name || session.firstMessage || "(空会话)";
@@ -313,7 +326,7 @@ function renderSessions() {
 	if (state.scope === "all") {
 		for (const group of groupSessions(sessions)) {
 			// 分组头可点击折叠（deepseek Menu 的 ▸ 箭头语义）：目录名用链接色高亮
-			const collapsed = state.collapsedGroups.has(group.key);
+		const collapsed = groupSet().has(group.key);
 			nodes.push(
 				h(
 					"button",
@@ -816,6 +829,7 @@ async function loadFull(id) {
 	try {
 		const params = new URLSearchParams({ id });
 		if (state.selectedId) params.set("session", state.selectedId);
+		params.set("source", state.source);
 		const res = await fetch(`/api/event?${params}`);
 		if (!res.ok) return;
 		const j = await res.json();
@@ -880,14 +894,86 @@ function closeDrawer() {
 function readViewHash() {
 	if (!location.hash) return null;
 	const params = new URLSearchParams(location.hash.slice(1));
+	const a = params.get("a");
 	const s = params.get("s");
 	const e = params.get("e");
-	return s && e ? { s, e } : null;
+	if (!a && !s) return null;
+	return { a: a || "pi", s, e: s ? e : null };
 }
 
 function writeViewHash() {
-	const hash = state.openId && state.selectedId ? `#s=${encodeURIComponent(state.selectedId)}&e=${encodeURIComponent(state.openId)}` : "";
+	const parts = [`a=${encodeURIComponent(state.source)}`];
+	if (state.selectedId) parts.push(`s=${encodeURIComponent(state.selectedId)}`);
+	if (state.openId && state.selectedId) parts.push(`e=${encodeURIComponent(state.openId)}`);
+	const hash = state.selectedId || state.openId ? `#${parts.join("&")}` : "";
 	if (location.hash !== hash) history.replaceState(null, "", hash || `${location.pathname}${location.search}`);
+}
+
+// ---------------------------------------------------------------------------
+// Agent 选择栏（最左竖条）：每个按钮一个轨迹源；源由 /api/sources 列出（存在才显示）
+// ---------------------------------------------------------------------------
+
+const SOURCE_BADGE = { pi: "π" };
+
+async function pollSources() {
+	try {
+		const res = await fetch("/api/sources");
+		if (!res.ok) return;
+		const j = await res.json();
+		const sources = j.sources ?? [];
+		if (JSON.stringify(sources) !== JSON.stringify(state.sources)) {
+			state.sources = sources;
+			renderRail();
+			renderTopbar();
+		}
+		// hash 恢复的源或当前源失效时回落到第一个可用源
+		if (sources.length && !sources.some((s) => s.id === state.source)) switchSource(sources[0].id);
+	} catch {
+		/* 源列表失败不打断主循环 */
+	}
+}
+
+function renderRail() {
+	el("agent-rail").replaceChildren(
+		...state.sources.map((s) =>
+			h(
+				"button",
+				{
+					class: `rail-btn${s.id === state.source ? " active" : ""}`,
+					type: "button",
+					title: `${s.label}（${s.sessions} 会话）`,
+					dataset: { source: s.id },
+					"aria-pressed": String(s.id === state.source),
+					},
+				h("span", { class: "rail-badge", "aria-hidden": "true", text: SOURCE_BADGE[s.id] ?? s.label.slice(0, 1) }),
+			),
+		),
+	);
+}
+
+/** 切换轨迹源：每源独立的选中会话与折叠状态（分桶保存/恢复），临时态清空重拉。 */
+function switchSource(id) {
+	if (id === state.source || !id) return;
+	state.sourceSel[state.source] = state.selectedId;
+	state.source = id;
+	state.selectedId = state.sourceSel[id] ?? null;
+	state.data = null;
+	state.etag = null;
+	state.sessions = [];
+	state.sessionListKey = "";
+	state.folded = new Set();
+	state.query = "";
+	el("search").value = "";
+	state.toolExcluded = new Set();
+	state.toolNames = [];
+	state.searchIndex = new TrajectorySearchIndex();
+	closeDrawer();
+	renderRail();
+	renderTopbar();
+	renderSessions();
+	pollSessions(true);
+	pollSession(true);
+	writeViewHash();
 }
 
 // ---------------------------------------------------------------------------
@@ -1111,7 +1197,9 @@ async function pollSessions(force = false) {
 	if (state.pollingSessions) return;
 	state.pollingSessions = true;
 	try {
-		const res = await fetch(`/api/sessions${force ? `?t=${Date.now()}` : ""}`);
+		const qs = new URLSearchParams({ source: state.source });
+		if (force) qs.set("t", String(Date.now()));
+		const res = await fetch(`/api/sessions?${qs}`);
 		if (!res.ok) throw new Error(`HTTP ${res.status}`);
 		const j = await res.json();
 		state.scope = j.scope;
@@ -1138,6 +1226,7 @@ async function pollSession(force = false) {
 	state.pollingSession = true;
 	try {
 		const params = new URLSearchParams();
+		params.set("source", state.source);
 		if (state.selectedId) params.set("id", state.selectedId);
 		if (!force && state.etag) params.set("v", state.etag);
 		const res = await fetch(`/api/session?${params}`);
@@ -1316,8 +1405,9 @@ sessionList.addEventListener("click", (e) => {
 	const head = e.target.closest(".project-head");
 	if (head) {
 		const key = head.dataset.group ?? "";
-		if (state.collapsedGroups.has(key)) state.collapsedGroups.delete(key);
-		else state.collapsedGroups.add(key);
+		const set = groupSet();
+		if (set.has(key)) set.delete(key);
+		else set.add(key);
 		renderSessions();
 		return;
 	}
@@ -1377,6 +1467,10 @@ mainInner.addEventListener("dblclick", (e) => {
 	renderMain();
 });
 
+el("agent-rail").addEventListener("click", (e) => {
+	const btn = e.target.closest(".rail-btn");
+	if (btn) switchSource(btn.dataset.source);
+});
 el("drawer-close").addEventListener("click", closeDrawer);
 el("dv-side-toggle").addEventListener("click", () => setSideOpen(el("dv-side").dataset.open !== "true"));
 el("dv-translate").addEventListener("click", () => void translateDrawer());
@@ -1439,12 +1533,15 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", app
 // 启动
 // ---------------------------------------------------------------------------
 
-// hash 恢复：先占住选中会话（列表轮询的默认选中让位），数据到达后由 pollSession 重开抽屉
+// hash 恢复：a= 源 + s= 会话 + e= 事件；源待 /api/sources 到达后校验回落
 let pendingOpen = null;
 const restoredView = readViewHash();
 if (restoredView) {
-	state.selectedId = restoredView.s;
-	pendingOpen = restoredView.e;
+	state.source = restoredView.a;
+	if (restoredView.s) {
+		state.selectedId = restoredView.s;
+		pendingOpen = restoredView.e;
+	}
 }
 
 loadTheme();
@@ -1459,11 +1556,13 @@ try {
 }
 renderToolbar();
 void ensureToolOrigins();
+void pollSources();
 pollSessions();
 pollSession();
 setInterval(() => {
 	if (document.hidden) return;
 	state.tick++;
 	if (state.tick % SESSION_LIST_EVERY === 0) pollSessions();
+	if (state.tick % 30 === 0) void pollSources(); // 约 60s 刷新源列表
 	pollSession();
 }, POLL_MS);

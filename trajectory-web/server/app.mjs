@@ -9,7 +9,8 @@
  *   GET /                       web/index.html
  *   GET /app.js /lib.js /style.css /tokens.css
  *   GET /api/health             {ok, pid, scope, port, sessionsRoot, current}
- *   GET /api/sessions           会话列表（按最近活跃倒序，live = 30s 内有写入）
+ *   GET /api/sources            可用轨迹源（宿主机存在才列出；现在只有 pi）
+ *   GET /api/sessions           会话列表（按最近活跃倒序，live = 30s 内有写入；?source=）
  *   GET /api/session?id=&v=     指定会话的 light 投影；etag 未变时 {changed:false}
  *   GET /api/event?session=&id= 单个事件的 full 载荷
  *   POST /api/translate        抽屉正文翻译转发（Google 免费通道；https_proxy 环境变量出代理）
@@ -172,6 +173,16 @@ export function createTrajectoryServer(options) {
 		return listSessions({ projectDir, sessionsRoot, liveWindowMs });
 	}
 
+	// 轨迹源注册表：后续每接一个 agent（claude/codex/opencode…）加一项；存在性在 /api/sources 里检测
+	const SOURCES = [{ id: "pi", label: "Pi", kind: "pi" }];
+
+	/** 请求的 source 参数：白名单内的 id，非法值 400；缺省默认第一项。 */
+	function sourceParam(url) {
+		const id = url.searchParams.get("source") ?? SOURCES[0].id;
+		if (!SOURCES.some((s) => s.id === id)) return { error: `不支持的轨迹源：${id}（可选 ${SOURCES.map((s) => s.id).join(" / ")}）` };
+		return { id };
+	}
+
 	/** 解析请求想要的会话：id > 默认会话 > 最近活跃。 */
 	function resolveSession(sessions, id) {
 		if (id) return sessions.find((s) => s.id === id) ?? null;
@@ -255,8 +266,21 @@ export function createTrajectoryServer(options) {
 				return;
 			}
 
+			if (pathname === "/api/sources") {
+			const sessions = readSessions();
+			sendJson(res, 200, {
+				sources: SOURCES.map((s) => ({ id: s.id, label: s.label, sessions: sessions.length })),
+			});
+			return;
+			}
+
 			if (pathname === "/api/sessions") {
-				const sessions = readSessions();
+			const src = sourceParam(url);
+			if (src.error) {
+					sendJson(res, 400, { error: src.error });
+				return;
+			}
+			const sessions = readSessions();
 				sendJson(res, 200, {
 					scope,
 					current: defaultSessionId() ?? sessions[0]?.id ?? null,
@@ -277,7 +301,12 @@ export function createTrajectoryServer(options) {
 			}
 
 			if (pathname === "/api/session") {
-				const sessions = readSessions();
+			const src = sourceParam(url);
+			if (src.error) {
+					sendJson(res, 400, { error: src.error });
+				return;
+			}
+			const sessions = readSessions();
 				const session = resolveSession(sessions, url.searchParams.get("id"));
 				if (!session) {
 					sendJson(res, 404, { error: "会话不存在（可能已被删除或列表已刷新）" });
@@ -307,7 +336,12 @@ export function createTrajectoryServer(options) {
 			}
 
 			if (pathname === "/api/event") {
-				const eventId = url.searchParams.get("id");
+			const src = sourceParam(url);
+			if (src.error) {
+					sendJson(res, 400, { error: src.error });
+				return;
+			}
+			const eventId = url.searchParams.get("id");
 				if (!eventId) {
 					sendJson(res, 400, { error: "缺少 id" });
 					return;
