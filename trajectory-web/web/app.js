@@ -31,9 +31,7 @@ import {
 	kindGroup,
 	mcpLabel,
 	presetFilters,
-	projectLabel,
 	renderMarkdown,
-	buildAgentTree,
 } from "./lib.js";
 
 const LS_FILTERS = "tw.filters";
@@ -79,8 +77,6 @@ const state = {
 	translating: false,
 	settingsOpen: false,
 	copyOpen: false,
-	agentTreeView: false,
-	showSubagentSessions: false,
 	pollingSession: false,
 	pollingSessions: false,
 	tick: 0,
@@ -634,14 +630,7 @@ function renderEvent(ev, terms = []) {
 }
 
 function renderMain() {
-	// 派生树视图（codex）：主区直接渲染 agent 派生树，替代轮次列表
-	if (state.agentTreeView) {
-		if (state.source === "codex") {
-			renderAgentTreeView();
-			return;
-		}
-		state.agentTreeView = false; // 非 codex 源自动退出
-	}
+	// 派生树视图已移除（改为会话栏主线/全部过滤 + 子任务徽章）
 	if (!state.selectedId) {
 		mainInner.replaceChildren(h("div", { class: "empty", text: "左侧选择一个会话查看轨迹" }));
 		return;
@@ -1058,8 +1047,6 @@ function switchSource(id) {
 	state.toolNames = [];
 	state.searchIndex = new TrajectorySearchIndex();
 	closeDrawer();
-	setAgentTreeView(false);
-	updateAgentTreeBtn();
 	renderRail();
 	renderTopbar();
 	renderSessions();
@@ -1073,51 +1060,7 @@ function switchSource(id) {
 // ---------------------------------------------------------------------------
 
 /** 工具条「派生」按钮只对 codex 源显示（pi 的子代理嵌在父会话内，无独立会话）。 */
-function updateAgentTreeBtn() {
-	el("agent-tree-btn").hidden = state.source !== "codex";
-	el("agent-tree-btn").setAttribute("aria-pressed", String(state.agentTreeView));
-}
-
-/** 树节点 DOM：根节点显示会话标题，子任务显示任务名末段；同名多次派发合并计数。 */
-function treeNodeDom(node) {
-	const latest = node.sessions[node.sessions.length - 1];
-	const isRoot = node.name === null;
-	const label = isRoot ? latest.name || latest.firstMessage || "(空会话)" : node.name.split("/").filter(Boolean).pop() || node.name;
-	const count = node.sessions.length > 1 ? `×${node.sessions.length}` : "";
-	const btn = h(
-		"button",
-		{
-			class: `agent-tree-node${isRoot ? "" : " is-sub"}${node.sessions.some((x) => x.id === state.selectedId) ? " active" : ""}`,
-			type: "button",
-			dataset: { sid: latest.id },
-			title: `${isRoot ? "主会话" : node.name} · ${fmtTime(latest.modified) || ""}`,
-		},
-		latest.live ? h("span", { class: "live-dot" }) : null,
-		h("span", { class: "agent-tree-name", text: label }),
-		h("span", { class: "agent-tree-tag", text: [isRoot ? "主" : "子", count].filter(Boolean).join(" ") }),
-	);
-	if (!node.children.length) return btn;
-	return h("div", null, btn, h("div", { class: "agent-tree-children" }, ...node.children.map(treeNodeDom)));
-}
-
-/** 派生树视图：主区渲染当前项目的 agent 派生树（替代轮次列表），点击节点进入该会话轨迹。 */
-function renderAgentTreeView() {
-	const current = state.sessions.find((s) => s.id === state.selectedId);
-	const projectPath = current?.projectPath ?? null;
-	const projectSessions = projectPath ? state.sessions.filter((s) => s.projectPath === projectPath) : state.sessions;
-	const title = projectPath ? projectLabel(projectPath) : "全部项目";
-	mainInner.replaceChildren(
-		h("div", { class: "agent-tree-head", text: `${title} · 派生结构` }),
-		...buildAgentTree(projectSessions).map(treeNodeDom),
-	);
-}
-
-/** 切换派生树视图（主区视图切换，非 overlay）。 */
-function setAgentTreeView(on) {
-	state.agentTreeView = on;
-	updateAgentTreeBtn();
-	renderMain();
-}
+// 派生树视图已移除（改为会话栏主线/全部过滤 + 子任务徽章）
 
 // ---------------------------------------------------------------------------
 // 抽屉工具栏：翻译（/api/translate 免费通道）/ 设置（目标语言、显示方式）
@@ -1597,9 +1540,6 @@ sessionList.addEventListener("click", (e) => {
 /** 切换选中会话（列表点击 / 派生树节点点击共用）：重置临时态并拉新数据。 */
 function selectSession(id) {
 	if (!id || id === state.selectedId) return;
-	// 从列表/树节点选中会话：退出派生树视图，直接看该会话的轨迹
-	state.agentTreeView = false;
-	updateAgentTreeBtn();
 	state.selectedId = id;
 	state.data = null;
 	state.etag = null;
@@ -1687,7 +1627,6 @@ el("dv-settings-menu").addEventListener("click", (e) => {
 	else if (item.dataset.mode) applyTranslateSetting({ mode: item.dataset.mode });
 });
 el("theme-btn").addEventListener("click", cycleTheme);
-el("agent-tree-btn").addEventListener("click", () => setAgentTreeView(!state.agentTreeView));
 el("subagent-toggle").addEventListener("click", () => {
 	state.showSubagentSessions = !state.showSubagentSessions;
 	try {
@@ -1697,19 +1636,8 @@ el("subagent-toggle").addEventListener("click", () => {
 	}
 	renderSessions();
 });
-mainInner.addEventListener("click", (e) => {
-	if (!state.agentTreeView) return;
-	const btn = e.target.closest(".agent-tree-node");
-	if (!btn) return;
-	setAgentTreeView(false);
-	selectSession(btn.dataset.sid);
-});
 document.addEventListener("keydown", (e) => {
 	if (e.key === "Escape") {
-		if (state.agentTreeView) {
-			setAgentTreeView(false);
-			return;
-		}
 		if (state.copyOpen) {
 			setCopyMenuOpen(false);
 			return;
