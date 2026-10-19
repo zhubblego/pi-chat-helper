@@ -593,10 +593,13 @@ function renderMain() {
 	}
 	const matches = state.searchIndex.search(state.query);
 	mainInner.replaceChildren(
-		...questions.map((q) => {
+		...questions
+			.map((q) => {
 			const shown = (q.events ?? []).filter(
-				(ev) => eventPasses(state.filters, ev.kind) && eventToolPasses(state.toolExcluded, ev) && (!matches || matches.has(ev.id)),
+			(ev) => eventPasses(state.filters, ev.kind) && eventToolPasses(state.toolExcluded, ev) && (!matches || matches.has(ev.id)),
 			);
+			// 搜索激活时：无命中的轮次整轮隐藏（过滤 ∩ 搜索，不再渲染空框）
+			if (matches && shown.length === 0) return null;
 			const body = shown.length ? shown.map(renderEvent) : h("div", { class: "ev-empty" });
 			const folded = state.folded.has(q.index);
 			return h(
@@ -618,8 +621,12 @@ function renderMain() {
 				),
 				h("div", { class: "q-body" }, body),
 			);
-		}),
+		})
+			.filter(Boolean),
 	);
+	if (matches && mainInner.children.length === 0) {
+		mainInner.replaceChildren(h("div", { class: "empty", text: "没有匹配的轨迹（搜索与过滤无交集）" }));
+	}
 	updateFoldAll();
 }
 
