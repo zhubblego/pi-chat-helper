@@ -775,6 +775,18 @@ svg.tb-icon {
 	color: var(--dsw-alias-label-primary);
 }
 
+/* 搜索命中高亮：浅蓝底；暗色主题下浅底配深字保持可读 */
+mark.ev-hit {
+	background: var(--dsw-static-deepseek-100);
+	color: inherit;
+	border-radius: 2px;
+	padding: 0 1px;
+}
+
+[data-ds-dark-theme] mark.ev-hit {
+	color: var(--dsw-static-neutral-bluish-1000);
+}
+
 .k-thinking .ev-preview {
 	color: var(--dsw-alias-label-secondary);
 }

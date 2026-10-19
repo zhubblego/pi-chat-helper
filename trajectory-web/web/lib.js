@@ -208,6 +208,23 @@ export function fmtRelative(ts, now = Date.now()) {
 	return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
 }
 
+/** 把文本按关键词切为 {text, hit} 片段（大小写不敏感；关键词转义，用于搜索高亮）。空关键词返回整段未命中。 */
+export function highlightSegments(text, terms) {
+	const str = String(text ?? "");
+	const esc = (terms ?? []).map((t) => String(t).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).filter(Boolean);
+	if (!esc.length || !str) return [{ text: str, hit: false }];
+	const re = new RegExp(`(${esc.join("|")})`, "gi");
+	const parts = [];
+	let last = 0;
+	for (const m of str.matchAll(re)) {
+		if (m.index > last) parts.push({ text: str.slice(last, m.index), hit: false });
+		parts.push({ text: m[0], hit: true });
+		last = m.index + m[0].length;
+	}
+	if (last < str.length) parts.push({ text: str.slice(last), hit: false });
+	return parts.length ? parts : [{ text: str, hit: false }];
+}
+
 /** 会话文件大小。 */
 export function fmtBytes(n) {
 	if (!Number.isFinite(n) || n <= 0) return "";

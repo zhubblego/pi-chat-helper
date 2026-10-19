@@ -11,7 +11,16 @@ const check = (label, cond, extra = "") => {
 
 (async () => {
 	const lib = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "lib.js")).href);
-	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel } = lib;
+	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments } = lib;
+
+	// ---- 搜索高亮切分 ----
+	check("高亮：单词命中切分", JSON.stringify(highlightSegments("hello world npm", ["npm"])) === JSON.stringify([{ text: "hello world ", hit: false }, { text: "npm", hit: true }]));
+	check("高亮：大小写不敏感", highlightSegments("run NPM install", ["npm"])[1]?.hit === true);
+	check("高亮：多词与多次命中", highlightSegments("a.b c a", ["a", "c"]).filter((s) => s.hit).length === 3);
+	check("高亮：点号按字面量", highlightSegments("axb", ["a.b"]).every((s) => !s.hit));
+	check("高亮：无命中整段", highlightSegments("hello", ["zzz"]).length === 1 && highlightSegments("hello", ["zzz"])[0].hit === false);
+	check("高亮：空关键词整段", highlightSegments("hello", []).length === 1 && highlightSegments("hello", [])[0].text === "hello");
+	check("高亮：空文本", highlightSegments("", ["a"]).length === 1 && highlightSegments("", ["a"])[0].text === "");
 
 	// ---- 过滤映射 ----
 	check("tool → tools 组", kindGroup("tool") === "tools" && kindGroup("bash") === "tools");

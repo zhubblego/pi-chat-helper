@@ -26,6 +26,7 @@ import {
 	formatDurationMillis,
 	groupSessions,
 	groupToolNames,
+	highlightSegments,
 	kindGroup,
 	mcpLabel,
 	presetFilters,
@@ -560,7 +561,13 @@ function qStats(q) {
 // 轨迹主区
 // ---------------------------------------------------------------------------
 
-function renderEvent(ev) {
+/** 文本→节点数组：命中片段包 mark（搜索高亮）；无关键词时原样文本。 */
+function highlightNodes(text, terms) {
+	if (!terms.length) return [String(text ?? "")];
+	return highlightSegments(text, terms).map((s) => (s.hit ? h("mark", { class: "ev-hit", text: s.text }) : s.text));
+}
+
+function renderEvent(ev, terms = []) {
 	const classes = ["ev", `k-${kindGroup(ev.kind)}`, `k-${ev.kind}`];
 	if (ev.tool?.isError) classes.push("is-error");
 	if (ev.isFinal) classes.push("is-final");
@@ -572,11 +579,13 @@ function renderEvent(ev) {
 	]
 		.filter(Boolean)
 		.join(" · ");
+	// 搜索激活时预览里高亮命中关键词（命中片段包 mark，未命中处原样）
+	const preview = highlightNodes(ev.preview, terms);
 	return h(
 		"article",
 		{ class: classes.join(" "), dataset: { eid: ev.id }, tabindex: "0", title: ev.preview },
 		h("span", { class: "ev-tag", text: eventTagLabel(ev) }),
-		h("span", { class: "ev-preview", text: ev.preview }),
+		h("span", { class: "ev-preview" }, preview),
 		h("span", { class: "ev-meta", text: meta }),
 	);
 }
@@ -592,6 +601,7 @@ function renderMain() {
 		return;
 	}
 	const matches = state.searchIndex.search(state.query);
+	const terms = state.query.trim() ? state.query.trim().split(/\s+/) : [];
 	mainInner.replaceChildren(
 		...questions
 			.map((q) => {
@@ -600,7 +610,7 @@ function renderMain() {
 			);
 			// 搜索激活时：无命中的轮次整轮隐藏（过滤 ∩ 搜索，不再渲染空框）
 			if (matches && shown.length === 0) return null;
-			const body = shown.length ? shown.map(renderEvent) : h("div", { class: "ev-empty" });
+			const body = shown.length ? shown.map((ev) => renderEvent(ev, terms)) : h("div", { class: "ev-empty" });
 			const folded = state.folded.has(q.index);
 			return h(
 				"section",
@@ -616,7 +626,7 @@ function renderMain() {
 					}),
 					h("span", { class: "q-no", text: q.index < 0 ? "会话开始" : `第 ${q.index + 1} 轮` }),
 					h("span", { class: "q-time", text: fmtTime(q.ts) || "" }),
-					h("span", { class: "q-sum", title: q.summary, text: q.summary }),
+					h("span", { class: "q-sum", title: q.summary }, highlightNodes(q.summary, terms)),
 					h("span", { class: "q-stats", text: qStats(q) }),
 				),
 				h("div", { class: "q-body" }, body),
