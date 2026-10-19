@@ -733,7 +733,8 @@ function systemBody(view) {
 					"details",
 					null,
 					h("summary", null, h("code", { text: String(s.name) }), isFull ? "" : ` · ${s.chars ?? 0} 字符`),
-					isFull && typeof s.text === "string" ? preNode(s.text, "wrap") : muted("加载全文中…"),
+					// sys-text 标记：提示词段落可翻译（与工具参数/结果、bash 输出的 pre 区分）
+					isFull && typeof s.text === "string" ? preNode(s.text, "wrap sys-text") : muted("加载全文中…"),
 				),
 			);
 		}
@@ -998,7 +999,7 @@ const TRANS_BLOCK = "p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th, dd, dt";
 let transPrefs = { service: "bing", to: "zh-CN", mode: "bilingual" };
 let transSeq = 0; // 每次翻译/重建/关闭递增，过期响应丢弃
 
-/** 收集可翻译块：.md 内最外层文本块；容器块（含更深层可翻译块）跳过避免重复，代码占比高的块（命令/路径）不翻。 */
+/** 收集可翻译块：.md 内最外层文本块（容器块去重、代码占比 >1/3 跳过）＋ 提示词段落的 pre（sys-text，纯文本提示词不套代码占比规则）。 */
 function translatableBlocks() {
 	const blocks = [];
 	for (const md of el("dv-body").querySelectorAll(".md")) {
@@ -1011,6 +1012,11 @@ function translatableBlocks() {
 			if (codeChars * 3 > text.length) continue;
 			blocks.push({ node, text });
 		}
+	}
+	for (const pre of el("dv-body").querySelectorAll("pre.sys-text")) {
+		const text = pre.textContent.trim();
+		if (text.length < 2 || !/\p{L}/u.test(text)) continue;
+		blocks.push({ node: pre, text });
 	}
 	return blocks;
 }
@@ -1061,21 +1067,26 @@ async function translateDrawer() {
 	state.translating = true;
 	el("dv-translate").disabled = true;
 	try {
-		const res = await fetch("/api/translate", {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ q: blocks.map((b) => b.text), to: transPrefs.to, service: transPrefs.service }),
-		});
-		const j = await res.json().catch(() => null);
-		if (!res.ok || !Array.isArray(j?.texts)) throw new Error(j?.error ?? `HTTP ${res.status}`);
-		if (seq !== transSeq) return; // 已切换事件/重建，丢弃过期响应
+		// 服务端单次限 40 段：正文 + 提示词段落可能超限，分批请求后拼接（保持顺序）
+		const texts = [];
+		for (let i = 0; i < blocks.length; i += 40) {
+			const res = await fetch("/api/translate", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ q: blocks.slice(i, i + 40).map((b) => b.text), to: transPrefs.to, service: transPrefs.service }),
+			});
+			const j = await res.json().catch(() => null);
+			if (!res.ok || !Array.isArray(j?.texts)) throw new Error(j?.error ?? `HTTP ${res.status}`);
+			if (seq !== transSeq) return; // 已切换事件/重建，丢弃过期响应
+			texts.push(...j.texts);
+		}
 		const only = transPrefs.mode === "only";
 		blocks.forEach((b, i) => {
 			const translated = h(
 				"div",
 				{ class: "md-trans" },
-				h("span", { class: "md-trans-tag", text: "译" }),
-				h("span", { class: "md-trans-text", text: String(j.texts[i] ?? "") }),
+			h("span", { class: "md-trans-tag", text: "译" }),
+			h("span", { class: "md-trans-text", text: String(texts[i] ?? "") }),
 			);
 			if (only) b.node.hidden = true;
 			b.node.after(translated);
