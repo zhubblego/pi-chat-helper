@@ -58,6 +58,7 @@ const state = {
 	query: "",
 	menuOpen: false,
 	toolExcluded: new Set(),
+	toolExcludeAll: false,
 	toolNames: [],
 	toolOrigins: {},
 	toolOriginsAt: 0,
@@ -461,13 +462,14 @@ function submenuItem(toolName, label, checked) {
 	);
 }
 
-/** 同步工具名列表：新出现的工具（默认勾选）进子菜单，消失的工具从排除集里摘除。 */
+/** 同步工具名列表：新出现的工具进子菜单，消失的工具从排除集里摘除；「全部反选」模式下新工具默认排除（跨会话继承的全局意图）。 */
 function syncToolNames() {
 	const names = collectToolNames(state.data?.questions ?? []);
 	const changed = names.length !== state.toolNames.length || names.some((name, i) => name !== state.toolNames[i]);
 	if (changed) {
 		state.toolNames = names;
 		for (const name of [...state.toolExcluded]) if (!names.includes(name)) state.toolExcluded.delete(name);
+		if (state.toolExcludeAll) for (const name of names) state.toolExcluded.add(name);
 	}
 	return changed;
 }
@@ -1377,14 +1379,18 @@ el("filter-menu").addEventListener("click", (e) => {
 	if (item.dataset.tool !== undefined) {
 		const name = item.dataset.tool;
 		if (name === "") {
-			// 全选开关：已全勾 → 全不勾（排除全部）；否则恢复全勾
+			// 全选开关：已全勾 → 全不勾（排除全部，跨会话继承）；否则恢复全勾
 			if (state.toolExcluded.size === 0) {
 				for (const toolName of state.toolNames) state.toolExcluded.add(toolName);
+				state.toolExcludeAll = true;
 			} else {
 				state.toolExcluded.clear();
+				state.toolExcludeAll = false;
 			}
-		} else if (state.toolExcluded.has(name)) state.toolExcluded.delete(name);
-		else state.toolExcluded.add(name);
+		} else if (state.toolExcluded.has(name)) {
+			state.toolExcluded.delete(name);
+			state.toolExcludeAll = false; // 单独勾回某个工具即退出「全部反选」模式
+		} else state.toolExcluded.add(name);
 		updateSubmenuChecks();
 		renderMain();
 		item.focus();
