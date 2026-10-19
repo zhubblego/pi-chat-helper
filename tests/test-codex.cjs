@@ -11,11 +11,14 @@ const check = (label, cond, extra = "") => {
 
 const ROOT = path.join(__dirname, "..");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tw-codex-"));
-const day = path.join(tmp, "2026", "01", "01");
+// codexRoot 模拟 ~/.codex/sessions；session_index.jsonl 在其上一级（模拟 ~/.codex）
+const codexRoot = path.join(tmp, "sessions");
+const day = path.join(codexRoot, "2026", "01", "01");
 fs.mkdirSync(day, { recursive: true });
 const UUID = "019f592a-0d06-7e41-b3bc-df1f510cdbbd";
 const file = path.join(day, `rollout-2026-01-01T00-00-00-${UUID}.jsonl`);
 const H = (o) => JSON.stringify(o);
+fs.writeFileSync(path.join(tmp, "session_index.jsonl"), `${H({ id: UUID, thread_name: "确认视图提示词", updated_at: "2026-01-01T00:00:05Z" })}\n`);
 fs.writeFileSync(
 	file,
 	[
@@ -39,13 +42,14 @@ fs.writeFileSync(
 	const session = await import(path.join(ROOT, "trajectory-web", "server", "session.mjs"));
 
 	// ---- 列表扫描 ----
-	const list = codex.listCodexSessions({ codexRoot: tmp, now: Date.now() + 10_000 });
+	const list = codex.listCodexSessions({ codexRoot, now: Date.now() + 10_000 });
 	check("列表 1 会话", list.length === 1);
 	check("id 取自文件名", list[0]?.id === UUID);
 	check("cwd 解析自 session_meta", list[0]?.projectPath === "/tmp/proj");
 	check("首条用户消息", (list[0]?.firstMessage ?? "").includes("跑一下测试"));
+	check("session_index 的 thread_name 作标题", list[0]?.name === "确认视图提示词", String(list[0]?.name));
 	check("live（新鲜 mtime）", list[0]?.live === true);
-	const empty = path.join(tmp, "empty-root");
+	const empty = path.join(codexRoot, "empty-root");
 	fs.mkdirSync(empty);
 	check("空目录 0 会话", codex.listCodexSessions({ codexRoot: empty }).length === 0);
 

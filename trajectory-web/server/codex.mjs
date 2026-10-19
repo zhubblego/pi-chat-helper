@@ -32,8 +32,43 @@ const HEAD_MAX = 1024 * 1024;
 /** file -> { mtimeMs, size, info }（与 sessions.mjs 同策略） */
 const headCache = new Map();
 
+/** session_index.jsonl 缓存：file -> { mtimeMs, map }（codex 的 /resume 标题来源） */
+const indexCache = new Map();
+
 export function clearCodexCache() {
 	headCache.clear();
+	indexCache.clear();
+}
+
+/**
+ * 读 codex 会话索引（~/.codex/session_index.jsonl，即 sessions 根的上一级）：
+ * id → thread_name（/resume 显示的主题，比从文件头猜首条提问更准）。按 mtime 缓存。
+ */
+function readSessionIndex(file) {
+	let stat;
+	try {
+		stat = statSync(file);
+	} catch {
+		return new Map();
+	}
+	const cached = indexCache.get(file);
+	if (cached && cached.mtimeMs === stat.mtimeMs) return cached.map;
+	const map = new Map();
+	try {
+		for (const line of readFileSync(file, "utf8").split("\n")) {
+			if (!line.trim()) continue;
+			try {
+				const o = JSON.parse(line);
+				if (o.id && typeof o.thread_name === "string" && o.thread_name) map.set(o.id, o.thread_name);
+			} catch {
+				/* 坏行跳过 */
+			}
+		}
+	} catch {
+		/* 索引不可读时回退到头部解析 */
+	}
+	indexCache.set(file, { mtimeMs: stat.mtimeMs, map });
+	return map;
 }
 
 /** `rollout-2026-07-13T09-49-15-<uuid>.jsonl` → { id, created }；不匹配返回 null。 */
@@ -195,13 +230,17 @@ export function listCodexSessions(options = {}) {
 	const now = options.now ?? Date.now();
 	const liveWindowMs = options.liveWindowMs ?? LIVE_WINDOW_MS;
 	const root = options.codexRoot ?? DEFAULT_CODEX_ROOT;
+	// /resume 标题：codex 把主题写在 sessions 同级的 session_index.jsonl，优先于头部猜测
+	const index = readSessionIndex(join(dirname(root), "session_index.jsonl"));
 	const sessions = [];
 	for (const file of rolloutFiles(root)) {
 		try {
 			const stat = statSync(file);
 			if (!stat.isFile()) continue;
 			const info = sessionInfoFor(file, stat, options.projectDir ?? null);
-			if (info) sessions.push(info);
+			if (!info) continue;
+			const threadName = index.get(info.id);
+			sessions.push(threadName ? { ...info, name: threadName } : info);
 		} catch {
 			/* 单个文件不可读不影响列表 */
 		}
