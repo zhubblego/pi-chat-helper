@@ -79,7 +79,7 @@ const state = {
 	translating: false,
 	settingsOpen: false,
 	copyOpen: false,
-	agentTreeOpen: false,
+	agentTreeView: false,
 	pollingSession: false,
 	pollingSessions: false,
 	tick: 0,
@@ -611,6 +611,14 @@ function renderEvent(ev, terms = []) {
 }
 
 function renderMain() {
+	// 派生树视图（codex）：主区直接渲染 agent 派生树，替代轮次列表
+	if (state.agentTreeView) {
+		if (state.source === "codex") {
+			renderAgentTreeView();
+			return;
+		}
+		state.agentTreeView = false; // 非 codex 源自动退出
+	}
 	if (!state.selectedId) {
 		mainInner.replaceChildren(h("div", { class: "empty", text: "左侧选择一个会话查看轨迹" }));
 		return;
@@ -1010,7 +1018,7 @@ function switchSource(id) {
 	state.toolNames = [];
 	state.searchIndex = new TrajectorySearchIndex();
 	closeDrawer();
-	setAgentTreeOpen(false);
+	setAgentTreeView(false);
 	updateAgentTreeBtn();
 	renderRail();
 	renderTopbar();
@@ -1027,6 +1035,7 @@ function switchSource(id) {
 /** 工具条「派生」按钮只对 codex 源显示（pi 的子代理嵌在父会话内，无独立会话）。 */
 function updateAgentTreeBtn() {
 	el("agent-tree-btn").hidden = state.source !== "codex";
+	el("agent-tree-btn").setAttribute("aria-pressed", String(state.agentTreeView));
 }
 
 /** 树节点 DOM：根节点显示会话标题，子任务显示任务名末段；同名多次派发合并计数。 */
@@ -1051,18 +1060,23 @@ function treeNodeDom(node) {
 	return h("div", null, btn, h("div", { class: "agent-tree-children" }, ...node.children.map(treeNodeDom)));
 }
 
-function renderAgentTree() {
+/** 派生树视图：主区渲染当前项目的 agent 派生树（替代轮次列表），点击节点进入该会话轨迹。 */
+function renderAgentTreeView() {
 	const current = state.sessions.find((s) => s.id === state.selectedId);
 	const projectPath = current?.projectPath ?? null;
 	const projectSessions = projectPath ? state.sessions.filter((s) => s.projectPath === projectPath) : state.sessions;
-	el("agent-tree-title").textContent = projectPath ? projectLabel(projectPath) : "全部项目";
-	el("agent-tree-body").replaceChildren(...buildAgentTree(projectSessions).map(treeNodeDom));
+	const title = projectPath ? projectLabel(projectPath) : "全部项目";
+	mainInner.replaceChildren(
+		h("div", { class: "agent-tree-head", text: `${title} · 派生结构` }),
+		...buildAgentTree(projectSessions).map(treeNodeDom),
+	);
 }
 
-function setAgentTreeOpen(open) {
-	state.agentTreeOpen = open;
-	el("agent-tree").hidden = !open;
-	if (open) renderAgentTree();
+/** 切换派生树视图（主区视图切换，非 overlay）。 */
+function setAgentTreeView(on) {
+	state.agentTreeView = on;
+	updateAgentTreeBtn();
+	renderMain();
 }
 
 // ---------------------------------------------------------------------------
@@ -1542,6 +1556,9 @@ sessionList.addEventListener("click", (e) => {
 /** 切换选中会话（列表点击 / 派生树节点点击共用）：重置临时态并拉新数据。 */
 function selectSession(id) {
 	if (!id || id === state.selectedId) return;
+	// 从列表/树节点选中会话：退出派生树视图，直接看该会话的轨迹
+	state.agentTreeView = false;
+	updateAgentTreeBtn();
 	state.selectedId = id;
 	state.data = null;
 	state.etag = null;
@@ -1629,18 +1646,18 @@ el("dv-settings-menu").addEventListener("click", (e) => {
 	else if (item.dataset.mode) applyTranslateSetting({ mode: item.dataset.mode });
 });
 el("theme-btn").addEventListener("click", cycleTheme);
-el("agent-tree-btn").addEventListener("click", () => setAgentTreeOpen(!state.agentTreeOpen));
-el("agent-tree-close").addEventListener("click", () => setAgentTreeOpen(false));
-el("agent-tree-body").addEventListener("click", (e) => {
+el("agent-tree-btn").addEventListener("click", () => setAgentTreeView(!state.agentTreeView));
+mainInner.addEventListener("click", (e) => {
+	if (!state.agentTreeView) return;
 	const btn = e.target.closest(".agent-tree-node");
 	if (!btn) return;
-	setAgentTreeOpen(false);
+	setAgentTreeView(false);
 	selectSession(btn.dataset.sid);
 });
 document.addEventListener("keydown", (e) => {
 	if (e.key === "Escape") {
-		if (state.agentTreeOpen) {
-			setAgentTreeOpen(false);
+		if (state.agentTreeView) {
+			setAgentTreeView(false);
 			return;
 		}
 		if (state.copyOpen) {

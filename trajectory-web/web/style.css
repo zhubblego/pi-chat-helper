@@ -823,25 +823,13 @@ mark.ev-hit {
 	padding: 6px 12px;
 }
 
-/* ---------------------------------------------------------------- Agent 派生结构 */
+/* ---------------------------------------------------------------- Agent 派生树（主区视图） */
 
-.agent-tree {
-	--dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
-	position: fixed;
-	top: var(--tw-topbar-height);
-	right: 0;
-	bottom: 0;
-	width: min(440px, 92vw);
-	background: var(--dsw-alias-bg-layer-1);
-	border-left: 1px solid var(--dsw-alias-border-l1);
-	box-shadow: var(--dsw-elevation-stroke);
-	display: flex;
-	flex-direction: column;
-	z-index: 9; /* 低于详情抽屉（10）：同时打开时抽屉在上 */
-}
-
-.agent-tree-body {
-	padding: 8px 10px 24px;
+.agent-tree-head {
+	padding: 16px 16px 8px;
+	color: var(--dsw-alias-label-tertiary);
+	font: var(--dsw-font-xs-strong-13);
+	letter-spacing: 0.02em;
 }
 
 .agent-tree-node {
