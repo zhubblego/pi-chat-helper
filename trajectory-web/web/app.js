@@ -154,8 +154,18 @@ function h(tag, attrs = null, ...children) {
 	return node;
 }
 
-function preNode(text, extraClass = "") {
-	return h("pre", { class: `code${extraClass ? ` ${extraClass}` : ""}`, text: String(text ?? "") });
+/** 搜索分词（与索引查询一致）；空查询返回空数组表示不高亮。 */
+function searchTerms() {
+	return state.query.trim() ? state.query.trim().split(/\s+/) : [];
+}
+
+function preNode(text, extraClass = "", terms = []) {
+	// terms 非空时命中关键词高亮（与列表行一致，词埋在长 JSON/输出里时一眼可见）
+	return h(
+		"pre",
+		{ class: `code${extraClass ? ` ${extraClass}` : ""}` },
+		...highlightNodes(String(text ?? ""), terms),
+	);
 }
 
 function mdNode(text) {
@@ -717,12 +727,13 @@ function nestedListNode(tool) {
 function toolBody(view) {
 	const t = view.tool ?? {};
 	const isFull = state.openFull && state.openFull.id === view.id;
+	const terms = searchTerms();
 	const nodes = [
 		h("div", { class: "kv" }, h("span", { text: "工具" }), h("b", { text: String(t.name ?? "") })),
 		h("h4", { text: "参数" }),
-		preNode(t.argsText ?? "", "wrap"),
+		preNode(t.argsText ?? "", "wrap", terms),
 		h("h4", { text: `结果${t.isError ? "（出错）" : ""}` }),
-		t.result ? preNode(t.result, "wrap") : muted("（未返回）"),
+		t.result ? preNode(t.result, "wrap", terms) : muted("（未返回）"),
 		...nestedListNode(t),
 	];
 	if (isFull && t.details !== undefined) {
@@ -733,13 +744,14 @@ function toolBody(view) {
 
 function bashBody(view) {
 	const b = view.bash ?? {};
+	const terms = searchTerms();
 	const flags = [b.cancelled ? "已取消" : "", b.excludeFromContext ? "不进上下文" : ""].filter(Boolean).join(" · ");
 	return [
 		h("div", { class: "kv" }, h("span", { text: "命令" })),
-		preNode(b.command ?? "", "wrap"),
+		preNode(b.command ?? "", "wrap", terms),
 		h("div", { class: "kv" }, h("span", { text: "退出码" }), h("b", { text: String(b.exitCode ?? "?") }), flags ? ` · ${flags}` : ""),
 		h("h4", { text: "输出" }),
-		b.output ? preNode(b.output, "wrap") : muted("（空）"),
+		b.output ? preNode(b.output, "wrap", terms) : muted("（空）"),
 	];
 }
 
@@ -757,7 +769,7 @@ function systemBody(view) {
 					null,
 					h("summary", null, h("code", { text: String(s.name) }), isFull ? "" : ` · ${s.chars ?? 0} 字符`),
 					// sys-text 标记：提示词段落可翻译（与工具参数/结果、bash 输出的 pre 区分）
-					isFull && typeof s.text === "string" ? preNode(s.text, "wrap sys-text") : muted("加载全文中…"),
+					isFull && typeof s.text === "string" ? preNode(s.text, "wrap sys-text", searchTerms()) : muted("加载全文中…"),
 				),
 			);
 		}
