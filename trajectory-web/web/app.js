@@ -914,7 +914,7 @@ function writeViewHash() {
 // Agent 选择栏（最左竖条）：每个按钮一个轨迹源；源由 /api/sources 列出（存在才显示）
 // ---------------------------------------------------------------------------
 
-const SOURCE_BADGE = { pi: "π", codex: "Cx" };
+const SOURCE_BADGE = { pi: "π", codex: "Codex" };
 
 async function pollSources() {
 	try {
@@ -946,7 +946,7 @@ function renderRail() {
 					dataset: { source: s.id },
 					"aria-pressed": String(s.id === state.source),
 					},
-				h("span", { class: "rail-badge", "aria-hidden": "true", text: SOURCE_BADGE[s.id] ?? s.label.slice(0, 1) }),
+				h("span", { class: `rail-badge${(SOURCE_BADGE[s.id] ?? s.label.slice(0, 1)).length > 2 ? " small" : ""}`, "aria-hidden": "true", text: SOURCE_BADGE[s.id] ?? s.label.slice(0, 1) }),
 			),
 		),
 	);
