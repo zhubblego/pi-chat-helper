@@ -1057,9 +1057,10 @@ async function translateDrawer() {
 	const light0 = findEvent(wantId);
 	if (light0?.truncated && (!state.openFull || state.openFull.id !== wantId)) await loadFull(wantId);
 	if (state.openId !== wantId || !findEvent(wantId)) return;
-	const blocks = translatableBlocks();
+	// 超长段（>20000 字符，如整页提示词/大文档）单独跳过：一段超限会让整批 400，全部翻译失败
+	const blocks = translatableBlocks().filter((b) => b.text.length <= 20_000);
 	if (blocks.length === 0) {
-		el("dv-translate").title = "没有可翻译的正文（工具结果/命令输出/加密思维不可翻）";
+		el("dv-translate").title = "没有可翻译的正文（工具结果/命令输出/加密思维/超长段落不可翻）";
 		flashTranslate("∅");
 		return;
 	}
