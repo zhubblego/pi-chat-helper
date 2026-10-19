@@ -289,7 +289,7 @@ function sameSources(left, right) {
 }
 
 /** 一个事件的可检索字段（对应源码的 recordSources）。 */
-function eventSources(question, event) {
+function eventSources(_question, event) {
 	const tool = event.tool ?? {};
 	const bash = event.bash ?? {};
 	const system = event.system ?? {};
@@ -297,8 +297,7 @@ function eventSources(question, event) {
 	const custom = event.custom ?? {};
 	const msg = event.msg ?? {};
 	return [
-		question.index < 0 ? "会话开始" : `turn ${question.index + 1}`,
-		question.summary ?? "",
+		// 轮次标签与摘要不参与索引：命中只算事件自身内容，避免摘要/「会话开始」标签命中把整轮无关键词的事件带出（提问正文已由 user 事件覆盖）
 		event.kind,
 		event.preview ?? "",
 		event.text ?? "",

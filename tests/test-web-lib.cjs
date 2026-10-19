@@ -129,6 +129,12 @@ const check = (label, cond, extra = "") => {
 	const m2 = index.search("配置 代码");
 	check("多词 AND 匹配同一事件", m2.size === 1 && m2.has("e2"), JSON.stringify([...m2]));
 	check("无命中返回空集", index.search("不存在的词").size === 0);
+	check("摘要不参与索引（命中只算事件自身内容）", !index.search("写测试").has("e3"));
+	check("轮次标签不参与索引（搜 turn 不误命中）", index.search("turn").size === 0);
+	const qUser = [{ index: 2, summary: "", events: [{ id: "u1", kind: "user", text: "今天天气怎么样" }] }];
+	index.update(qUser);
+	check("提问正文仍可搜（user 事件自身文本）", index.search("天气").has("u1"));
+	index.update(questions);
 	index.update([{ ...questions[0], events: [questions[0].events[0]] }]);
 	check("增量同步移除消失的事件", index.search("先看配置").size === 0);
 
