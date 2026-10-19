@@ -19,13 +19,15 @@
  * 列表走「stat + 头 64KB」轻量解析（cwd + 首条用户消息），mtime+size 缓存。
  */
 import { closeSync, openSync, readSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { LIVE_WINDOW_MS } from "./sessions.mjs";
 
 export const DEFAULT_CODEX_ROOT = join(homedir(), ".codex", "sessions");
 
-const HEAD_CAP = 64 * 1024;
+const HEAD_CHUNK = 64 * 1024;
+const HEAD_MAX = 1024 * 1024;
 
 /** file -> { mtimeMs, size, info }（与 sessions.mjs 同策略） */
 const headCache = new Map();
@@ -42,43 +44,66 @@ export function fromRolloutName(name) {
 	return { id: m[5], created: Number.isFinite(created) ? created : undefined };
 }
 
-function readHead(file, size) {
-	const cap = Math.min(size, HEAD_CAP);
-	const fd = openSync(file, "r");
-	try {
-		const buf = Buffer.alloc(cap);
-		const read = readSync(fd, buf, 0, cap, 0);
-		return buf.toString("utf8", 0, read);
-	} finally {
-		closeSync(fd);
-	}
+/** 注入消息前缀：codex 把 AGENTS.md / skills 等上下文以 user 角色注入，不算首条提问。 */
+function isInjectedUserText(text) {
+	return text.startsWith("# AGENTS.md instructions for") || text.startsWith("<user_instructions>") || text.startsWith("<skills_instructions>");
 }
 
-/** 头部轻量解析：session_meta 的 cwd + 首条用户消息预览。 */
-function parseHead(text, file, fallbackId) {
-	let cwd;
-	let firstMessage = "";
-	let id = fallbackId;
-	for (const line of text.split("\n")) {
+/** 增量消费完整行：session_meta 的 cwd/id，以及首条真实用户消息（跳过注入）。 */
+function consumeLines(chunkText, state) {
+	for (const line of chunkText.split("\n")) {
 		if (!line.trim()) continue;
 		let entry;
 		try {
 			entry = JSON.parse(line);
 		} catch {
-			continue; // 半行
+			continue; // 坏行/半行
 		}
 		if (entry.type === "session_meta") {
-			cwd = entry.payload?.cwd ?? cwd;
-			if (entry.payload?.id) id = entry.payload.id;
+			const p = entry.payload ?? {};
+			state.cwd = p.cwd ?? state.cwd;
+			if (p.id) state.id = p.id;
 			continue;
 		}
-		if (!firstMessage && entry.type === "response_item" && entry.payload?.type === "message" && entry.payload?.role === "user") {
+		if (!state.firstMessage && entry.type === "response_item" && entry.payload?.type === "message" && entry.payload?.role === "user") {
 			const text = (entry.payload.content ?? []).map((c) => (typeof c?.text === "string" ? c.text : "")).join("").trim();
-			if (text) firstMessage = text.slice(0, 120).replace(/\s+/g, " ");
+			if (text && !isInjectedUserText(text)) state.firstMessage = text.slice(0, 120).replace(/\s+/g, " ");
 		}
-		if (cwd && firstMessage) break;
 	}
-	return { id, cwd, firstMessage };
+}
+
+/**
+ * 分块读头部并增量解析：大会话的 session_meta（base_instructions）+ AGENTS.md 注入
+ * 就占数十到上百 KB，固定 64KB 窗口读不到首条提问（曾导致 codex 列表全是「(空会话)」）。
+ * 每块 64KB 递增、找到即停，上限 1MB；StringDecoder 处理跨块多字节字符。
+ */
+function parseHead(file, size, fallbackId) {
+	const state = { id: fallbackId, cwd: undefined, firstMessage: "" };
+	const max = Math.min(size, HEAD_MAX);
+	const decoder = new StringDecoder("utf8");
+	let pending = "";
+	let offset = 0;
+	const fd = openSync(file, "r");
+	try {
+		while (offset < max) {
+			const len = Math.min(HEAD_CHUNK, max - offset);
+			const buf = Buffer.alloc(len);
+			const read = readSync(fd, buf, 0, len, offset);
+			if (read <= 0) break;
+			offset += read;
+			pending += decoder.write(buf.subarray(0, read));
+			const cut = pending.lastIndexOf("\n");
+			if (cut < 0) continue;
+			consumeLines(pending.slice(0, cut + 1), state);
+			pending = pending.slice(cut + 1);
+			if (state.cwd && state.firstMessage) return state;
+		}
+		pending += decoder.end();
+		if (pending.trim()) consumeLines(`${pending}\n`, state);
+	} finally {
+		closeSync(fd);
+	}
+	return state;
 }
 
 /** 读取单个 codex 会话的列表信息（带缓存）。解析失败返回 null。 */
@@ -89,7 +114,7 @@ function sessionInfoFor(file, stat, projectDir) {
 	try {
 		const fromName = fromRolloutName(file.split("/").pop());
 		if (!fromName) return null;
-		const parsed = parseHead(readHead(file, stat.size), file, fromName.id);
+		const parsed = parseHead(file, stat.size, fromName.id);
 		info = {
 			id: parsed.id,
 			file,
