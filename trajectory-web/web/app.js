@@ -80,6 +80,7 @@ const state = {
 	settingsOpen: false,
 	copyOpen: false,
 	agentTreeView: false,
+	showSubagentSessions: false,
 	pollingSession: false,
 	pollingSessions: false,
 	tick: 0,
@@ -328,6 +329,7 @@ function sessionItem(session) {
 			"span",
 			{ class: "session-title" },
 			session.live ? h("span", { class: "live-dot" }) : null,
+			session.threadSource === "subagent" ? h("span", { class: "session-sub-tag", text: "子" }) : null,
 			h("span", { class: "session-name", text: title }),
 		),
 		h("span", { class: "session-time", text: fmtRelative(session.modified) }),
@@ -335,9 +337,30 @@ function sessionItem(session) {
 	);
 }
 
+/** 会话列表可见集：codex 源默认隐藏子 agent 会话（主线），开关切「全部」。 */
+function visibleSessions() {
+	if (state.source !== "codex" || state.showSubagentSessions) return state.sessions;
+	return state.sessions.filter((s) => s.threadSource !== "subagent");
+}
+
+function updateSubagentToggle() {
+	const btn = el("subagent-toggle");
+	const show = state.source === "codex" && state.sessions.some((s) => s.threadSource === "subagent");
+	btn.hidden = !show;
+	btn.setAttribute("aria-pressed", String(state.showSubagentSessions));
+	btn.replaceChildren(h("span", { text: state.showSubagentSessions ? "全部" : "主线" }));
+}
+
 function renderSessions() {
-	const sessions = state.sessions;
-	el("session-count").textContent = sessions.length ? String(sessions.length) : "";
+	const sessions = visibleSessions();
+	const total = state.sessions.length;
+	let count = "";
+	if (total) {
+		const filtered = state.source === "codex" && !state.showSubagentSessions && total !== sessions.length;
+		count = filtered ? `${sessions.length}/${total}` : String(total);
+	}
+	el("session-count").textContent = count;
+	updateSubagentToggle();
 	const nodes = [];
 	if (state.scope === "all") {
 		for (const group of groupSessions(sessions)) {
@@ -1273,6 +1296,7 @@ function applyTranslateSetting(patch) {
 // ---------------------------------------------------------------------------
 
 const LS_SIDETOOL = "tw.sidetool";
+const LS_SHOW_SUBAGENTS = "tw.showSubagents";
 let copyFlashTimer = 0;
 
 function setSideOpen(open) {
@@ -1647,6 +1671,15 @@ el("dv-settings-menu").addEventListener("click", (e) => {
 });
 el("theme-btn").addEventListener("click", cycleTheme);
 el("agent-tree-btn").addEventListener("click", () => setAgentTreeView(!state.agentTreeView));
+el("subagent-toggle").addEventListener("click", () => {
+	state.showSubagentSessions = !state.showSubagentSessions;
+	try {
+		localStorage.setItem(LS_SHOW_SUBAGENTS, state.showSubagentSessions ? "1" : "0");
+	} catch {
+		/* 无痕模式等场景忽略 */
+	}
+	renderSessions();
+});
 mainInner.addEventListener("click", (e) => {
 	if (!state.agentTreeView) return;
 	const btn = e.target.closest(".agent-tree-node");
@@ -1709,6 +1742,7 @@ loadPrefs();
 loadTranslatePrefs();
 try {
 	if (localStorage.getItem(LS_SIDETOOL) === "0") setSideOpen(false);
+	if (localStorage.getItem(LS_SHOW_SUBAGENTS) === "1") state.showSubagentSessions = true;
 } catch {
 	/* 无痕模式等场景忽略 */
 }

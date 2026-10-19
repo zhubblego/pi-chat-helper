@@ -350,6 +350,17 @@ body {
 	font: var(--dsw-font-xxxs-11);
 }
 
+/* 子 agent 会话标识（「子」小徽章） */
+.session-sub-tag {
+	flex: none;
+	padding: 0 3px;
+	border-radius: var(--dsw-radius-xs);
+	background: var(--dsw-alias-markdown-tag);
+	color: var(--dsw-alias-label-tertiary);
+	font: var(--dsw-font-xxxs-11);
+	line-height: 1.4;
+}
+
 .live-dot {
 	width: 6px;
 	height: 6px;
