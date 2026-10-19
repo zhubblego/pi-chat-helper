@@ -337,10 +337,10 @@ function sessionItem(session) {
 	);
 }
 
-/** 会话列表可见集：codex 源默认隐藏子 agent 会话（主线），开关切「全部」。 */
+/** 会话列表可见集：codex 源默认隐藏子 agent 会话与 Guardian 审批线程（主线），开关切「全部」。 */
 function visibleSessions() {
 	if (state.source !== "codex" || state.showSubagentSessions) return state.sessions;
-	return state.sessions.filter((s) => s.threadSource !== "subagent");
+	return state.sessions.filter((s) => s.threadSource !== "subagent" && s.threadSource !== "guardian_review");
 }
 
 function updateSubagentToggle() {
