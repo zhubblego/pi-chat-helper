@@ -398,7 +398,7 @@ function renderSessions() {
 // ---------------------------------------------------------------------------
 
 /** 过滤菜单里可开关的类型（工具走子菜单，不是开关）。 */
-const TOGGLE_GROUPS = ["user", "thinking", "text", "context"];
+const TOGGLE_GROUPS = ["user", "thinking", "text", "context", "approval"];
 
 /** 过滤菜单：显示类型勾选（照 deepseek Menu 的紧凑卡与选中语义）；工具行是带子菜单入口的行。 */
 function renderFilterMenu() {
@@ -858,6 +858,23 @@ function drawerBodyNodes(view) {
 				),
 				...(view.usageEntry?.usage ? [preNode(JSON.stringify(view.usageEntry.usage, null, 2), "wrap")] : []),
 			];
+		case "approval": {
+			const ap = view.approval ?? {};
+			const verdict = ap.verdict ?? {};
+			const action = ap.action ?? {};
+			const cmd = Array.isArray(action.command) ? action.command.join(" ") : "";
+			return [
+				h(
+					"div",
+					{ class: "kv" },
+					h("span", { text: "判定" }),
+					h("b", { text: `${verdict.outcome === "allow" ? "✓ 放行" : verdict.outcome === "deny" ? "✗ 拒绝" : verdict.outcome ?? "?"} · 风险 ${verdict.risk_level ?? "?"}` }),
+				),
+				...(cmd ? [h("div", { class: "kv" }, h("span", { text: "命令" })), preNode(cmd, "wrap")] : []),
+				...(action.justification ? [h("div", { class: "kv" }, h("span", { text: "理由" }), h("b", { text: String(action.justification) }))] : []),
+				...(verdict.rationale ? [h("h4", { text: "审批依据" }), mdNode(verdict.rationale)] : []),
+			];
+		}
 		case "context-edit":
 			return [
 				h("div", { class: "kv" }, h("span", { text: "目标条目" }), h("b", { text: String(view.contextEdit?.targetId ?? "") })),

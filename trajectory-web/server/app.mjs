@@ -23,7 +23,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { buildProjection, buildProjectionFrom, toLight, findEvent } from "./session.mjs";
 import { listSessions, DEFAULT_SESSIONS_ROOT, LIVE_WINDOW_MS } from "./sessions.mjs";
-import { listCodexSessions, readCodexSession, DEFAULT_CODEX_ROOT } from "./codex.mjs";
+import { listCodexSessions, readCodexSession, readGuardianApproval, DEFAULT_CODEX_ROOT } from "./codex.mjs";
 import { scanToolOrigins } from "./tool-origins.mjs";
 
 // 翻译转发：免费通道（无 key）；目标语言白名单。Google translate_a/single 逐段，
@@ -206,6 +206,42 @@ export function createTrajectoryServer(options) {
 		return sessions[0] ?? null;
 	}
 
+	/** codex 主会话投影：主条目流 + 时间窗内 Guardian 审批条目合并，按时间序重建 parentId 链。 */
+	function codexProjectionInput(session) {
+		const { header, entries } = readCodexSession(session.file);
+		// 找同项目、时间窗重叠的 Guardian 审批会话，注入审批条目
+		const guardians = listCodexSessions({ codexRoot, liveWindowMs }).filter((g) => g.threadSource === "guardian_review" && g.projectPath && g.projectPath === session.projectPath);
+		const mainStart = session.created ?? session.modified;
+		const mainEnd = session.modified;
+		const extraEntries = [];
+		for (const g of guardians) {
+			const gStart = g.created ?? g.modified;
+			if (gStart < mainStart || gStart > mainEnd) continue; // 时间窗：审批发生在主会话活跃期内
+			try {
+				const gr = readGuardianApproval(g.file);
+				extraEntries.push(...gr.entries);
+			} catch {
+				/* 单个 Guardian 文件不可读不影响主投影 */
+			}
+		}
+		if (!extraEntries.length) return { header, entries, file: session.file };
+		// 合并后按时间序排序并重建 parentId 线性链（activeBranch 沿链回溯取活动分支）
+		const merged = [...entries, ...extraEntries];
+		merged.sort((a, b) => {
+			const ta = Date.parse(a.timestamp ?? "") || 0;
+			const tb = Date.parse(b.timestamp ?? "") || 0;
+			if (ta !== tb) return ta - tb;
+			// 同时间戳：保持原相对顺序（主条目在前）
+			return merged.indexOf(a) - merged.indexOf(b);
+		});
+		let prev = null;
+		for (const entry of merged) {
+			entry.parentId = prev ? prev.id : null;
+			prev = entry;
+		}
+		return { header, entries: merged, file: session.file };
+	}
+
 	function getProjection(session, sourceId) {
 		let etag;
 		try {
@@ -220,7 +256,7 @@ export function createTrajectoryServer(options) {
 			projections.set(session.file, cached);
 			return cached;
 		}
-		const full = sourceId === "codex" ? buildProjectionFrom({ ...readCodexSession(session.file), file: session.file }) : buildProjection(session.file);
+		const full = sourceId === "codex" ? buildProjectionFrom(codexProjectionInput(session)) : buildProjection(session.file);
 		const entry = { id: session.id, etag, full, light: toLight(full) };
 		projections.delete(session.file);
 		projections.set(session.file, entry);

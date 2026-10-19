@@ -427,3 +427,67 @@ export function readCodexSession(file) {
 	flushSystem();
 	return { header, entries: out };
 }
+
+/**
+ * 读 Guardian 审批会话：提取每条审批的 Planned action JSON（被评估的工具调用）
+ * 与判定 JSON（risk_level/outcome/rationale），转为 pi 条目流里的 guardian_approval 条目。
+ * 按时间序返回，供主会话投影合并注入。
+ */
+export function readGuardianApproval(file) {
+	const entries = [];
+	let cwd = undefined;
+	let pendingAction = null;
+	const push = () => {
+		if (!pendingAction) return;
+		entries.push(pendingAction);
+		pendingAction = null;
+	};
+	for (const line of readFileSync(file, "utf8").split("\n")) {
+		if (!line.trim()) continue;
+		let o;
+		try {
+			o = JSON.parse(line);
+		} catch {
+			continue;
+		}
+		const p = o.payload ?? {};
+		if (o.type === "session_meta") {
+			cwd = p.cwd ?? cwd;
+			continue;
+		}
+		if (o.type !== "response_item") continue;
+		if (p.type === "message" && p.role === "user") {
+			const text = (p.content ?? []).map((c) => (typeof c?.text === "string" ? c.text : "")).join("");
+			// Planned action JSON：提取被审批的工具调用详情
+			const m = /Planned action JSON:\s*\n(\{[\s\S]*?\n\})/.exec(text);
+			if (m) {
+				try {
+					const action = JSON.parse(m[1]);
+					pendingAction = {
+						type: "guardian_approval",
+						id: `gr-${entries.length}`,
+						timestamp: o.timestamp,
+						approval: { action },
+					};
+				} catch {
+					/* Planned action JSON 解析失败跳过 */
+				}
+			}
+			continue;
+		}
+		if (p.type === "message" && p.role === "assistant" && pendingAction) {
+			const text = (p.content ?? []).map((c) => (typeof c?.text === "string" ? c.text : "")).join("").trim();
+			try {
+				const verdict = JSON.parse(text);
+				if (typeof verdict.outcome === "string") {
+					pendingAction.approval.verdict = verdict;
+					push();
+				}
+			} catch {
+				/* 非 JSON 判定跳过 */
+			}
+			continue;
+		}
+	}
+	return { cwd, entries };
+}

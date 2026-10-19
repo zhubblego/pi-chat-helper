@@ -475,6 +475,23 @@ export function buildProjectionFrom({ header, entries, file }) {
 			});
 			continue;
 		}
+		if (entry.type === "guardian_approval") {
+			const ap = entry.approval ?? {};
+			const verdict = ap.verdict ?? {};
+			const action = ap.action ?? {};
+			const outcome = verdict.outcome ?? "?";
+			const icon = outcome === "allow" ? "✓" : "✗";
+			const cmd = Array.isArray(action.command) ? action.command.join(" ").slice(0, 60) : action.tool ?? "";
+			pushEvent(current, {
+				id: `${entry.id ?? "e"}:approval`,
+				kind: "approval",
+				ts,
+				iso: isoOf(ts),
+				preview: `审批 ${icon} ${cmd || verdict.rationale?.slice(0, 40) || ""}`,
+				approval: { action, verdict },
+			});
+			continue;
+		}
 		if (entry.type === "custom_message") {
 			const text = extractText(entry.content);
 			pushEvent(current, {

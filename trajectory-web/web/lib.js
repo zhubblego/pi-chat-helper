@@ -11,6 +11,7 @@ export const FILTER_GROUPS = {
 	tools: ["tool", "bash"],
 	text: ["text"],
 	context: ["system", "compaction", "branch", "model", "thinking-level", "usage", "context-edit", "custom"],
+	approval: ["approval"],
 };
 
 export const GROUP_LABELS = {
@@ -19,6 +20,7 @@ export const GROUP_LABELS = {
 	tools: "工具",
 	text: "输出",
 	context: "上下文",
+	approval: "审批",
 };
 
 export function kindGroup(kind) {
@@ -127,6 +129,8 @@ export function eventTagLabel(ev) {
 			return "等级";
 		case "usage":
 			return "用量";
+		case "approval":
+			return ev.approval?.verdict?.outcome === "deny" ? "审批✗" : "审批";
 		case "context-edit":
 			return "编辑";
 		case "custom":
