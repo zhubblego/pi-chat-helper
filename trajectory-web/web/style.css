@@ -779,6 +779,25 @@ svg.tb-icon {
 	color: var(--dsw-alias-state-success-primary);
 }
 
+/* 上下文类事件（系统/压缩/分支/模型/等级/用量/编辑/自定义）：统一低调灰蓝 */
+.k-system .ev-tag,
+.k-compaction .ev-tag,
+.k-branch .ev-tag,
+.k-model .ev-tag,
+.k-thinking-level .ev-tag,
+.k-usage .ev-tag,
+.k-context-edit .ev-tag,
+.k-custom .ev-tag {
+	background: var(--dsw-alias-markdown-tag);
+	color: var(--dsw-alias-label-tertiary);
+}
+
+/* 审批：品牌蓝系（deepseek 浅底 + 主色文字，与目录名同色系） */
+.k-approval .ev-tag {
+	background: var(--dsw-specific-bubble);
+	color: var(--dsw-alias-label-primary-bluish);
+}
+
 .ev-preview {
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -1047,6 +1066,24 @@ border-bottom: 1px solid var(--dsw-alias-border-l1);
 .dv-kind.k-text {
 	background: var(--dsw-alias-state-success-tertiary);
 	color: var(--dsw-alias-state-success-primary);
+}
+
+/* 上下文类（同事件行配色） */
+.dv-kind.k-system,
+.dv-kind.k-compaction,
+.dv-kind.k-branch,
+.dv-kind.k-model,
+.dv-kind.k-thinking-level,
+.dv-kind.k-usage,
+.dv-kind.k-context-edit,
+.dv-kind.k-custom {
+	background: var(--dsw-alias-markdown-tag);
+	color: var(--dsw-alias-label-tertiary);
+}
+
+.dv-kind.k-approval {
+	background: var(--dsw-specific-bubble);
+	color: var(--dsw-alias-label-primary-bluish);
 }
 
 .dv-title {
