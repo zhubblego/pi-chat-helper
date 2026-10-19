@@ -281,21 +281,28 @@ function injectSectionName(text) {
 	return "developer";
 }
 
-/** 注入内容 → pi 风格的 system 消息条目（sections 对象 + 空工具变更）。 */
-function systemEntry({ id, timestamp, name, text }) {
-	return { type: "message", id, timestamp, message: { role: "system", sections: { [name]: text }, toolsAdded: [], toolsRemoved: [] } };
-}
-
 export function readCodexSession(file) {
 	const out = [];
 	let header = null;
 	let lastId = null;
 	let lastModel;
 	let baseEmitted = false;
+	// 连续的上下文注入合并为一条 system 条目（sections 多段落），与 pi 的 system_context 形态一致
+	let pendingSystem = null;
 	const link = (entry) => {
 		entry.parentId = lastId;
 		lastId = entry.id;
 		return entry;
+	};
+	const flushSystem = () => {
+		if (!pendingSystem) return;
+		const { id, timestamp, sections } = pendingSystem;
+		pendingSystem = null;
+		out.push(link({ type: "message", id, timestamp, message: { role: "system", sections, toolsAdded: [], toolsRemoved: [] } }));
+	};
+	const addSection = (id, timestamp, name, text) => {
+		if (!pendingSystem) pendingSystem = { id, timestamp, sections: {} };
+		pendingSystem.sections[name] = text;
 	};
 	for (const line of readFileSync(file, "utf8").split("\n")) {
 		if (!line.trim()) continue;
@@ -309,11 +316,11 @@ export function readCodexSession(file) {
 		const p = o.payload ?? {};
 		if (o.type === "session_meta") {
 			if (!header) header = { type: "session", id: p.id ?? p.session_id, timestamp: ts, cwd: p.cwd };
-			// 系统提示词全文 → 会话开头的 system 事件（只取首次）
+			// 系统提示词全文 → 并入会话开头的上下文批次（只取首次）
 			const base = typeof p.base_instructions === "string" ? p.base_instructions : p.base_instructions?.text;
 			if (!baseEmitted && typeof base === "string" && base) {
 				baseEmitted = true;
-				out.push(link(systemEntry({ id: "cx-sys-base", timestamp: ts, name: "base_instructions", text: base })));
+				addSection("cx-sys-base", ts, "base_instructions", base);
 			}
 			continue;
 		}
@@ -321,11 +328,13 @@ export function readCodexSession(file) {
 			const model = typeof p.model === "string" ? p.model : "";
 			if (model && model !== lastModel) {
 				lastModel = model;
+				flushSystem();
 				out.push(link({ type: "model_change", id: `cx-model-${out.length}`, timestamp: ts, provider: p.model_provider ?? "openai", modelId: model }));
 			}
 			continue;
 		}
 		if (o.type === "compacted") {
+			flushSystem();
 			out.push(link({ type: "compaction", id: `cx-comp-${out.length}`, timestamp: ts, compaction: { summary: "（Codex 会话已压缩）" } }));
 			continue;
 		}
@@ -335,10 +344,11 @@ export function readCodexSession(file) {
 			// developer 注入（skills/多 agent/中断说明）与 user 角色的上下文注入（AGENTS.md 等）
 			// → system 事件（提示词段落），不再冒充提问/被丢弃
 			if (p.role === "developer" || (p.role === "user" && isInjectedUserText(text.trim()))) {
-				if (text.trim()) out.push(link(systemEntry({ id: p.id ?? `cx-sys-${out.length}`, timestamp: ts, name: injectSectionName(text.trim()), text })));
+				if (text.trim()) addSection(p.id ?? `cx-sys-${out.length}`, ts, injectSectionName(text.trim()), text);
 				continue;
 			}
 			if (p.role !== "user" && p.role !== "assistant") continue;
+			flushSystem();
 			out.push(
 				link({
 					type: "message",
@@ -354,6 +364,7 @@ export function readCodexSession(file) {
 			if (Array.isArray(p.summary)) {
 				summary = p.summary.map((s) => (typeof s?.text === "string" ? s.text : "")).filter(Boolean).join("\n");
 			}
+			flushSystem();
 			out.push(
 				link({
 					type: "message",
@@ -373,6 +384,7 @@ export function readCodexSession(file) {
 					args = p.arguments;
 				}
 			} else if (p.input !== undefined) args = p.input;
+			flushSystem();
 			out.push(
 				link({
 					type: "message",
@@ -385,6 +397,7 @@ export function readCodexSession(file) {
 		}
 		if (p.type === "function_call_output" || p.type === "custom_tool_call_output") {
 			const text = typeof p.output === "string" ? p.output : textOfParts(p.output);
+			flushSystem();
 			out.push(
 				link({
 					type: "message",
@@ -397,5 +410,6 @@ export function readCodexSession(file) {
 		}
 		// 其余 response_item（agent_message 等）跳过
 	}
+	flushSystem();
 	return { header, entries: out };
 }
