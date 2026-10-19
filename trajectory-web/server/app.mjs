@@ -311,6 +311,15 @@ export function createTrajectoryServer(options) {
 			}
 
 			if (pathname === "/api/tool-origins") {
+				// codex 源：返回 codex 原生工具归属（不查 pi 扫描，避免把 codex 工具误归到 pi 包）
+				if (url.searchParams.get("source") === "codex") {
+					const tools = {};
+					for (const name of ["exec", "send_message", "spawn_agent", "wait_agent", "followup_task", "list_agents"]) {
+						tools[name] = { kind: "builtin", label: "Codex 内置" };
+					}
+					sendJson(res, 200, { generatedAt: new Date().toISOString(), source: "codex", tools });
+					return;
+				}
 				sendJson(res, 200, getToolOrigins());
 				return;
 			}

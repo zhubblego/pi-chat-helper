@@ -462,7 +462,7 @@ async function ensureToolOrigins(force = false) {
 	if (!force && state.toolOriginsAt && Date.now() - state.toolOriginsAt < TOOL_ORIGINS_TTL_MS) return;
 	state.toolOriginsLoading = true;
 	try {
-		const res = await fetch("/api/tool-origins");
+		const res = await fetch(`/api/tool-origins?source=${encodeURIComponent(state.source)}`);
 		if (res.ok) {
 			const payload = await res.json();
 			state.toolOrigins = payload.tools ?? {};
