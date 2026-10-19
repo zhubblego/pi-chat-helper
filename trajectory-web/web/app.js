@@ -31,7 +31,9 @@ import {
 	kindGroup,
 	mcpLabel,
 	presetFilters,
+	projectLabel,
 	renderMarkdown,
+	buildAgentTree,
 } from "./lib.js";
 
 const LS_FILTERS = "tw.filters";
@@ -77,6 +79,7 @@ const state = {
 	translating: false,
 	settingsOpen: false,
 	copyOpen: false,
+	agentTreeOpen: false,
 	pollingSession: false,
 	pollingSessions: false,
 	tick: 0,
@@ -964,6 +967,7 @@ async function pollSources() {
 			renderRail();
 			renderTopbar();
 		}
+		updateAgentTreeBtn();
 		// hash 恢复的源或当前源失效时回落到第一个可用源
 		if (sources.length && !sources.some((s) => s.id === state.source)) switchSource(sources[0].id);
 	} catch {
@@ -1006,12 +1010,59 @@ function switchSource(id) {
 	state.toolNames = [];
 	state.searchIndex = new TrajectorySearchIndex();
 	closeDrawer();
+	setAgentTreeOpen(false);
+	updateAgentTreeBtn();
 	renderRail();
 	renderTopbar();
 	renderSessions();
 	pollSessions(true);
 	pollSession(true);
 	writeViewHash();
+}
+
+// ---------------------------------------------------------------------------
+// Agent 派生结构（codex）：当前项目的主会话 → 子任务树，点击节点进入轨迹
+// ---------------------------------------------------------------------------
+
+/** 工具条「派生」按钮只对 codex 源显示（pi 的子代理嵌在父会话内，无独立会话）。 */
+function updateAgentTreeBtn() {
+	el("agent-tree-btn").hidden = state.source !== "codex";
+}
+
+/** 树节点 DOM：根节点显示会话标题，子任务显示任务名末段；同名多次派发合并计数。 */
+function treeNodeDom(node) {
+	const latest = node.sessions[node.sessions.length - 1];
+	const isRoot = node.name === null;
+	const label = isRoot ? latest.name || latest.firstMessage || "(空会话)" : node.name.split("/").filter(Boolean).pop() || node.name;
+	const count = node.sessions.length > 1 ? `×${node.sessions.length}` : "";
+	const btn = h(
+		"button",
+		{
+			class: `agent-tree-node${isRoot ? "" : " is-sub"}${node.sessions.some((x) => x.id === state.selectedId) ? " active" : ""}`,
+			type: "button",
+			dataset: { sid: latest.id },
+			title: `${isRoot ? "主会话" : node.name} · ${fmtTime(latest.modified) || ""}`,
+		},
+		latest.live ? h("span", { class: "live-dot" }) : null,
+		h("span", { class: "agent-tree-name", text: label }),
+		h("span", { class: "agent-tree-tag", text: [isRoot ? "主" : "子", count].filter(Boolean).join(" ") }),
+	);
+	if (!node.children.length) return btn;
+	return h("div", null, btn, h("div", { class: "agent-tree-children" }, ...node.children.map(treeNodeDom)));
+}
+
+function renderAgentTree() {
+	const current = state.sessions.find((s) => s.id === state.selectedId);
+	const projectPath = current?.projectPath ?? null;
+	const projectSessions = projectPath ? state.sessions.filter((s) => s.projectPath === projectPath) : state.sessions;
+	el("agent-tree-title").textContent = projectPath ? projectLabel(projectPath) : "全部项目";
+	el("agent-tree-body").replaceChildren(...buildAgentTree(projectSessions).map(treeNodeDom));
+}
+
+function setAgentTreeOpen(open) {
+	state.agentTreeOpen = open;
+	el("agent-tree").hidden = !open;
+	if (open) renderAgentTree();
 }
 
 // ---------------------------------------------------------------------------
@@ -1484,8 +1535,14 @@ sessionList.addEventListener("click", (e) => {
 		return;
 	}
 	const item = e.target.closest(".session-item");
-	if (!item || item.dataset.id === state.selectedId) return;
-	state.selectedId = item.dataset.id;
+	if (!item) return;
+	selectSession(item.dataset.id);
+});
+
+/** 切换选中会话（列表点击 / 派生树节点点击共用）：重置临时态并拉新数据。 */
+function selectSession(id) {
+	if (!id || id === state.selectedId) return;
+	state.selectedId = id;
 	state.data = null;
 	state.etag = null;
 	state.folded = new Set();
@@ -1504,7 +1561,7 @@ sessionList.addEventListener("click", (e) => {
 	renderMain();
 	main.scrollTop = 0;
 	pollSession(true);
-});
+}
 
 mainInner.addEventListener("click", (e) => {
 	const fold = e.target.closest(".q-fold");
@@ -1572,8 +1629,20 @@ el("dv-settings-menu").addEventListener("click", (e) => {
 	else if (item.dataset.mode) applyTranslateSetting({ mode: item.dataset.mode });
 });
 el("theme-btn").addEventListener("click", cycleTheme);
+el("agent-tree-btn").addEventListener("click", () => setAgentTreeOpen(!state.agentTreeOpen));
+el("agent-tree-close").addEventListener("click", () => setAgentTreeOpen(false));
+el("agent-tree-body").addEventListener("click", (e) => {
+	const btn = e.target.closest(".agent-tree-node");
+	if (!btn) return;
+	setAgentTreeOpen(false);
+	selectSession(btn.dataset.sid);
+});
 document.addEventListener("keydown", (e) => {
 	if (e.key === "Escape") {
+		if (state.agentTreeOpen) {
+			setAgentTreeOpen(false);
+			return;
+		}
 		if (state.copyOpen) {
 			setCopyMenuOpen(false);
 			return;

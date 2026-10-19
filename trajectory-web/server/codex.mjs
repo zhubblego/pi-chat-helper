@@ -113,11 +113,13 @@ function consumeLines(chunkText, state) {
 			if (text && !isInjectedUserText(text)) state.firstMessage = text.slice(0, 120).replace(/\s+/g, " ");
 			continue;
 		}
-		// 子 agent 会话没有用户提问，任务由 agent_message 注入（Message Type: NEW_TASK / Task name: /root/xxx）
-		if (!state.subagentTask && entry.type === "response_item" && entry.payload?.type === "agent_message") {
+		// 子 agent 会话没有用户提问，任务由 agent_message 注入（Message Type: NEW_TASK / Task name: /root/xxx / Sender: /root）
+		if ((!state.subagentTask || !state.sender) && entry.type === "response_item" && entry.payload?.type === "agent_message") {
 			const text = (entry.payload.content ?? []).map((c) => (typeof c?.text === "string" ? c.text : "")).join("");
 			const m = /Task name:\s*(\S+)/.exec(text);
 			if (m && m[1]) state.subagentTask = m[1];
+			const s = /^Sender:\s*(\S+)/m.exec(text);
+			if (s && s[1]) state.sender = s[1];
 		}
 	}
 }
@@ -128,7 +130,7 @@ function consumeLines(chunkText, state) {
  * 每块 64KB 递增、找到即停，上限 1MB；StringDecoder 处理跨块多字节字符。
  */
 function parseHead(file, size, fallbackId) {
-	const state = { id: fallbackId, cwd: undefined, firstMessage: "", threadSource: undefined, subagentTask: undefined, continuation: false };
+	const state = { id: fallbackId, cwd: undefined, firstMessage: "", threadSource: undefined, subagentTask: undefined, sender: undefined, continuation: false };
 	const max = Math.min(size, HEAD_MAX);
 	const decoder = new StringDecoder("utf8");
 	let pending = "";
@@ -175,6 +177,10 @@ function sessionInfoFor(file, stat, projectDir) {
 			projectDir,
 			name: undefined,
 			firstMessage,
+			// agent 派生结构：subagent 会话自带 Task name（自己是谁）与 Sender（谁派的）
+			threadSource: parsed.threadSource ?? null,
+			taskName: parsed.subagentTask ?? null,
+			sender: parsed.sender ?? null,
 			created: fromName.created,
 			modified: stat.mtimeMs,
 			size: stat.size,

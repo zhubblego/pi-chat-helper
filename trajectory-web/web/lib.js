@@ -280,6 +280,55 @@ export function groupSessions(sessions) {
 	return [...groups.values()];
 }
 
+/**
+ * codex 会话的 agent 派生树：非子任务会话（threadSource !== "subagent"，含主会话与续接）为根；
+ * 子任务会话（taskName 非空）挂到 sender 匹配的节点（taskName === sender 的其它子任务 → 多层派生；
+ * sender 无匹配 → 时间归属最接近的根：优先 created 落在根活跃期内，否则时间最近的根）。
+ * 同名 taskName 多次派发合并为一个节点（sessions 列表，按时间序）。
+ * @returns {Array<{name: string|null, sessions: object[], children: array}>} 根节点数组
+ */
+export function buildAgentTree(sessions) {
+	const subs = sessions.filter((s) => s.taskName);
+	const roots = sessions.filter((s) => !s.taskName).slice().sort((a, b) => (a.created ?? a.modified ?? 0) - (b.created ?? b.modified ?? 0));
+	const nodes = new Map();
+	for (const s of subs) {
+		if (!nodes.has(s.taskName)) nodes.set(s.taskName, { name: s.taskName, sessions: [], children: [] });
+		nodes.get(s.taskName).sessions.push(s);
+	}
+	for (const node of nodes.values()) node.sessions.sort((a, b) => (a.created ?? 0) - (b.created ?? 0));
+	const rootNodes = roots.map((r) => ({ name: null, sessions: [r], children: [] }));
+	const byRoot = new Map(rootNodes.map((n, i) => [roots[i].id, n]));
+	const pickRoot = (child) => {
+		if (roots.length === 0) return null;
+		if (roots.length === 1) return roots[0];
+		const t = child.created ?? child.modified ?? 0;
+		let best = null;
+		let bestScore = -Infinity;
+		for (const r of roots) {
+			const start = r.created ?? r.modified ?? 0;
+			const end = r.modified ?? 0;
+			const score = (t >= start && t <= end ? 1e15 : 0) - Math.min(Math.abs(t - start), Math.abs(t - end));
+			if (score > bestScore) {
+				bestScore = score;
+				best = r;
+			}
+		}
+		return best;
+	};
+	for (const node of nodes.values()) {
+		const first = node.sessions[0];
+		const parentKey = first.sender && nodes.has(first.sender) ? first.sender : null;
+		if (parentKey) nodes.get(parentKey).children.push(node);
+		else {
+			const root = pickRoot(first);
+			const rootNode = root ? byRoot.get(root.id) : null;
+			if (rootNode) rootNode.children.push(node);
+			else rootNodes.push(node);
+		}
+	}
+	return rootNodes;
+}
+
 // ---------------------------------------------------------------------------
 // 轨迹搜索索引（复刻 deepseek ui-trajectory trajectory-search-index.ts）
 // ---------------------------------------------------------------------------

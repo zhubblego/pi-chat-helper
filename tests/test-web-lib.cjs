@@ -11,7 +11,7 @@ const check = (label, cond, extra = "") => {
 
 (async () => {
 	const lib = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "lib.js")).href);
-	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments, hitSnippet } = lib;
+	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, buildAgentTree, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments, hitSnippet } = lib;
 
 	// ---- 搜索高亮切分 ----
 	check("高亮：单词命中切分", JSON.stringify(highlightSegments("hello world npm", ["npm"])) === JSON.stringify([{ text: "hello world ", hit: false }, { text: "npm", hit: true }]));
@@ -107,6 +107,26 @@ const check = (label, cond, extra = "") => {
 		{ id: "3", projectPath: "/a", modified: 1 },
 	]);
 	check("分组保序且不同项目分开", grouped[1].sessions.map((s) => s.id).join(",") === "2");
+
+	// ---- Agent 派生树（codex） ----
+	const treeSessions = [
+		{ id: "root1", projectPath: "/p", created: 100, modified: 900, name: "主会话 A", firstMessage: "", threadSource: "user" },
+		{ id: "sub1", projectPath: "/p", created: 200, modified: 300, firstMessage: "子任务 /root/doc", threadSource: "subagent", taskName: "/root/doc", sender: "/root" },
+		{ id: "sub2", projectPath: "/p", created: 400, modified: 500, firstMessage: "子任务 /root/review", threadSource: "subagent", taskName: "/root/review", sender: "/root/doc" },
+		{ id: "sub3", projectPath: "/p", created: 600, modified: 700, firstMessage: "子任务 /root/doc", threadSource: "subagent", taskName: "/root/doc", sender: "/root" },
+	];
+	const tree = buildAgentTree(treeSessions);
+	check("派生树：1 根 + 子任务挂载", tree.length === 1 && tree[0].sessions[0].id === "root1", JSON.stringify(tree.map((n) => n.name)));
+	const rootChildren = tree[0].children;
+	check("根下挂 /root/doc（同名两次合并）", rootChildren.length === 1 && rootChildren[0].name === "/root/doc" && rootChildren[0].sessions.length === 2);
+	check("多层派发：sub2 挂到 /root/doc 下", rootChildren[0].children.length === 1 && rootChildren[0].children[0].name === "/root/review");
+	const multiRoot = buildAgentTree([
+		{ id: "r1", projectPath: "/p", created: 100, modified: 500, firstMessage: "R1" },
+		{ id: "r2", projectPath: "/p", created: 1000, modified: 1500, firstMessage: "R2" },
+		{ id: "s1", projectPath: "/p", created: 300, modified: 400, taskName: "/root/x", sender: "/root" },
+		{ id: "s2", projectPath: "/p", created: 1200, modified: 1300, taskName: "/root/y", sender: "/root" },
+	]);
+	check("多根按时间归属", multiRoot.length === 2 && multiRoot[0].children[0]?.name === "/root/x" && multiRoot[1].children[0]?.name === "/root/y", JSON.stringify(multiRoot.map((n) => [n.sessions[0]?.id, n.children.map((c) => c.name)])));
 
 	// ---- 搜索索引（复刻 deepseek TrajectorySearchIndex） ----
 	const questions = [

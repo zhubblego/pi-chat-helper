@@ -307,6 +307,9 @@ export function createTrajectoryServer(options) {
 						modified: s.modified,
 						size: s.size,
 						live: s.live,
+						threadSource: s.threadSource ?? null,
+						taskName: s.taskName ?? null,
+						sender: s.sender ?? null,
 					})),
 				});
 				return;
