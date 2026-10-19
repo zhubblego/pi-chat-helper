@@ -286,6 +286,7 @@ export function readCodexSession(file) {
 	let header = null;
 	let lastId = null;
 	let lastModel;
+	let lastEffort;
 	let baseEmitted = false;
 	// 连续的上下文注入合并为一条 system 条目（sections 多段落），与 pi 的 system_context 形态一致
 	let pendingSystem = null;
@@ -330,6 +331,13 @@ export function readCodexSession(file) {
 				lastModel = model;
 				flushSystem();
 				out.push(link({ type: "model_change", id: `cx-model-${out.length}`, timestamp: ts, provider: p.model_provider ?? "openai", modelId: model }));
+			}
+			// 思考等级（effort）→ pi 的 thinking_level_change（会话开始组里的「思考等级」事件）
+			const effort = typeof p.effort === "string" ? p.effort : "";
+			if (effort && effort !== lastEffort) {
+				lastEffort = effort;
+				flushSystem();
+				out.push(link({ type: "thinking_level_change", id: `cx-level-${out.length}`, timestamp: ts, thinkingLevel: effort }));
 			}
 			continue;
 		}

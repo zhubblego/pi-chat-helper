@@ -92,7 +92,7 @@ npm run dev        # 默认 http://127.0.0.1:7788
 | 源 | 位置 | 投影方式 |
 |---|---|---|
 | pi | `~/.pi/agent/sessions/--<cwd>--/*.jsonl` | 原生解析（分支树、工具配对、用量） |
-| Codex | `~/.codex/sessions/年/月/日/rollout-*.jsonl` | 翻译层：rollout 事件流转成 pi 条目流后复用同一投影（消息/思维/工具调用与结果/压缩/模型切换；连续上下文注入合并为一条「系统上下文」事件——base_instructions、skills、AGENTS.md、多 agent 说明等按段落名展示，可翻译；跳过 UI 事件流与内部状态） |
+| Codex | `~/.codex/sessions/年/月/日/rollout-*.jsonl` | 翻译层：rollout 事件流转成 pi 条目流后复用同一投影（消息/思维/工具调用与结果/压缩/模型切换/思考等级（turn_context.effort）；连续上下文注入合并为一条「系统上下文」事件——base_instructions、skills、AGENTS.md、多 agent 说明等按段落名展示，可翻译；跳过 UI 事件流与内部状态） |
 
 列表扫描都只读文件头（pi 256KB、Codex 分块增量到 1MB 早停）并用 mtime+size 缓存；`live` = 30 秒内有写入。Codex 的 `AGENTS.md`/skills 注入消息不算首条提问。
 

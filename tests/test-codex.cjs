@@ -25,7 +25,7 @@ fs.writeFileSync(
 		H({ timestamp: "2026-01-01T00:00:00.100Z", type: "session_meta", payload: { id: UUID, cwd: "/tmp/proj", originator: "codex-tui", base_instructions: { text: "你是 Codex，一个编码代理。" } } }),
 		H({ timestamp: "2026-01-01T00:00:00.300Z", type: "response_item", payload: { type: "message", id: "msg_dev", role: "developer", content: [{ type: "input_text", text: "<skills_instructions>\n## Skills" }] } }),
 		H({ timestamp: "2026-01-01T00:00:00.350Z", type: "response_item", payload: { type: "message", id: "msg_ag", role: "user", content: [{ type: "input_text", text: "# AGENTS.md instructions for /tmp/proj\n\n<INSTRUCTIONS>" }] } }),
-		H({ timestamp: "2026-01-01T00:00:00.400Z", type: "turn_context", payload: { model: "gpt-5.6-sol" } }),
+		H({ timestamp: "2026-01-01T00:00:00.400Z", type: "turn_context", payload: { model: "gpt-5.6-sol", effort: "max" } }),
 		H({ timestamp: "2026-01-01T00:00:00.400Z", type: "response_item", payload: { type: "message", id: "msg_u1", role: "user", content: [{ type: "input_text", text: "跑一下测试" }] } }),
 		H({ timestamp: "2026-01-01T00:00:01.000Z", type: "response_item", payload: { type: "reasoning", id: "rs_1", summary: [{ type: "summary_text", text: "先看测试" }], encrypted_content: "gAAA" } }),
 		H({ timestamp: "2026-01-01T00:00:02.000Z", type: "response_item", payload: { type: "function_call", id: "fc_1", name: "wait", arguments: '{"cell_id":"84"}', call_id: "call_1" } }),
@@ -33,7 +33,7 @@ fs.writeFileSync(
 		H({ timestamp: "2026-01-01T00:00:04.000Z", type: "response_item", payload: { type: "message", id: "msg_a1", role: "assistant", content: [{ type: "output_text", text: "测试通过" }] } }),
 		"{坏行跳过",
 		H({ timestamp: "2026-01-01T00:00:05.000Z", type: "compacted", payload: { message: "" } }),
-		H({ timestamp: "2026-01-01T00:00:06.000Z", type: "turn_context", payload: { model: "gpt-5.6-sol" } }),
+		H({ timestamp: "2026-01-01T00:00:06.000Z", type: "turn_context", payload: { model: "gpt-5.6-sol", effort: "max" } }),
 		H({ timestamp: "2026-01-01T00:00:07.000Z", type: "event_msg", payload: { type: "token_count" } }),
 	].join("\n"),
 );
@@ -57,7 +57,7 @@ fs.writeFileSync(
 	// ---- 翻译层 ----
 	const { header, entries } = codex.readCodexSession(file);
 	check("header id/cwd", header?.id === UUID && header?.cwd === "/tmp/proj");
-	check("event_msg 跳过 + model 不重复：共 8 条", entries.length === 8, String(entries.length));
+	check("event_msg 跳过 + model/effort 不重复：共 9 条", entries.length === 9, String(entries.length));
 	check("parentId 顺序链", entries.every((e, i) => (i === 0 ? e.parentId === null : e.parentId === entries[i - 1].id)));
 	const byId = new Map(entries.map((e) => [e.id, e]));
 	const merged = byId.get("cx-sys-base")?.message;
@@ -65,6 +65,7 @@ fs.writeFileSync(
 	check("base_instructions 段落", merged.sections.base_instructions === "你是 Codex，一个编码代理。");
 	check("developer 注入段落（skills_instructions）", merged.sections.skills_instructions?.startsWith("<skills_instructions>"));
 	check("user 角色的 AGENTS.md 注入段落", merged.sections["AGENTS.md"]?.startsWith("# AGENTS.md"));
+	check("turn_context.effort → thinking_level_change（重复值不再发）", byId.get("cx-level-2")?.thinkingLevel === "max" && entries.filter((e) => e.type === "thinking_level_change").length === 1, JSON.stringify(entries.filter((e) => e.type === "thinking_level_change")));
 	check("user 翻译", byId.get("msg_u1")?.message?.content?.[0]?.text === "跑一下测试");
 	check("reasoning→thinking 明文", byId.get("rs_1")?.message?.content?.[0]?.type === "thinking" && byId.get("rs_1").message.content[0].text === "先看测试");
 	const callPart = byId.get("fc_1")?.message?.content?.[0];
@@ -92,6 +93,7 @@ fs.writeFileSync(
 	const tool = asked[0].events.find((e) => e.kind === "tool");
 	check("工具配对结果", tool?.tool?.name === "wait" && tool.tool.result === "done" && tool.tool.args?.cell_id === "84");
 	check("model_change 在 preamble", proj.questions.some((q) => q.index === -1 && q.events.some((e) => e.kind === "model" && e.modelChange?.modelId === "gpt-5.6-sol")));
+	check("思考等级在 preamble（thinking-level → max）", proj.questions.some((q) => q.index === -1 && q.events.some((e) => e.kind === "thinking-level" && e.thinkingLevel?.level === "max" && e.preview === "思考等级 → max")));
 	check("meta.cwd 透传", proj.meta?.cwd === "/tmp/proj");
 	const preamble = proj.questions.find((q) => q.index === -1);
 	const sysEvents = (preamble?.events ?? []).filter((e) => e.kind === "system");
