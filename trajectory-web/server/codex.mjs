@@ -271,11 +271,27 @@ function textOfParts(parts) {
  * 读 codex 会话并翻译为 pi 条目流。
  * @returns {{header: object|null, entries: object[]}}
  */
+/** 从注入内容推 section 名（system 事件的提示词段落名）。 */
+function injectSectionName(text) {
+	if (text.startsWith("# AGENTS.md instructions for")) return "AGENTS.md";
+	if (text.startsWith("The following is the Codex agent history")) return "codex_history";
+	if (text.startsWith("You are `")) return "agent_role";
+	const m = /^<([a-z_]+)>/.exec(text);
+	if (m) return m[1];
+	return "developer";
+}
+
+/** 注入内容 → pi 风格的 system 消息条目（sections 对象 + 空工具变更）。 */
+function systemEntry({ id, timestamp, name, text }) {
+	return { type: "message", id, timestamp, message: { role: "system", sections: { [name]: text }, toolsAdded: [], toolsRemoved: [] } };
+}
+
 export function readCodexSession(file) {
 	const out = [];
 	let header = null;
 	let lastId = null;
 	let lastModel;
+	let baseEmitted = false;
 	const link = (entry) => {
 		entry.parentId = lastId;
 		lastId = entry.id;
@@ -293,6 +309,12 @@ export function readCodexSession(file) {
 		const p = o.payload ?? {};
 		if (o.type === "session_meta") {
 			if (!header) header = { type: "session", id: p.id ?? p.session_id, timestamp: ts, cwd: p.cwd };
+			// 系统提示词全文 → 会话开头的 system 事件（只取首次）
+			const base = typeof p.base_instructions === "string" ? p.base_instructions : p.base_instructions?.text;
+			if (!baseEmitted && typeof base === "string" && base) {
+				baseEmitted = true;
+				out.push(link(systemEntry({ id: "cx-sys-base", timestamp: ts, name: "base_instructions", text: base })));
+			}
 			continue;
 		}
 		if (o.type === "turn_context") {
@@ -309,13 +331,20 @@ export function readCodexSession(file) {
 		}
 		if (o.type !== "response_item") continue;
 		if (p.type === "message") {
-			if (p.role !== "user" && p.role !== "assistant") continue; // developer/system 注入指令
+			const text = textOfParts(p.content);
+			// developer 注入（skills/多 agent/中断说明）与 user 角色的上下文注入（AGENTS.md 等）
+			// → system 事件（提示词段落），不再冒充提问/被丢弃
+			if (p.role === "developer" || (p.role === "user" && isInjectedUserText(text.trim()))) {
+				if (text.trim()) out.push(link(systemEntry({ id: p.id ?? `cx-sys-${out.length}`, timestamp: ts, name: injectSectionName(text.trim()), text })));
+				continue;
+			}
+			if (p.role !== "user" && p.role !== "assistant") continue;
 			out.push(
 				link({
 					type: "message",
 					id: p.id ?? `cx-msg-${out.length}`,
 					timestamp: ts,
-					message: { role: p.role, content: [{ type: "text", text: textOfParts(p.content) }] },
+					message: { role: p.role, content: [{ type: "text", text }] },
 				}),
 			);
 			continue;

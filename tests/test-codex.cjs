@@ -22,9 +22,10 @@ fs.writeFileSync(path.join(tmp, "session_index.jsonl"), `${H({ id: UUID, thread_
 fs.writeFileSync(
 	file,
 	[
-		H({ timestamp: "2026-01-01T00:00:00.100Z", type: "session_meta", payload: { id: UUID, cwd: "/tmp/proj", originator: "codex-tui" } }),
+		H({ timestamp: "2026-01-01T00:00:00.100Z", type: "session_meta", payload: { id: UUID, cwd: "/tmp/proj", originator: "codex-tui", base_instructions: { text: "你是 Codex，一个编码代理。" } } }),
 		H({ timestamp: "2026-01-01T00:00:00.200Z", type: "turn_context", payload: { model: "gpt-5.6-sol" } }),
-		H({ timestamp: "2026-01-01T00:00:00.300Z", type: "response_item", payload: { type: "message", id: "msg_dev", role: "developer", content: [{ type: "input_text", text: "<skills_instructions>" }] } }),
+		H({ timestamp: "2026-01-01T00:00:00.300Z", type: "response_item", payload: { type: "message", id: "msg_dev", role: "developer", content: [{ type: "input_text", text: "<skills_instructions>\n## Skills" }] } }),
+		H({ timestamp: "2026-01-01T00:00:00.350Z", type: "response_item", payload: { type: "message", id: "msg_ag", role: "user", content: [{ type: "input_text", text: "# AGENTS.md instructions for /tmp/proj\n\n<INSTRUCTIONS>" }] } }),
 		H({ timestamp: "2026-01-01T00:00:00.400Z", type: "response_item", payload: { type: "message", id: "msg_u1", role: "user", content: [{ type: "input_text", text: "跑一下测试" }] } }),
 		H({ timestamp: "2026-01-01T00:00:01.000Z", type: "response_item", payload: { type: "reasoning", id: "rs_1", summary: [{ type: "summary_text", text: "先看测试" }], encrypted_content: "gAAA" } }),
 		H({ timestamp: "2026-01-01T00:00:02.000Z", type: "response_item", payload: { type: "function_call", id: "fc_1", name: "wait", arguments: '{"cell_id":"84"}', call_id: "call_1" } }),
@@ -56,10 +57,12 @@ fs.writeFileSync(
 	// ---- 翻译层 ----
 	const { header, entries } = codex.readCodexSession(file);
 	check("header id/cwd", header?.id === UUID && header?.cwd === "/tmp/proj");
-	check("developer 注入指令跳过", !entries.some((e) => e.id === "msg_dev"));
-	check("event_msg 跳过 + model 不重复：共 7 条", entries.length === 7, String(entries.length));
+	check("event_msg 跳过 + model 不重复：共 10 条", entries.length === 10, String(entries.length));
 	check("parentId 顺序链", entries.every((e, i) => (i === 0 ? e.parentId === null : e.parentId === entries[i - 1].id)));
 	const byId = new Map(entries.map((e) => [e.id, e]));
+	check("session_meta 的 base_instructions → system 条目", byId.get("cx-sys-base")?.message?.role === "system" && byId.get("cx-sys-base").message.sections.base_instructions === "你是 Codex，一个编码代理。");
+	check("developer 消息 → system 条目（section=skills_instructions）", byId.get("msg_dev")?.message?.role === "system" && byId.get("msg_dev").message.sections.skills_instructions?.startsWith("<skills_instructions>"));
+	check("user 角色的 AGENTS.md 注入 → system 条目", byId.get("msg_ag")?.message?.role === "system" && byId.get("msg_ag").message.sections["AGENTS.md"]?.startsWith("# AGENTS.md"));
 	check("user 翻译", byId.get("msg_u1")?.message?.content?.[0]?.text === "跑一下测试");
 	check("reasoning→thinking 明文", byId.get("rs_1")?.message?.content?.[0]?.type === "thinking" && byId.get("rs_1").message.content[0].text === "先看测试");
 	const callPart = byId.get("fc_1")?.message?.content?.[0];
@@ -88,6 +91,21 @@ fs.writeFileSync(
 	check("工具配对结果", tool?.tool?.name === "wait" && tool.tool.result === "done" && tool.tool.args?.cell_id === "84");
 	check("model_change 在 preamble", proj.questions.some((q) => q.index === -1 && q.events.some((e) => e.kind === "model" && e.modelChange?.modelId === "gpt-5.6-sol")));
 	check("meta.cwd 透传", proj.meta?.cwd === "/tmp/proj");
+	const preamble = proj.questions.find((q) => q.index === -1);
+	const sysEvents = (preamble?.events ?? []).filter((e) => e.kind === "system");
+	check("上下文注入在 preamble 显示为 system 事件", sysEvents.length === 3, String(sysEvents.length));
+	check(
+		"system 事件含提示词段落名/正文",
+		sysEvents.every((e) => e.system?.sections?.length === 1 && e.system.sections[0].name && e.system.sections[0].text?.length > 0) && sysEvents.map((e) => e.system.sections[0].name).join(",") === "base_instructions,skills_instructions,AGENTS.md",
+		sysEvents.map((e) => e.system?.sections?.[0]?.name).join(","),
+	);
+	const light = session.toLight(proj);
+	const lightSys = (light.questions.find((q) => q.index === -1)?.events ?? []).filter((e) => e.kind === "system");
+	check(
+		"light 档 system sections 只留 name/chars",
+		lightSys.length === 3 && lightSys.every((e) => e.system.sections[0].name && e.system.sections[0].chars > 0 && e.system.sections[0].text === undefined),
+		JSON.stringify(lightSys[0]?.system),
+	);
 
 	console.log(failed ? "1 FAILED" : "ALL PASS");
 	process.exit(failed ? 1 : 0);
