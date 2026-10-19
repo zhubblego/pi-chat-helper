@@ -21,7 +21,7 @@
 import { closeSync, openSync, readSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { LIVE_WINDOW_MS } from "./sessions.mjs";
 
 export const DEFAULT_CODEX_ROOT = join(homedir(), ".codex", "sessions");
@@ -44,12 +44,18 @@ export function fromRolloutName(name) {
 	return { id: m[5], created: Number.isFinite(created) ? created : undefined };
 }
 
-/** 注入消息前缀：codex 把 AGENTS.md / skills 等上下文以 user 角色注入，不算首条提问。 */
+/** 注入消息前缀：codex 把 AGENTS.md / skills / 压缩历史 / agent 间通信等上下文以 user 角色注入，不算首条提问。 */
 function isInjectedUserText(text) {
-	return text.startsWith("# AGENTS.md instructions for") || text.startsWith("<user_instructions>") || text.startsWith("<skills_instructions>");
+	return (
+		text.startsWith("# AGENTS.md instructions for") ||
+		text.startsWith("<user_instructions>") ||
+		text.startsWith("<skills_instructions>") ||
+		text.startsWith("The following is the Codex agent history") ||
+		/^\[\d+\] tool \w+ call:/.test(text)
+	);
 }
 
-/** 增量消费完整行：session_meta 的 cwd/id，以及首条真实用户消息（跳过注入）。 */
+/** 增量消费完整行：session_meta 的 cwd/id、首条真实用户消息（跳过注入）、子 agent 的 NEW_TASK 任务名。 */
 function consumeLines(chunkText, state) {
 	for (const line of chunkText.split("\n")) {
 		if (!line.trim()) continue;
@@ -63,11 +69,20 @@ function consumeLines(chunkText, state) {
 			const p = entry.payload ?? {};
 			state.cwd = p.cwd ?? state.cwd;
 			if (p.id) state.id = p.id;
+			if (p.thread_source) state.threadSource = p.thread_source;
 			continue;
 		}
 		if (!state.firstMessage && entry.type === "response_item" && entry.payload?.type === "message" && entry.payload?.role === "user") {
 			const text = (entry.payload.content ?? []).map((c) => (typeof c?.text === "string" ? c.text : "")).join("").trim();
+			if (text.startsWith("The following is the Codex agent history")) state.continuation = true;
 			if (text && !isInjectedUserText(text)) state.firstMessage = text.slice(0, 120).replace(/\s+/g, " ");
+			continue;
+		}
+		// 子 agent 会话没有用户提问，任务由 agent_message 注入（Message Type: NEW_TASK / Task name: /root/xxx）
+		if (!state.subagentTask && entry.type === "response_item" && entry.payload?.type === "agent_message") {
+			const text = (entry.payload.content ?? []).map((c) => (typeof c?.text === "string" ? c.text : "")).join("");
+			const m = /Task name:\s*(\S+)/.exec(text);
+			if (m && m[1]) state.subagentTask = m[1];
 		}
 	}
 }
@@ -78,7 +93,7 @@ function consumeLines(chunkText, state) {
  * 每块 64KB 递增、找到即停，上限 1MB；StringDecoder 处理跨块多字节字符。
  */
 function parseHead(file, size, fallbackId) {
-	const state = { id: fallbackId, cwd: undefined, firstMessage: "" };
+	const state = { id: fallbackId, cwd: undefined, firstMessage: "", threadSource: undefined, subagentTask: undefined, continuation: false };
 	const max = Math.min(size, HEAD_MAX);
 	const decoder = new StringDecoder("utf8");
 	let pending = "";
@@ -96,7 +111,7 @@ function parseHead(file, size, fallbackId) {
 			if (cut < 0) continue;
 			consumeLines(pending.slice(0, cut + 1), state);
 			pending = pending.slice(cut + 1);
-			if (state.cwd && state.firstMessage) return state;
+			if (state.cwd && (state.firstMessage || state.subagentTask)) return state;
 		}
 		pending += decoder.end();
 		if (pending.trim()) consumeLines(`${pending}\n`, state);
@@ -115,14 +130,16 @@ function sessionInfoFor(file, stat, projectDir) {
 		const fromName = fromRolloutName(file.split("/").pop());
 		if (!fromName) return null;
 		const parsed = parseHead(file, stat.size, fromName.id);
+		// 子 agent 会话没有用户提问，任务由 agent_message 注入（Message Type: NEW_TASK / Task name: /root/xxx）
+		const firstMessage = parsed.firstMessage || (parsed.subagentTask ? `子任务 ${parsed.subagentTask}` : "") || (parsed.continuation ? "（续接会话）" : "");
 		info = {
 			id: parsed.id,
 			file,
-			dir: join(file, ".."),
+			dir: dirname(file),
 			projectPath: parsed.cwd ?? null,
 			projectDir,
 			name: undefined,
-			firstMessage: parsed.firstMessage,
+			firstMessage,
 			created: fromName.created,
 			modified: stat.mtimeMs,
 			size: stat.size,
