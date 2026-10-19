@@ -199,6 +199,10 @@ async function stopServer(child) {
 		const listingA = await (await fetch(`${baseA}/api/sessions`)).json();
 		check("项目范围只列本项目", listingA.scope === "project" && listingA.sessions.length === 2 && listingA.sessions.every((s) => s.projectPath === "/tmp/projA"), JSON.stringify(listingA.sessions.map((s) => s.id)));
 		check("项目范围 current 指向启动会话", listingA.current === "srv-a2", String(listingA.current));
+		// 模式 A 只开放 pi 源：不列 codex，显式请求也 400（UI 与 API 一致）
+		const sourcesA = await (await fetch(`${baseA}/api/sources`)).json();
+		check("项目范围只列 pi 源", sourcesA.sources.length === 1 && sourcesA.sources[0].id === "pi", JSON.stringify(sourcesA));
+		check("项目范围 codex 源 400", (await fetch(`${baseA}/api/sessions?source=codex`)).status === 400);
 		const defA = await (await fetch(`${baseA}/api/session`)).json();
 		check("默认选中启动时传入的会话", defA.sessionId === "srv-a2", String(defA.sessionId));
 		check("项目范围退出", await stopServer(project));

@@ -182,10 +182,17 @@ export function createTrajectoryServer(options) {
 		{ id: "codex", label: "Codex", available: () => existsSync(codexRoot) },
 	];
 
-	/** 请求的 source 参数：白名单内的 id，非法值 400；缺省默认第一项。 */
+	/** 本服务可用的源：模式 A（scope=project，/deepseek-trail）只开放 pi；模式 B（all）为全部存在者。 */
+	function availableSources() {
+		const listed = scope === "project" ? SOURCES.filter((s) => s.id === "pi") : SOURCES;
+		return listed.filter((s) => s.available());
+	}
+
+	/** 请求的 source 参数：可用源白名单内的 id，非法值 400；缺省默认第一项。 */
 	function sourceParam(url) {
-		const id = url.searchParams.get("source") ?? SOURCES[0].id;
-		if (!SOURCES.some((s) => s.id === id)) return { error: `不支持的轨迹源：${id}（可选 ${SOURCES.map((s) => s.id).join(" / ")}）` };
+		const listed = availableSources();
+		const id = url.searchParams.get("source") ?? listed[0].id;
+		if (!listed.some((s) => s.id === id)) return { error: `不支持的轨迹源：${id}（可选 ${listed.map((s) => s.id).join(" / ")}）` };
 		return { id };
 	}
 
@@ -274,7 +281,7 @@ export function createTrajectoryServer(options) {
 
 			if (pathname === "/api/sources") {
 				sendJson(res, 200, {
-				sources: SOURCES.filter((s) => s.available()).map((s) => ({ id: s.id, label: s.label, sessions: readSessions(s.id).length })),
+				sources: availableSources().map((s) => ({ id: s.id, label: s.label, sessions: readSessions(s.id).length })),
 				});
 				return;
 			}
