@@ -27,6 +27,7 @@ import {
 	groupSessions,
 	groupToolNames,
 	highlightSegments,
+	hitSnippet,
 	kindGroup,
 	mcpLabel,
 	presetFilters,
@@ -579,8 +580,12 @@ function renderEvent(ev, terms = []) {
 	]
 		.filter(Boolean)
 		.join(" · ");
-	// 搜索激活时预览里高亮命中关键词（命中片段包 mark，未命中处原样）
-	const preview = highlightNodes(ev.preview, terms);
+	// 搜索激活时预览里高亮命中关键词；预览无命中时展示命中字段的上下文片段（如「结果 » …」）
+	let preview = highlightNodes(ev.preview, terms);
+	if (terms.length && !preview.some((node) => node instanceof Node)) {
+		const sn = hitSnippet(ev, terms);
+		if (sn) preview = [h("span", { class: "ev-hit-src", text: `${sn.label}» ` }), ...highlightNodes(sn.snippet, terms)];
+	}
 	return h(
 		"article",
 		{ class: classes.join(" "), dataset: { eid: ev.id }, tabindex: "0", title: ev.preview },
@@ -611,7 +616,8 @@ function renderMain() {
 			// 搜索激活时：无命中的轮次整轮隐藏（过滤 ∩ 搜索，不再渲染空框）
 			if (matches && shown.length === 0) return null;
 			const body = shown.length ? shown.map((ev) => renderEvent(ev, terms)) : h("div", { class: "ev-empty" });
-			const folded = state.folded.has(q.index);
+			// 搜索激活时命中轮次强制展开（否则只显示轮次头看不到命中内容）；清空搜索恢复原折叠状态
+			const folded = matches ? false : state.folded.has(q.index);
 			return h(
 				"section",
 				{ class: `question${folded ? " folded" : ""}`, id: `q-${q.index}`, dataset: { q: String(q.index) } },

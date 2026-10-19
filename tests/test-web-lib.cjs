@@ -11,7 +11,7 @@ const check = (label, cond, extra = "") => {
 
 (async () => {
 	const lib = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "lib.js")).href);
-	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments } = lib;
+	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments, hitSnippet } = lib;
 
 	// ---- 搜索高亮切分 ----
 	check("高亮：单词命中切分", JSON.stringify(highlightSegments("hello world npm", ["npm"])) === JSON.stringify([{ text: "hello world ", hit: false }, { text: "npm", hit: true }]));
@@ -21,6 +21,17 @@ const check = (label, cond, extra = "") => {
 	check("高亮：无命中整段", highlightSegments("hello", ["zzz"]).length === 1 && highlightSegments("hello", ["zzz"])[0].hit === false);
 	check("高亮：空关键词整段", highlightSegments("hello", []).length === 1 && highlightSegments("hello", [])[0].text === "hello");
 	check("高亮：空文本", highlightSegments("", ["a"]).length === 1 && highlightSegments("", ["a"])[0].text === "");
+
+	// ---- 命中字段片段（预览看不到词时给出命中来源与上下文） ----
+	const sn1 = hitSnippet({ tool: { result: "第1行超长前缀内容占位占位占位占位\nnpm install ok\n第3行" } }, ["install"]);
+	check("片段：结果字段命中带标签", sn1?.label === "结果" && sn1.snippet.includes("npm install ok"), JSON.stringify(sn1));
+	const sn2 = hitSnippet({ bash: { command: "git push origin main" } }, ["push"]);
+	check("片段：命令字段", sn2?.label === "命令");
+	check("片段：无命中返回 null", hitSnippet({ tool: { result: "abc" } }, ["zzz"]) === null);
+	check("片段：空关键词返回 null", hitSnippet({ tool: { result: "abc" } }, []) === null);
+	check("片段：点号字面量", hitSnippet({ tool: { result: "axb" } }, ["a.b"]) === null);
+	const sn3 = hitSnippet({ tool: { result: "a".repeat(200) + "needle" } }, ["needle"]);
+	check("片段：长文本窗口截断", sn3?.snippet.startsWith("…"));
 
 	// ---- 过滤映射 ----
 	check("tool → tools 组", kindGroup("tool") === "tools" && kindGroup("bash") === "tools");

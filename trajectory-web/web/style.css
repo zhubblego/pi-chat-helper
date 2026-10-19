@@ -783,6 +783,12 @@ mark.ev-hit {
 	padding: 0 1px;
 }
 
+/* 命中字段来源前缀（结果 » / 参数 » 等） */
+.ev-hit-src {
+	color: var(--dsw-alias-label-tertiary);
+	font: var(--dsw-font-xxxs-11);
+}
+
 .k-thinking .ev-preview {
 	color: var(--dsw-alias-label-secondary);
 }

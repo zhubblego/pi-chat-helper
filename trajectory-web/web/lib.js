@@ -225,6 +225,35 @@ export function highlightSegments(text, terms) {
 	return parts.length ? parts : [{ text: str, hit: false }];
 }
 
+/**
+ * 命中字段的上下文片段：事件预览看不到关键词时（词在工具结果/参数/命令输出等详情字段里），
+ * 取第一个含关键词字段的局部文本，让人一眼看出该事件为何被搜出。
+ * 返回 { label, snippet }（label 为字段中文名）或 null（各字段都无命中）。
+ */
+export function hitSnippet(ev, terms) {
+	const esc = (terms ?? []).map((t) => String(t).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).filter(Boolean);
+	if (!esc.length || !ev || typeof ev !== "object") return null;
+	const re = new RegExp(esc.join("|"), "i");
+	const fields = [
+		["结果", ev.tool?.result],
+		["参数", ev.tool?.argsText],
+		["命令", ev.bash?.command],
+		["输出", ev.bash?.output],
+		["正文", ev.text],
+		["压缩", ev.compaction?.summary],
+		["消息", ev.custom?.text],
+	];
+	for (const [label, text] of fields) {
+		if (typeof text !== "string" || !text) continue;
+		const m = re.exec(text);
+		if (!m) continue;
+		const start = Math.max(0, m.index - 24);
+		const end = Math.min(text.length, m.index + m[0].length + 56);
+		return { label, snippet: `${start > 0 ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}` };
+	}
+	return null;
+}
+
 /** 会话文件大小。 */
 export function fmtBytes(n) {
 	if (!Number.isFinite(n) || n <= 0) return "";
