@@ -92,6 +92,11 @@ fs.writeFileSync(
 	check("事件链 user,thinking,tool,text,compaction", kinds === "user,thinking,tool,text,compaction", kinds);
 	const tool = asked[0].events.find((e) => e.kind === "tool");
 	check("工具配对结果", tool?.tool?.name === "wait" && tool.tool.result === "done" && tool.tool.args?.cell_id === "84");
+	const projThink = asked[0].events.find((e) => e.kind === "thinking");
+	check("投影层 thinking 明文透传（codex 翻译层 text 字段兼容）", projThink?.text === "先看测试" && projThink.redacted === false && projThink.preview === "先看测试");
+	const encProj = session.buildProjectionFrom({ header: enc.header, entries: enc.entries });
+	const encEv = encProj.questions.flatMap((q) => q.events).find((e) => e.kind === "thinking");
+	check("投影层加密 thinking → redacted 占位", encEv?.text === "" && encEv.redacted === true && encEv.preview === "(空思维)");
 	check("model_change 在 preamble", proj.questions.some((q) => q.index === -1 && q.events.some((e) => e.kind === "model" && e.modelChange?.modelId === "gpt-5.6-sol")));
 	check("思考等级在 preamble（thinking-level → max）", proj.questions.some((q) => q.index === -1 && q.events.some((e) => e.kind === "thinking-level" && e.thinkingLevel?.level === "max" && e.preview === "思考等级 → max")));
 	check("meta.cwd 透传", proj.meta?.cwd === "/tmp/proj");
