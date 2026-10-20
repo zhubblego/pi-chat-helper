@@ -75,9 +75,10 @@ npm run dev        # 默认 http://127.0.0.1:7788
 ### 界面能力
 
 - **Agent 选择栏**（最左侧竖条）：每个可用轨迹源一个徽章按钮（π、Codex），有 live 会话时按钮带提示；宿主机上没有的 agent 不显示（`/api/sources` 由服务端探测）；每个源记住自己的选中会话，URL hash（`#a=<源>&s=<会话>&e=<事件>`）让刷新后源、会话、抽屉位置全恢复。
-- **会话栏**（deepseek sidebar 风格）：模式 B 按项目分组，分组头可点击折叠（目录名链接色高亮，折叠状态按源隔离）；运行中的会话带 live 亮点；点击切换会话，模式 A 下会话切换（`/new`、`/resume`、`/fork`）不影响服务。
+- **会话栏**（deepseek sidebar 风格）：模式 B 按项目分组，分组头可点击折叠（目录名链接色高亮，折叠状态按源隔离）；表头「会话」整块可点，一键展开/收起全部项目分组（本项目范围无分组时置灰）；运行中的会话带 live 亮点；点击切换会话，模式 A 下会话切换（`/new`、`/resume`、`/fork`）不影响服务。
 - **问题栏**：问题列表 + 可折叠过滤按钮组（提问/思考/工具/输出/上下文，含「仅思考」等预设），过滤状态持久化。
 - **轨迹区**：按问题 sticky 分段；条目行带类型标签与耗时/token；错误与回合输出高亮；支持轮次折叠与全文搜索。
+- **派生会话**（仅 Codex 源）：轨迹里的 `spawn_agent` 调用就是派生行——标签「派生」、预览为本次任务名，位置本身就说明「这次派生发生在哪一轮」；点击进入它派生出的子会话，子会话未落盘时该行退化为普通工具行。子会话的「提问」行展示派发记录（`Message Type` / `Task name` / `Sender`）——任务正文由 Codex 服务端加密，本地只能拿到明文头。`⟨ 主会话` 回到来源会话并定位高亮到那一行。派生行跟着工具过滤走，取消勾选 `spawn_agent` 即可隐藏。（pi 的子代理嵌在父会话内，没有独立会话可跳。）
 - **详情抽屉**：点开条目查看全文（Markdown 渲染、工具参数/结果、tokens/耗时、子调用）；轮询时内容未变不动 DOM，变了也保留滚动位置与已展开的段落。
 - **侧边工具条**（抽屉左缘，可收起）：
   - **翻译**：把正文 Markdown 段落与系统上下文的提示词段落逐段翻译（默认微软通道，可切 Google，均免 key），默认双语对照插在原文下方，再点恢复原文；代码/命令/工具输出不翻；设置里可选目标语言（中简/中繁/英/日）与「双语/仅译文」。
@@ -92,7 +93,7 @@ npm run dev        # 默认 http://127.0.0.1:7788
 | 源 | 位置 | 投影方式 |
 |---|---|---|
 | pi | `~/.pi/agent/sessions/--<cwd>--/*.jsonl` | 原生解析（分支树、工具配对、用量） |
-| Codex | `~/.codex/sessions/年/月/日/rollout-*.jsonl` | 翻译层：rollout 事件流转成 pi 条目流后复用同一投影（消息/思维/工具调用与结果/压缩/模型切换/思考等级（turn_context.effort）；连续上下文注入合并为一条「系统上下文」事件——base_instructions、skills、AGENTS.md、多 agent 说明等按段落名展示，可翻译；跳过 UI 事件流与内部状态） |
+| Codex | `~/.codex/sessions/年/月/日/rollout-*.jsonl` | 翻译层：rollout 事件流转成 pi 条目流后复用同一投影（消息/思维/工具调用与结果/压缩/模型切换/思考等级（turn_context.effort）；连续上下文注入合并为一条「系统上下文」事件——base_instructions、skills、AGENTS.md、多 agent 说明等按段落名展示，可翻译；子 agent 会话的 `agent_message`（NEW_TASK / MESSAGE）投影为提问行，正文是加密的 `encrypted_content`，只保留 `Message Type` / `Task name` / `Sender` 明文头和一句「本地不可读」说明；跳过 UI 事件流与内部状态） |
 
 列表扫描都只读文件头（pi 256KB、Codex 分块增量到 1MB 早停）并用 mtime+size 缓存；`live` = 30 秒内有写入。Codex 的 `AGENTS.md`/skills 注入消息不算首条提问。
 
@@ -126,7 +127,7 @@ node tests/test-projection.cjs   # 投影：分组/工具配对/统计/分支重
 node tests/test-sessions.cjs     # 会话扫描：列表字段/项目范围/尾部会话名/live/排序
 node tests/test-server.cjs       # HTTP：多会话列表/指定会话/增量/详情/双范围/热更新/退出
 node tests/test-web-lib.cjs      # 前端纯函数：过滤映射/Markdown 转义/会话列表助手/搜索结果高亮切分
-node tests/test-codex.cjs        # Codex 轨迹源：rollout 扫描/翻译映射（消息/思维/工具配对/redacted）/投影复用
+node tests/test-codex.cjs        # Codex 轨迹源：rollout 扫描/翻译映射（消息/思维/工具配对/redacted/子 agent 派发任务）/投影复用
 node tests/test-tool-origins.cjs # 工具归属静态扫描：分组/保护规则/相似度竞争
 
 # trajectory-web 扩展命令（需要 PI_HOME 提供 jiti）
