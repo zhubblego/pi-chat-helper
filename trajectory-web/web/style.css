@@ -229,29 +229,41 @@ body {
 .section-head {
 	display: flex;
 	align-items: center;
-	gap: 5px;
-	padding: 6px 8px 4px;
 	color: var(--dsw-alias-label-tertiary);
 	font: var(--dsw-font-xxxs-strong-11);
 	letter-spacing: 0.04em;
 }
 
-/* 分组总开关（表头左缘箭头）：点一下收起/展开全部项目分组 */
-.section-chev {
-	flex: none;
-	padding: 0 1px;
+/* 表头整块就是分组开关：点标题或箭头都能收起/展开全部项目分组 */
+.section-toggle {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	width: 100%;
+	padding: 6px 8px 4px;
 	background: none;
 	border: none;
-	color: var(--dsw-alias-label-tertiary);
-	font-size: 10px;
-	line-height: 1;
+	color: inherit;
+	font: inherit;
+	letter-spacing: inherit;
+	text-align: left;
 	cursor: pointer;
 }
 
-.section-chev:hover,
-.section-chev:focus-visible {
+.section-toggle:hover:not(:disabled),
+.section-toggle:focus-visible {
 	color: var(--dsw-alias-label-secondary);
 	outline: none;
+}
+
+.section-toggle:disabled {
+	cursor: default;
+}
+
+.section-chev {
+	flex: none;
+	font-size: 10px;
+	line-height: 1;
 }
 
 .session-list {

@@ -359,16 +359,19 @@ function groupKeys() {
 	return groupSessions(visibleSessions()).map((group) => group.key);
 }
 
-/** 同步表头的分组总开关：无分组时隐藏，全部收起时显示折叠态。 */
+/** 同步表头的分组总开关：没有项目分组（本项目范围）时置灰但仍显示标题，全部收起时显示折叠态。 */
 function updateGroupsToggle() {
 	const btn = el("groups-toggle");
 	const keys = groupKeys();
-	btn.hidden = keys.length === 0;
+	const hasGroups = keys.length > 0;
+	btn.disabled = !hasGroups;
 	const collapsedCount = keys.filter((key) => groupSet().has(key)).length;
-	const expanded = collapsedCount < keys.length;
+	const expanded = !hasGroups || collapsedCount < keys.length;
 	btn.setAttribute("aria-expanded", String(expanded));
-	btn.title = expanded ? "收起所有分组" : "展开所有分组";
-	btn.firstElementChild.textContent = expanded ? "▾" : "▸";
+	let label = "本项目范围没有项目分组";
+	if (hasGroups) label = expanded ? "收起所有分组" : "展开所有分组";
+	btn.title = label;
+	btn.querySelector(".section-chev").textContent = expanded ? "▾" : "▸";
 }
 
 function renderSessions() {
