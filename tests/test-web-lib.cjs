@@ -11,7 +11,7 @@ const check = (label, cond, extra = "") => {
 
 (async () => {
 	const lib = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "lib.js")).href);
-	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, buildAgentTree, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments, hitSnippet } = lib;
+	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, buildAgentTree, deriveInfo, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments, hitSnippet } = lib;
 
 	// ---- 搜索高亮切分 ----
 	check("高亮：单词命中切分", JSON.stringify(highlightSegments("hello world npm", ["npm"])) === JSON.stringify([{ text: "hello world ", hit: false }, { text: "npm", hit: true }]));
@@ -127,6 +127,19 @@ const check = (label, cond, extra = "") => {
 		{ id: "s2", projectPath: "/p", created: 1200, modified: 1300, taskName: "/root/y", sender: "/root" },
 	]);
 	check("多根按时间归属", multiRoot.length === 2 && multiRoot[0].children[0]?.name === "/root/x" && multiRoot[1].children[0]?.name === "/root/y", JSON.stringify(multiRoot.map((n) => [n.sessions[0]?.id, n.children.map((c) => c.name)])));
+
+	// ---- 派生信息（deriveInfo：当前会话所在树 + 面包屑链） ----
+	const diRoot = deriveInfo(treeSessions, "root1");
+	check("deriveInfo：选中主会话 → path=[根]，共 2 个任务节点", !!diRoot && diRoot.path.length === 1 && diRoot.path[0].sessions[0].id === "root1" && diRoot.subtaskCount === 2, JSON.stringify(diRoot?.path.map((n) => n.name)));
+	check("deriveInfo：直属子任务数 = rail 徽标", diRoot?.root.children.length === 1);
+	const diDeep = deriveInfo(treeSessions, "sub2");
+	check("deriveInfo：深层子会话 → path=[根,doc,review]", !!diDeep && diDeep.path.map((n) => String(n.name)).join("|") === "null|/root/doc|/root/review", JSON.stringify(diDeep?.path.map((n) => n.name)));
+	const diLatest = deriveInfo(treeSessions, "sub3");
+	check("deriveInfo：×N 节点取最新实例（sub3 created 600 > sub1 200）", diLatest?.path[1].sessions[diLatest.path[1].sessions.length - 1].id === "sub3");
+	const noiseSessions = [...treeSessions, { id: "gd1", projectPath: "/p", created: 150, modified: 800, threadSource: "guardian_review" }, { id: "old1", projectPath: "/p", created: 160, modified: 400, threadSource: "subagent", taskName: null }];
+	const diNoise = deriveInfo(noiseSessions, "root1");
+	check("deriveInfo：guardian/无 taskName 旧子会话不作根（不抢占子任务）", !!diNoise && diNoise.path[0].sessions[0].id === "root1" && diNoise.subtaskCount === 2);
+	check("deriveInfo：无派生 → null", deriveInfo([{ id: "lonely", projectPath: "/p", created: 1, modified: 2 }], "lonely") === null && deriveInfo(treeSessions, "不存在") === null && deriveInfo(treeSessions, null) === null);
 
 	// ---- 搜索索引（复刻 deepseek TrajectorySearchIndex） ----
 	const questions = [

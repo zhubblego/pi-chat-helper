@@ -14,6 +14,7 @@ import {
 	GROUP_LABELS,
 	TrajectorySearchIndex,
 	collectToolNames,
+	deriveInfo,
 	eventPasses,
 	eventTagLabel,
 	eventToolPasses,
@@ -66,6 +67,8 @@ const state = {
 	toolOriginsMissAt: 0,
 	submenuOpen: false,
 	folded: new Set(),
+	deriveOpen: false,
+	deriveInstances: new Set(),
 	source: "pi",
 	sources: [],
 	sourceSel: {},
@@ -383,6 +386,142 @@ function renderSessions() {
 		for (const session of sessions) nodes.push(sessionItem(session));
 	}
 	sessionList.replaceChildren(...nodes);
+	renderDerive();
+}
+
+// ---------------------------------------------------------------------------
+// 派生结构（codex）：主区左缘竖条展开按钮 + 树面板
+// ---------------------------------------------------------------------------
+
+/** 任务名末段：/root/ticket_core → ticket_core。 */
+function taskShort(name) {
+	const seg = String(name ?? "").split("/").filter(Boolean);
+	return seg.length ? seg[seg.length - 1] : String(name ?? "");
+}
+
+/** 节点最新一次实例的会话 id（buildAgentTree 已按 created 升序，取末位）。 */
+function latestSessionId(node) {
+	const s = node.sessions[node.sessions.length - 1];
+	return s ? s.id : null;
+}
+
+function deriveNodeRow(node, depth) {
+	const isRoot = node.name === null;
+	const active = node.sessions.some((s) => s.id === state.selectedId);
+	const live = node.sessions.some((s) => s.live);
+	const multi = node.sessions.length > 1;
+	const expanded = state.deriveInstances.has(node.name ?? "");
+	const latestId = latestSessionId(node);
+	const row = h(
+		"button",
+		{
+			class: `derive-node${isRoot ? " is-root" : ""}${active ? " active" : ""}`,
+			type: "button",
+			style: `padding-left:${8 + depth * 14}px`,
+			title: isRoot ? "进入主会话轨迹" : `${node.name}（最新实例）`,
+			onclick: () => latestId && selectSession(latestId),
+		},
+		live ? h("span", { class: "live-dot" }) : null,
+		h("span", { class: "derive-node-name", text: isRoot ? "主会话" : taskShort(node.name) }),
+		multi
+			? h(
+				"span",
+				{
+					class: `derive-count${expanded ? " open" : ""}`,
+					title: `同名派发 ${node.sessions.length} 次，点击展开实例`,
+					onclick: (e) => {
+						e.stopPropagation();
+						const key = node.name ?? "";
+						if (state.deriveInstances.has(key)) state.deriveInstances.delete(key);
+						else state.deriveInstances.add(key);
+						renderDerive();
+					},
+				},
+				`×${node.sessions.length}`,
+			)
+			: null,
+		active ? h("span", { class: "derive-here", text: "当前" }) : null,
+	);
+	const out = [row];
+	if (multi && expanded) {
+		node.sessions.forEach((s, i) => {
+			out.push(
+				h(
+					"button",
+					{
+						class: `derive-instance${s.id === state.selectedId ? " active" : ""}`,
+						type: "button",
+						style: `padding-left:${8 + (depth + 1) * 14}px`,
+						title: s.firstMessage || s.file || "",
+						onclick: () => selectSession(s.id),
+					},
+					s.live ? h("span", { class: "live-dot" }) : null,
+					h("span", { class: "derive-instance-no", text: `#${i + 1}` }),
+					h("span", { class: "derive-instance-time", text: fmtRelative(s.modified) }),
+				),
+			);
+		});
+	}
+	for (const c of node.children) out.push(...deriveNodeRow(c, depth + 1));
+	return out;
+}
+
+/** 派生 rail + 面板：仅 codex 源且当前会话树下有任务节点时显示；面板在切会话后保留并重定位。 */
+function renderDerive() {
+	const rail = el("derive-rail");
+	const panel = el("derive-panel");
+	const info = state.source === "codex" ? deriveInfo(state.sessions, state.selectedId) : null;
+	if (!info) {
+		state.deriveOpen = false;
+		rail.hidden = true;
+		panel.hidden = true;
+		return;
+	}
+	rail.hidden = false;
+	rail.replaceChildren(
+		h(
+			"button",
+			{
+				class: "derive-rail-btn",
+				type: "button",
+				title: state.deriveOpen ? "收起派生结构" : `展开派生结构（直属子任务 ${info.root.children.length} 个）`,
+				"aria-pressed": String(state.deriveOpen),
+				onclick: () => {
+					state.deriveOpen = !state.deriveOpen;
+					renderDerive();
+				},
+			},
+			h("span", { class: "derive-rail-count", text: String(info.root.children.length) }),
+			h("span", { class: "derive-rail-text", text: "派生" }),
+		),
+	);
+	panel.hidden = !state.deriveOpen;
+	if (!state.deriveOpen) return;
+	const crumbs = info.path.map((node, i) =>
+		h(
+			"button",
+			{
+				class: `derive-crumb${i === info.path.length - 1 ? " here" : ""}`,
+				type: "button",
+				title: node.name ?? "主会话",
+				onclick: () => {
+					const id = latestSessionId(node);
+					if (id) selectSession(id);
+				},
+			},
+			node.name === null ? "主会话" : taskShort(node.name),
+		),
+	);
+	panel.replaceChildren(
+		h(
+			"header",
+			{ class: "derive-head" },
+			h("span", { class: "derive-title", text: `派生结构 · ${info.subtaskCount}` }),
+			h("button", { class: "btn icon", type: "button", title: "收起（Esc）", onclick: () => { state.deriveOpen = false; renderDerive(); }, text: "✕" }),
+		),
+		h("nav", { class: "derive-crumbs", "aria-label": "当前位置" }, ...crumbs),
+		h("div", { class: "derive-tree" }, ...deriveNodeRow(info.root, 0)),
+	);
 }
 
 // ---------------------------------------------------------------------------
@@ -1644,6 +1783,11 @@ document.addEventListener("keydown", (e) => {
 		}
 		if (state.settingsOpen) {
 			setSettingsOpen(false);
+			return;
+		}
+		if (state.deriveOpen) {
+			state.deriveOpen = false;
+			renderDerive();
 			return;
 		}
 		closeDrawer();

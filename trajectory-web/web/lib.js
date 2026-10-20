@@ -333,6 +333,35 @@ export function buildAgentTree(sessions) {
 	return rootNodes;
 }
 
+/**
+ * 当前会话的派生信息：在派生森林里定位 selectedId 所在的树，返回
+ *   { root, path, subtaskCount } —— root 为树根（name:null 表示主会话根；孤儿任务节点作根时 name 非空），
+ *   path 为根→当前会话所在节点的链（当前节点 = sessions 含 selectedId 者），
+ *   subtaskCount 为整棵树的任务节点总数；无派生（树下无任务节点）返回 null。
+ * guardian 审批线程与无 taskName 的旧子会话不作根（前者已并入主轨迹，后者无法定位父）。
+ */
+export function deriveInfo(sessions, selectedId) {
+	if (!selectedId) return null;
+	const usable = sessions.filter((s) => s.threadSource !== "guardian_review" && !(s.threadSource === "subagent" && !s.taskName));
+	let hit = null;
+	const walk = (node, root, trail) => {
+		const t = trail.concat([node]);
+		if (!hit && node.sessions.some((s) => s.id === selectedId)) hit = { root, path: t };
+		for (const c of node.children) walk(c, root, t);
+	};
+	for (const r of buildAgentTree(usable)) walk(r, r, []);
+	if (!hit) return null;
+	let subtaskCount = 0;
+	const count = (node) => {
+		for (const c of node.children) {
+			subtaskCount++;
+			count(c);
+		}
+	};
+	count(hit.root);
+	return subtaskCount ? { ...hit, subtaskCount } : null;
+}
+
 // ---------------------------------------------------------------------------
 // 轨迹搜索索引（复刻 deepseek ui-trajectory trajectory-search-index.ts）
 // ---------------------------------------------------------------------------

@@ -915,6 +915,205 @@ mark.ev-hit {
 	padding-left: 4px;
 }
 
+/* ---------------------------------------------------------------- 派生结构（codex）：主区左缘竖条 + 树面板 */
+
+.derive-rail {
+	width: 30px;
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 0;
+	background: var(--dsw-specific-sidebar-fill);
+	border-right: 1px solid var(--dsw-alias-border-l1);
+}
+
+.derive-rail-btn {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+	padding: 8px 4px;
+	border: none;
+	border-radius: var(--dsw-radius-sm);
+	background: transparent;
+	color: var(--dsw-alias-label-tertiary);
+	cursor: pointer;
+}
+
+.derive-rail-btn:hover {
+	background: var(--dsw-specific-sidebar-nav-item-hover);
+	color: var(--dsw-alias-label-primary);
+}
+
+.derive-rail-btn[aria-pressed="true"] {
+	background: var(--dsw-specific-sidebar-nav-item-active);
+	color: var(--dsw-alias-label-primary);
+}
+
+.derive-rail-count {
+	min-width: 16px;
+	padding: 0 3px;
+	border-radius: 999px;
+	background: var(--dsw-alias-interactive-bg-hover);
+	font: var(--dsw-font-xxxs-strong-11);
+	text-align: center;
+}
+
+.derive-rail-text {
+	writing-mode: vertical-rl;
+	letter-spacing: 0.15em;
+	font: var(--dsw-font-xxxs-11);
+}
+
+.derive-panel {
+	width: 264px;
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	overflow-y: auto;
+	padding: 8px 10px;
+	background: var(--dsw-specific-sidebar-fill);
+	border-right: 1px solid var(--dsw-alias-border-l1);
+}
+
+.derive-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 2px 2px 8px;
+}
+
+.derive-title {
+	font: var(--dsw-font-xs-strong-13);
+	letter-spacing: 0.02em;
+}
+
+.derive-crumbs {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 2px;
+	padding: 0 2px 8px;
+	border-bottom: 1px solid var(--dsw-alias-border-l2);
+	margin-bottom: 6px;
+}
+
+.derive-crumb {
+	border: none;
+	padding: 2px 4px;
+	border-radius: var(--dsw-radius-sm);
+	background: none;
+	color: var(--dsw-alias-link);
+	cursor: pointer;
+	font: var(--dsw-font-xxxs-11);
+}
+
+.derive-crumb:hover {
+	background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.derive-crumb.here {
+	color: var(--dsw-alias-label-primary);
+	font: var(--dsw-font-xxxs-strong-11);
+	cursor: default;
+}
+
+.derive-tree {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
+
+.derive-node,
+.derive-instance {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	padding-top: 4px;
+	padding-right: 6px;
+	padding-bottom: 4px;
+	border: none;
+	border-radius: var(--dsw-radius-sm);
+	background: none;
+	color: var(--dsw-alias-label-primary);
+	cursor: pointer;
+	font: inherit;
+	text-align: left;
+}
+
+.derive-node:hover,
+.derive-instance:hover {
+	background: var(--dsw-specific-sidebar-nav-item-hover);
+}
+
+.derive-node.active,
+.derive-instance.active {
+	background: var(--dsw-specific-sidebar-nav-item-active);
+}
+
+.derive-node .live-dot,
+.derive-instance .live-dot {
+	flex: none;
+}
+
+.derive-node-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font: var(--dsw-font-xs-13);
+}
+
+.derive-node.is-root .derive-node-name {
+	font: var(--dsw-font-xs-strong-13);
+}
+
+.derive-node:not(.is-root) .derive-node-name {
+	color: var(--dsw-alias-link);
+}
+
+.derive-count {
+	flex: none;
+	padding: 0 4px;
+	border-radius: 999px;
+	background: var(--dsw-alias-interactive-bg-hover);
+	color: var(--dsw-alias-label-secondary);
+	font: var(--dsw-font-xxxs-11);
+	cursor: pointer;
+}
+
+.derive-count:hover,
+.derive-count.open {
+	color: var(--dsw-alias-label-primary);
+}
+
+.derive-here {
+	flex: none;
+	color: var(--dsw-alias-label-tertiary);
+	font: var(--dsw-font-xxxs-11);
+}
+
+.derive-instance {
+	color: var(--dsw-alias-label-secondary);
+}
+
+.derive-instance-no {
+	flex: none;
+	font: var(--dsw-font-xxxs-11);
+}
+
+.derive-instance-time {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font: var(--dsw-font-xxxs-11);
+}
+
 /* ---------------------------------------------------------------- 详情抽屉 */
 
 .drawer {
