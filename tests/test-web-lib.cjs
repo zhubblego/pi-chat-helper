@@ -11,7 +11,7 @@ const check = (label, cond, extra = "") => {
 
 (async () => {
 	const lib = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "lib.js")).href);
-	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, buildAgentTree, deriveInfo, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments, hitSnippet } = lib;
+	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, buildAgentTree, deriveInfo, deriveTargets, deriveTaskName, DERIVE_TOOL, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments, hitSnippet } = lib;
 
 	// ---- 搜索高亮切分 ----
 	check("高亮：单词命中切分", JSON.stringify(highlightSegments("hello world npm", ["npm"])) === JSON.stringify([{ text: "hello world ", hit: false }, { text: "npm", hit: true }]));
@@ -141,6 +141,42 @@ const check = (label, cond, extra = "") => {
 	check("deriveInfo：guardian/无 taskName 旧子会话不作根（不抢占子任务）", !!diNoise && diNoise.path[0].sessions[0].id === "root1" && diNoise.subtaskCount === 2);
 	check("deriveInfo：无派生 → null", deriveInfo([{ id: "lonely", projectPath: "/p", created: 1, modified: 2 }], "lonely") === null && deriveInfo(treeSessions, "不存在") === null && deriveInfo(treeSessions, null) === null);
 
+	// ---- 派生行（spawn_agent ↔ 子会话） ----
+	const spawnEv = (id, ts, args, result) => ({ id, ts, kind: "tool", tool: { name: DERIVE_TOOL, argsText: args === undefined ? "" : JSON.stringify(args), result } });
+	check("派生：工具名常量", DERIVE_TOOL === "spawn_agent");
+	check("deriveTaskName：结果里的完整路径优先", deriveTaskName(spawnEv("e1", 1, { task_name: "child" }, JSON.stringify({ task_name: "/root/parent/child" })), "/root") === "/root/parent/child");
+	check("deriveTaskName：参数短名拼到当前任务名下", deriveTaskName(spawnEv("e2", 2, { task_name: "child" }, "ok"), "/root/parent") === "/root/parent/child");
+	check("deriveTaskName：主会话短名拼 /root", deriveTaskName(spawnEv("e3", 3, { task_name: "kid" }, ""), "/root") === "/root/kid");
+	const truncated = `{"task_name":"cut","fork_turns":"none","message":"gAAAAAB${'x'.repeat(4000)}`;
+	check("deriveTaskName：截断的 JSON 仍取到 task_name", deriveTaskName(spawnEv("e4", 4, undefined, ""), "/root") === null && deriveTaskName({ id: "e4", ts: 4, kind: "tool", tool: { name: DERIVE_TOOL, argsText: truncated } }, "/root") === "/root/cut");
+	check("deriveTaskName：无 task_name → null", deriveTaskName({ id: "e5", kind: "tool", tool: { name: DERIVE_TOOL, argsText: "{}", result: "done" } }, "/root") === null);
+
+	const subSessions = [
+		{ id: "s-old", taskName: "/root/doc", created: 200 },
+		{ id: "s-new", taskName: "/root/doc", created: 500 },
+		{ id: "s-rev", taskName: "/root/review", created: 400 },
+	];
+	const spawnQuestions = [
+		{
+			index: 0,
+			events: [
+				spawnEv("sp1", 100, { task_name: "doc" }, JSON.stringify({ task_name: "/root/doc" })),
+				spawnEv("sp2", 450, { task_name: "doc" }, JSON.stringify({ task_name: "/root/doc" })),
+				spawnEv("sp3", 390, { task_name: "review" }, JSON.stringify({ task_name: "/root/review" })),
+				spawnEv("sp4", 600, { task_name: "missing" }, JSON.stringify({ task_name: "/root/missing" })),
+				{ id: "send1", ts: 700, kind: "tool", tool: { name: "send_message", argsText: JSON.stringify({ task_name: "doc" }), result: "" } },
+			],
+		},
+	];
+	const dt = deriveTargets(subSessions, spawnQuestions, "/root");
+	check("deriveTargets：同名多实例从尾部倒序配对", dt.get("sp2") === "s-new" && dt.get("sp1") === "s-old", JSON.stringify([...dt]));
+	check("deriveTargets：单一实例直接配对", dt.get("sp3") === "s-rev");
+	check("deriveTargets：无对应子会话不产生条目", !dt.has("sp4") && dt.size === 3);
+	check("deriveTargets：非 spawn_agent 工具不算派生", !dt.has("send1"));
+	check("deriveTargets：无子会话时返回空映射", deriveTargets([{ id: "r", taskName: null }], spawnQuestions, "/root").size === 0);
+	const overflow = deriveTargets(subSessions, [{ index: 0, events: [spawnEv("o1", 1, { task_name: "doc" }, ""), spawnEv("o2", 2, { task_name: "doc" }, ""), spawnEv("o3", 3, { task_name: "doc" }, "")] }], "/root");
+	check("deriveTargets：派发次数多于实例时只配最新的几个", overflow.get("o3") === "s-new" && overflow.get("o2") === "s-old" && !overflow.has("o1"));
+
 	// ---- 搜索索引（复刻 deepseek TrajectorySearchIndex） ----
 	const questions = [
 		{
@@ -195,6 +231,8 @@ const check = (label, cond, extra = "") => {
 	const appSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "web", "app.js"), "utf8");
 	check("app.js 不再使用 importNode（克隆不移除源节点，会死循环）", !appSource.includes("importNode("));
 	check("mdNode 直接移入节点保证循环收敛", /wrapper\.appendChild\(\s*doc\.body\.firstChild\s*\)/.test(appSource));
+	check("派生行内联化：不再有独立派生视图", !appSource.includes("deriveView") && !appSource.includes("renderDeriveList"));
+	check("派生行渲染走 deriveTargets 映射", appSource.includes("state.deriveTargets.get(ev.id)") && appSource.includes("openEventRow"));
 
 	console.log(failed === 0 ? "\nALL PASS" : `\n${failed} FAILED`);
 	process.exit(failed === 0 ? 0 : 1);

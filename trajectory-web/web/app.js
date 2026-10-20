@@ -11,10 +11,13 @@
  * 解析后逐个移入 wrapper（appendChild 自动收养并摘除源节点，循环必然收敛）。
  */
 import {
+	DERIVE_TOOL,
 	GROUP_LABELS,
 	TrajectorySearchIndex,
 	collectToolNames,
 	deriveInfo,
+	deriveTargets,
+	deriveTaskName,
 	eventPasses,
 	eventTagLabel,
 	eventToolPasses,
@@ -33,6 +36,7 @@ import {
 	mcpLabel,
 	presetFilters,
 	renderMarkdown,
+	taskShort,
 } from "./lib.js";
 
 const LS_FILTERS = "tw.filters";
@@ -67,7 +71,10 @@ const state = {
 	toolOriginsMissAt: 0,
 	submenuOpen: false,
 	folded: new Set(),
-	deriveView: false,
+	deriveTargets: new Map(),
+	deriveNames: new Map(),
+	deriveFrom: null,
+	revealEid: null,
 	source: "pi",
 	sources: [],
 	sourceSel: {},
@@ -375,23 +382,16 @@ function renderSessions() {
 	}
 	sessionList.replaceChildren(...nodes);
 	updateDeriveButtons();
-	if (state.deriveView) renderMain();
 }
 
 // ---------------------------------------------------------------------------
-// 派生列表（codex）：工具条「派生」切独立轮次列表，「⟨ 主会话」返回主会话
+// 派生行（codex）：spawn_agent 调用 ↔ 派生出的子会话
+// 派生不是独立视图：它就是发生那一轮里的一行，点击进入对应子会话轨迹。
 // ---------------------------------------------------------------------------
 
-/** 任务名末段：/root/ticket_core → ticket_core。 */
-function taskShort(name) {
-	const seg = String(name ?? "").split("/").filter(Boolean);
-	return seg.length ? seg[seg.length - 1] : String(name ?? "");
-}
-
-/** 节点最新一次实例的会话 id（buildAgentTree 已按 created 升序，取末位）。 */
-function latestSessionId(node) {
-	const s = node.sessions[node.sessions.length - 1];
-	return s ? s.id : null;
+/** 当前会话的任务名（主会话为 /root）：派生行只有短名参数时用它拼完整路径。 */
+function currentTaskName() {
+	return state.sessions.find((s) => s.id === state.selectedId)?.taskName ?? "/root";
 }
 
 /** 当前会话所在派生树：非 codex 源或树下无任务节点时为 null。 */
@@ -399,66 +399,42 @@ function currentDeriveInfo() {
 	return state.source === "codex" ? deriveInfo(state.sessions, state.selectedId) : null;
 }
 
-/** 同步「⟨ 主会话」按钮：派生视图内或当前非主会话时出现（派生入口在过滤菜单内，随菜单重建）。 */
+/** 同步「⟨ 主会话」按钮：当前不在树根（派生树某层）或刚从派生行跳过来时出现。 */
 function updateDeriveButtons() {
 	const info = currentDeriveInfo();
-	el("back-main").hidden = !(state.deriveView || (info && info.path.length > 1));
+	el("back-main").hidden = !((info && info.path.length > 1) || state.deriveFrom);
 }
 
-/** 派生列表行：任务节点一行（live/任务名/×N/当前/最新相对时间），多实例平铺子行可单独进入。 */
-function deriveListRow(node, depth) {
-	const isRoot = node.name === null;
-	const latest = node.sessions[node.sessions.length - 1];
-	const live = node.sessions.some((s) => s.live);
-	const active = node.sessions.some((s) => s.id === state.selectedId);
-	const rows = [
-		h(
-			"button",
-			{
-				class: `dl-row${isRoot ? " is-root" : ""}${active ? " active" : ""}`,
-				type: "button",
-				style: `padding-left:${10 + depth * 16}px`,
-				title: isRoot ? "进入主会话轮次" : `${node.name}（最新实例）`,
-				onclick: () => latest && selectSession(latest.id),
-			},
-			live ? h("span", { class: "live-dot" }) : null,
-			h("span", { class: `dl-name${isRoot ? " is-root" : ""}`, text: isRoot ? "主会话" : taskShort(node.name) }),
-			node.sessions.length > 1 ? h("span", { class: "dl-count", text: `×${node.sessions.length}` }) : null,
-			active ? h("span", { class: "dl-here", text: "当前" }) : null,
-			h("span", { class: "dl-time", text: fmtRelative(latest?.modified ?? 0) }),
-		),
-	];
-	if (node.sessions.length > 1) {
-		node.sessions.forEach((s, i) => {
-			rows.push(
-				h(
-					"button",
-					{
-						class: `dl-inst${s.id === state.selectedId ? " active" : ""}`,
-						type: "button",
-						style: `padding-left:${28 + depth * 16}px`,
-						title: s.firstMessage || s.file || "",
-						onclick: () => selectSession(s.id),
-					},
-					s.live ? h("span", { class: "live-dot" }) : null,
-					h("span", { class: "dl-inst-no", text: `#${i + 1}` }),
-					h("span", { class: "dl-inst-time", text: fmtRelative(s.modified) }),
-				),
-			);
-		});
+/** 重算派生行映射：事件 id → 子会话 id、事件 id → 完整任务名（配不上的按普通工具行渲染）。
+ * 返回映射是否发生变化（会话列表新增子会话时调用方据此决定要不要重绘轨迹）。 */
+function syncDeriveTargets() {
+	const previous = state.deriveTargets;
+	const names = new Map();
+	state.deriveTargets = new Map();
+	state.deriveNames = names;
+	if (state.source !== "codex") return previous.size > 0;
+	const parent = currentTaskName();
+	state.deriveTargets = deriveTargets(state.sessions, state.data?.questions, parent);
+	for (const q of state.data?.questions ?? []) {
+		for (const ev of q.events ?? []) {
+			if (ev.kind !== "tool" || ev.tool?.name !== DERIVE_TOOL) continue;
+			const name = deriveTaskName(ev, parent);
+			if (name) names.set(ev.id, name);
+		}
 	}
-	for (const c of node.children) rows.push(...deriveListRow(c, depth + 1));
-	return rows;
+	const changed = previous.size !== state.deriveTargets.size || [...state.deriveTargets].some(([id, target]) => previous.get(id) !== target);
+	return changed;
 }
 
-/** 派生视图主区：整棵树平铺为独立轮次列表（首行=主会话，点击任意行进入对应会话轮次）。 */
-function renderDeriveList() {
-	const info = currentDeriveInfo();
-	if (!info) return;
-	mainInner.replaceChildren(
-		h("div", { class: "dl-head", text: `派生子任务 · ${info.subtaskCount}` }),
-		h("div", { class: "derive-list" }, ...deriveListRow(info.root, 0)),
-	);
+/** 返回主会话时定位回派生那一行：滚到视野中央并短暂高亮。 */
+function revealEvent(eid) {
+	state.revealEid = null;
+	const node = mainInner.querySelector(`[data-eid="${eid}"]`);
+	if (!node) return;
+	// behavior 必须显式 instant：#main 的 scroll-behavior 是 smooth，平滑滚动会被下一次轮询重绘打断（后台标签还会整个卡住）
+	node.scrollIntoView({ block: "center", behavior: "instant" });
+	node.classList.add("is-revealed");
+	setTimeout(() => node.classList.remove("is-revealed"), 1600);
 }
 
 // ---------------------------------------------------------------------------
@@ -514,25 +490,6 @@ function renderFilterMenu() {
 				svgIcon(group, "menu-item-icon"),
 				h("span", { class: "menu-item-label", text: label }),
 				checked ? svgIcon("check", "menu-check") : null,
-			),
-		);
-	}
-	// 派生行与工具行同级（尾部）：仅当前会话树有子任务时渲染；勾选态 = 派生视图激活
-	if (currentDeriveInfo()) {
-		nodes.push(
-			h(
-				"button",
-				{
-					class: "menu-item",
-					type: "button",
-					role: "menuitemcheckbox",
-					"aria-checked": String(state.deriveView),
-					dataset: { derive: "1" },
-					title: "查看派生子任务轮次列表",
-				},
-				svgIcon("derive", "menu-item-icon"),
-				h("span", { class: "menu-item-label", text: "派生" }),
-				state.deriveView ? svgIcon("check", "menu-check") : null,
 			),
 		);
 	}
@@ -699,6 +656,10 @@ function highlightNodes(text, terms) {
 
 function renderEvent(ev, terms = []) {
 	const classes = ["ev", `k-${kindGroup(ev.kind)}`, `k-${ev.kind}`];
+	const deriveName = state.deriveNames.get(ev.id);
+	const deriveTarget = state.deriveTargets.get(ev.id);
+	if (deriveName) classes.push("k-derive");
+	if (deriveTarget) classes.push("is-derive-target");
 	if (ev.tool?.isError) classes.push("is-error");
 	if (ev.isFinal) classes.push("is-final");
 	const meta = [
@@ -709,27 +670,35 @@ function renderEvent(ev, terms = []) {
 	]
 		.filter(Boolean)
 		.join(" · ");
-	// 搜索激活时预览里高亮命中关键词；预览无命中时展示命中字段的上下文片段（如「结果 » …」）
-	let preview = highlightNodes(ev.preview, terms);
-	if (terms.length && !preview.some((node) => node instanceof Node)) {
-		const sn = hitSnippet(ev, terms);
-		if (sn) preview = [h("span", { class: "ev-hit-src", text: `${sn.label}» ` }), ...highlightNodes(sn.snippet, terms)];
+	let preview;
+	if (deriveName) {
+		// 派生行不展示 JSON 参数（message 是密文）：直接给任务名，能跳的再加箭头
+		preview = [h("span", { class: "ev-derive-name", text: `${taskShort(deriveName)}${deriveTarget ? " →" : ""}` })];
+	} else {
+		// 搜索激活时预览里高亮命中关键词；预览无命中时展示命中字段的上下文片段（如「结果 » …」）
+		preview = highlightNodes(ev.preview, terms);
+		if (terms.length && !preview.some((node) => node instanceof Node)) {
+			const sn = hitSnippet(ev, terms);
+			if (sn) preview = [h("span", { class: "ev-hit-src", text: `${sn.label}» ` }), ...highlightNodes(sn.snippet, terms)];
+		}
 	}
+	const dataset = { eid: ev.id };
+	if (deriveTarget) dataset.derive = deriveTarget;
 	return h(
 		"article",
-		{ class: classes.join(" "), dataset: { eid: ev.id }, tabindex: "0", title: ev.preview },
-		h("span", { class: "ev-tag", text: eventTagLabel(ev) }),
+		{
+			class: classes.join(" "),
+			dataset,
+			tabindex: "0",
+			title: deriveTarget ? `进入派生会话 ${taskShort(deriveName ?? "")}` : ev.preview,
+		},
+		h("span", { class: "ev-tag", text: deriveName ? "派生" : eventTagLabel(ev) }),
 		h("span", { class: "ev-preview" }, preview),
 		h("span", { class: "ev-meta", text: meta }),
 	);
 }
 
 function renderMain() {
-	if (state.deriveView && currentDeriveInfo()) {
-		renderDeriveList();
-		return;
-	}
-	state.deriveView = false;
 	updateDeriveButtons();
 	if (!state.selectedId) {
 		mainInner.replaceChildren(h("div", { class: "empty", text: "左侧选择一个会话查看轨迹" }));
@@ -1423,8 +1392,11 @@ async function pollSessions(force = false) {
 		if (key !== state.sessionListKey) {
 			state.sessionListKey = key;
 			state.sessions = j.sessions ?? [];
+			// 子会话新增/消失会改变派生行能不能跳：变了才重绘，避免轮询把轨迹 DOM 反复重建
+			const deriveChanged = syncDeriveTargets();
 			renderSessions();
 			renderTopbar();
+			if (deriveChanged && state.data) renderMain();
 		}
 		if (!state.selectedId && (j.current || j.sessions?.[0])) {
 			state.selectedId = j.current ?? j.sessions[0].id;
@@ -1461,10 +1433,12 @@ async function pollSession(force = false) {
 		const j = await res.json();
 		if (j.changed === false) {
 			setSync(`已同步 ${fmtClock()}`, "ok");
+			if (state.revealEid) revealEvent(state.revealEid);
 			return;
 		}
 		state.data = { meta: j.meta, questions: j.questions };
 		state.searchIndex.update(state.data.questions);
+		syncDeriveTargets();
 		const namesChanged = syncToolNames();
 		if (state.menuOpen && namesChanged) renderFilterMenu();
 		// 出现未归属的工具名（如运行时才注册的扩展工具）时强制刷新映射；持续未识别时 60s 内不重试
@@ -1484,6 +1458,7 @@ async function pollSession(force = false) {
 		renderTopbar();
 		renderMain();
 		main.scrollTop = keepTop;
+		if (state.revealEid) revealEvent(state.revealEid);
 		refreshOpen();
 		// 刷新恢复：首次数据就绪后重开 hash 记录的事件；事件已不在会话里则清掉失效 hash
 		if (pendingOpen) {
@@ -1545,14 +1520,6 @@ el("filter-menu").addEventListener("click", (e) => {
 		updateSubmenuChecks();
 		renderMain();
 		item.focus();
-		return;
-	}
-	if (item.dataset.derive) {
-		state.deriveView = !state.deriveView;
-		updateDeriveButtons();
-		renderMain();
-		main.scrollTop = 0;
-		setMenuOpen(false);
 		return;
 	}
 	if (item.dataset.group) {
@@ -1647,17 +1614,20 @@ sessionList.addEventListener("click", (e) => {
 	selectSession(item.dataset.id);
 });
 
-/** 切换选中会话（列表点击 / 派生树节点点击共用）：重置临时态并拉新数据。 */
-function selectSession(id) {
+/** 切换选中会话（列表点击 / 派生行跳转共用）：重置临时态并拉新数据。from 记录从哪条派生行跳来。 */
+function selectSession(id, from = null) {
 	if (!id || id === state.selectedId) return;
 	state.selectedId = id;
-	state.deriveView = false;
+	state.deriveFrom = from;
+	state.revealEid = null;
 	state.data = null;
 	state.etag = null;
 	state.folded = new Set();
 	state.query = "";
 	state.toolExcluded = new Set();
 	state.toolNames = [];
+	state.deriveTargets = new Map();
+	state.deriveNames = new Map();
 	state.searchIndex = new TrajectorySearchIndex();
 	setMenuOpen(false);
 	el("search").value = "";
@@ -1672,6 +1642,16 @@ function selectSession(id) {
 	pollSession(true);
 }
 
+/** 点事件行：派生行跳到它派生出的子会话，其余开详情抽屉。 */
+function openEventRow(row) {
+	const target = row.dataset.derive;
+	if (target) {
+		selectSession(target, { id: state.selectedId, eid: row.dataset.eid });
+		return;
+	}
+	openDrawer(row.dataset.eid);
+}
+
 mainInner.addEventListener("click", (e) => {
 	const fold = e.target.closest(".q-fold");
 	if (fold) {
@@ -1682,16 +1662,15 @@ mainInner.addEventListener("click", (e) => {
 		return;
 	}
 	const row = e.target.closest(".ev");
-	if (row) openDrawer(row.dataset.eid);
+	if (row) openEventRow(row);
 });
 
 mainInner.addEventListener("keydown", (e) => {
 	if (e.key !== "Enter" && e.key !== " ") return;
 	const row = e.target.closest(".ev");
-	if (row) {
-		e.preventDefault();
-		openDrawer(row.dataset.eid);
-	}
+	if (!row) return;
+	e.preventDefault();
+	openEventRow(row);
 });
 
 mainInner.addEventListener("dblclick", (e) => {
@@ -1739,10 +1718,16 @@ el("dv-settings-menu").addEventListener("click", (e) => {
 });
 el("theme-btn").addEventListener("click", cycleTheme);
 el("back-main").addEventListener("click", () => {
+	// 从派生行跳过来时，回原会话并定位回那一行；否则回派生树根（主会话最新实例）
+	const from = state.deriveFrom;
+	if (from && from.id && from.id !== state.selectedId) {
+		selectSession(from.id);
+		state.revealEid = from.eid;
+		return;
+	}
 	const info = currentDeriveInfo();
-	state.deriveView = false;
-	const rootId = info ? latestSessionId(info.root) : null;
-	if (rootId && rootId !== state.selectedId) selectSession(rootId);
+	const root = info?.root.sessions[info.root.sessions.length - 1];
+	if (root && root.id !== state.selectedId) selectSession(root.id);
 	else {
 		updateDeriveButtons();
 		renderMain();
@@ -1756,12 +1741,6 @@ document.addEventListener("keydown", (e) => {
 		}
 		if (state.settingsOpen) {
 			setSettingsOpen(false);
-			return;
-		}
-		if (state.deriveView) {
-			state.deriveView = false;
-			updateDeriveButtons();
-			renderMain();
 			return;
 		}
 		closeDrawer();

@@ -333,6 +333,12 @@ export function buildAgentTree(sessions) {
 	return rootNodes;
 }
 
+/** 任务名末段：/root/ticket_core → ticket_core。 */
+export function taskShort(name) {
+	const seg = String(name ?? "").split("/").filter(Boolean);
+	return seg.length ? seg[seg.length - 1] : String(name ?? "");
+}
+
 /**
  * 当前会话的派生信息：在派生森林里定位 selectedId 所在的树，返回
  *   { root, path, subtaskCount } —— root 为树根（name:null 表示主会话根；孤儿任务节点作根时 name 非空），
@@ -360,6 +366,77 @@ export function deriveInfo(sessions, selectedId) {
 	};
 	count(hit.root);
 	return subtaskCount ? { ...hit, subtaskCount } : null;
+}
+
+// ---------------------------------------------------------------------------
+// 派生行（codex）：spawn_agent 工具调用 ↔ 派生出的子会话
+// ---------------------------------------------------------------------------
+
+/** 会新建独立子会话的工具名。send_message/followup_task/wait_agent 等只操作已有会话，不算派生。 */
+export const DERIVE_TOOL = "spawn_agent";
+
+/** 从 JSON 或其被截断的片段里取 task_name（light 投影会把长参数截到 2000 字符，JSON.parse 会失败）。 */
+function taskNameOf(text) {
+	if (typeof text !== "string" || !text) return null;
+	try {
+		const parsed = JSON.parse(text);
+		if (typeof parsed?.task_name === "string" && parsed.task_name) return parsed.task_name;
+	} catch {
+		/* 截断 JSON 走正则 */
+	}
+	const m = /"task_name"\s*:\s*"([^"\\]+)"/.exec(text);
+	return m ? m[1] : null;
+}
+
+/**
+ * 一次派生调用派给谁：完整任务名（形如 /root/child）。
+ * 优先取工具结果里回显的 task_name（自带父路径）；不可解析时取参数里的短名，
+ * 拼到当前会话的任务名（主会话为 /root）之下。都取不到返回 null。
+ */
+export function deriveTaskName(ev, parentTaskName = "/root") {
+	const fromResult = taskNameOf(ev?.tool?.result);
+	if (fromResult) return fromResult;
+	const fromArgs = taskNameOf(ev?.tool?.argsText);
+	if (!fromArgs) return null;
+	if (fromArgs.startsWith("/")) return fromArgs;
+	const parent = String(parentTaskName || "/root").replace(/\/+$/, "");
+	return `${parent}/${fromArgs}`;
+}
+
+/**
+ * 派生行 → 子会话 id 的映射（eventId → sessionId）。
+ * 按完整任务名分组后从尾部倒序配对：第 n 新的派生调用对第 n 新的同名子会话，
+ * 旧实例被删也不会让新配对错位（子会话 created 来自文件名，带时区偏移，不能做绝对时间配对）。
+ * 配不上（子会话未落盘 / 已清理 / 名字是裸 /root）的派生行不产生条目，调用方按普通工具行处理。
+ */
+export function deriveTargets(sessions, questions, parentTaskName = "/root") {
+	const targets = new Map();
+	const pool = new Map();
+	for (const s of sessions ?? []) {
+		if (typeof s?.taskName !== "string" || !s.taskName) continue;
+		if (!pool.has(s.taskName)) pool.set(s.taskName, []);
+		pool.get(s.taskName).push(s);
+	}
+	if (pool.size === 0) return targets;
+	for (const list of pool.values()) list.sort((a, b) => (a.created ?? a.modified ?? 0) - (b.created ?? b.modified ?? 0));
+	const calls = new Map();
+	for (const q of questions ?? []) {
+		for (const ev of q.events ?? []) {
+			if (ev?.kind !== "tool" || ev.tool?.name !== DERIVE_TOOL) continue;
+			const name = deriveTaskName(ev, parentTaskName);
+			if (!name || !pool.has(name)) continue;
+			if (!calls.has(name)) calls.set(name, []);
+			calls.get(name).push(ev);
+		}
+	}
+	for (const [name, events] of calls) {
+		const subs = pool.get(name);
+		events.sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
+		for (let i = events.length - 1, j = subs.length - 1; i >= 0 && j >= 0; i--, j--) {
+			if (events[i].id) targets.set(events[i].id, subs[j].id);
+		}
+	}
+	return targets;
 }
 
 // ---------------------------------------------------------------------------
