@@ -67,8 +67,7 @@ const state = {
 	toolOriginsMissAt: 0,
 	submenuOpen: false,
 	folded: new Set(),
-	deriveOpen: false,
-	deriveInstances: new Set(),
+	deriveView: false,
 	source: "pi",
 	sources: [],
 	sourceSel: {},
@@ -369,11 +368,12 @@ function renderSessions() {
 		for (const session of sessions) nodes.push(sessionItem(session));
 	}
 	sessionList.replaceChildren(...nodes);
-	renderDerive();
+	updateDeriveButtons();
+	if (state.deriveView) renderMain();
 }
 
 // ---------------------------------------------------------------------------
-// 派生结构（codex）：主区左缘竖条展开按钮 + 树面板
+// 派生列表（codex）：工具条「派生」切独立轮次列表，「⟨ 主会话」返回主会话
 // ---------------------------------------------------------------------------
 
 /** 任务名末段：/root/ticket_core → ticket_core。 */
@@ -388,134 +388,74 @@ function latestSessionId(node) {
 	return s ? s.id : null;
 }
 
-function deriveNodeRow(node, depth) {
+/** 当前会话所在派生树：非 codex 源或树下无任务节点时为 null。 */
+function currentDeriveInfo() {
+	return state.source === "codex" ? deriveInfo(state.sessions, state.selectedId) : null;
+}
+
+/** 同步工具条「派生」与「⟨ 主会话」按钮：派生按钮树上任一会话可用；返回按钮在派生视图或当前非主会话时出现。 */
+function updateDeriveButtons() {
+	const info = currentDeriveInfo();
+	const btn = el("derive-btn");
+	btn.hidden = !info;
+	btn.setAttribute("aria-pressed", String(state.deriveView));
+	btn.title = state.deriveView ? "返回当前会话轮次列表" : `派生子任务轮次列表（共 ${info?.subtaskCount ?? 0} 个）`;
+	el("back-main").hidden = !(state.deriveView || (info && info.path.length > 1));
+}
+
+/** 派生列表行：任务节点一行（live/任务名/×N/当前/最新相对时间），多实例平铺子行可单独进入。 */
+function deriveListRow(node, depth) {
 	const isRoot = node.name === null;
-	const active = node.sessions.some((s) => s.id === state.selectedId);
+	const latest = node.sessions[node.sessions.length - 1];
 	const live = node.sessions.some((s) => s.live);
-	const multi = node.sessions.length > 1;
-	const expanded = state.deriveInstances.has(node.name ?? "");
-	const latestId = latestSessionId(node);
-	const row = h(
-		"button",
-		{
-			class: `derive-node${isRoot ? " is-root" : ""}${active ? " active" : ""}`,
-			type: "button",
-			style: `padding-left:${8 + depth * 14}px`,
-			title: isRoot ? "进入主会话轨迹" : `${node.name}（最新实例）`,
-			onclick: () => latestId && selectSession(latestId),
-		},
-		live ? h("span", { class: "live-dot" }) : null,
-		h("span", { class: "derive-node-name", text: isRoot ? "主会话" : taskShort(node.name) }),
-		multi
-			? h(
-				"span",
-				{
-					class: `derive-count${expanded ? " open" : ""}`,
-					title: `同名派发 ${node.sessions.length} 次，点击展开实例`,
-					onclick: (e) => {
-						e.stopPropagation();
-						const key = node.name ?? "";
-						if (state.deriveInstances.has(key)) state.deriveInstances.delete(key);
-						else state.deriveInstances.add(key);
-						renderDerive();
-					},
-				},
-				`×${node.sessions.length}`,
-			)
-			: null,
-		active ? h("span", { class: "derive-here", text: "当前" }) : null,
-	);
-	const out = [row];
-	if (multi && expanded) {
+	const active = node.sessions.some((s) => s.id === state.selectedId);
+	const rows = [
+		h(
+			"button",
+			{
+				class: `dl-row${isRoot ? " is-root" : ""}${active ? " active" : ""}`,
+				type: "button",
+				style: `padding-left:${10 + depth * 16}px`,
+				title: isRoot ? "进入主会话轮次" : `${node.name}（最新实例）`,
+				onclick: () => latest && selectSession(latest.id),
+			},
+			live ? h("span", { class: "live-dot" }) : null,
+			h("span", { class: `dl-name${isRoot ? " is-root" : ""}`, text: isRoot ? "主会话" : taskShort(node.name) }),
+			node.sessions.length > 1 ? h("span", { class: "dl-count", text: `×${node.sessions.length}` }) : null,
+			active ? h("span", { class: "dl-here", text: "当前" }) : null,
+			h("span", { class: "dl-time", text: fmtRelative(latest?.modified ?? 0) }),
+		),
+	];
+	if (node.sessions.length > 1) {
 		node.sessions.forEach((s, i) => {
-			out.push(
+			rows.push(
 				h(
 					"button",
 					{
-						class: `derive-instance${s.id === state.selectedId ? " active" : ""}`,
+						class: `dl-inst${s.id === state.selectedId ? " active" : ""}`,
 						type: "button",
-						style: `padding-left:${8 + (depth + 1) * 14}px`,
+						style: `padding-left:${28 + depth * 16}px`,
 						title: s.firstMessage || s.file || "",
 						onclick: () => selectSession(s.id),
 					},
 					s.live ? h("span", { class: "live-dot" }) : null,
-					h("span", { class: "derive-instance-no", text: `#${i + 1}` }),
-					h("span", { class: "derive-instance-time", text: fmtRelative(s.modified) }),
+					h("span", { class: "dl-inst-no", text: `#${i + 1}` }),
+					h("span", { class: "dl-inst-time", text: fmtRelative(s.modified) }),
 				),
 			);
 		});
 	}
-	for (const c of node.children) out.push(...deriveNodeRow(c, depth + 1));
-	return out;
+	for (const c of node.children) rows.push(...deriveListRow(c, depth + 1));
+	return rows;
 }
 
-/** 派生 rail + 面板：仅 codex 源且当前会话树下有任务节点时显示；面板在切会话后保留并重定位。 */
-function renderDerive() {
-	const rail = el("derive-rail");
-	const panel = el("derive-panel");
-	const info = state.source === "codex" ? deriveInfo(state.sessions, state.selectedId) : null;
-	if (!info) {
-		state.deriveOpen = false;
-		rail.hidden = true;
-		panel.hidden = true;
-		return;
-	}
-	rail.hidden = false;
-	rail.replaceChildren(
-		h(
-			"button",
-			{
-				class: "derive-rail-btn",
-				type: "button",
-				title: state.deriveOpen ? "收起派生结构" : `展开派生结构（直属子任务 ${info.root.children.length} 个）`,
-				"aria-pressed": String(state.deriveOpen),
-				onclick: () => {
-					state.deriveOpen = !state.deriveOpen;
-					renderDerive();
-				},
-			},
-			h("span", { class: "derive-rail-count", text: String(info.root.children.length) }),
-			h("span", { class: "derive-rail-text", text: "派生" }),
-		),
-	);
-	panel.hidden = !state.deriveOpen;
-	if (!state.deriveOpen) return;
-	const crumbs = info.path.map((node, i) =>
-		h(
-			"button",
-			{
-				class: `derive-crumb${i === info.path.length - 1 ? " here" : ""}`,
-				type: "button",
-				title: node.name ?? "主会话",
-				onclick: () => {
-					const id = latestSessionId(node);
-					if (id) selectSession(id);
-				},
-			},
-			node.name === null ? "主会话" : taskShort(node.name),
-		),
-	);
-	panel.replaceChildren(
-		h(
-			"header",
-			{ class: "derive-head" },
-			h("span", { class: "derive-title", text: `派生结构 · ${info.subtaskCount}` }),
-			h(
-				"button",
-				{
-					class: "btn derive-collapse",
-					type: "button",
-					title: "收起面板（Esc）",
-					onclick: () => {
-						state.deriveOpen = false;
-						renderDerive();
-					},
-				},
-				"⟨ 收起",
-			),
-		),
-		h("nav", { class: "derive-crumbs", "aria-label": "当前位置" }, ...crumbs),
-		h("div", { class: "derive-tree" }, ...deriveNodeRow(info.root, 0)),
+/** 派生视图主区：整棵树平铺为独立轮次列表（首行=主会话，点击任意行进入对应会话轮次）。 */
+function renderDeriveList() {
+	const info = currentDeriveInfo();
+	if (!info) return;
+	mainInner.replaceChildren(
+		h("div", { class: "dl-head", text: `派生子任务 · ${info.subtaskCount}` }),
+		h("div", { class: "derive-list" }, ...deriveListRow(info.root, 0)),
 	);
 }
 
@@ -764,7 +704,12 @@ function renderEvent(ev, terms = []) {
 }
 
 function renderMain() {
-	// 派生树视图已移除（改为会话栏主线/全部过滤 + 子任务徽章）
+	if (state.deriveView && currentDeriveInfo()) {
+		renderDeriveList();
+		return;
+	}
+	state.deriveView = false;
+	updateDeriveButtons();
 	if (!state.selectedId) {
 		mainInner.replaceChildren(h("div", { class: "empty", text: "左侧选择一个会话查看轨迹" }));
 		return;
@@ -1674,6 +1619,7 @@ sessionList.addEventListener("click", (e) => {
 function selectSession(id) {
 	if (!id || id === state.selectedId) return;
 	state.selectedId = id;
+	state.deriveView = false;
 	state.data = null;
 	state.etag = null;
 	state.folded = new Set();
@@ -1760,6 +1706,23 @@ el("dv-settings-menu").addEventListener("click", (e) => {
 	else if (item.dataset.mode) applyTranslateSetting({ mode: item.dataset.mode });
 });
 el("theme-btn").addEventListener("click", cycleTheme);
+el("derive-btn").addEventListener("click", () => {
+	if (!currentDeriveInfo()) return;
+	state.deriveView = !state.deriveView;
+	updateDeriveButtons();
+	renderMain();
+	main.scrollTop = 0;
+});
+el("back-main").addEventListener("click", () => {
+	const info = currentDeriveInfo();
+	state.deriveView = false;
+	const rootId = info ? latestSessionId(info.root) : null;
+	if (rootId && rootId !== state.selectedId) selectSession(rootId);
+	else {
+		updateDeriveButtons();
+		renderMain();
+	}
+});
 document.addEventListener("keydown", (e) => {
 	if (e.key === "Escape") {
 		if (state.copyOpen) {
@@ -1770,9 +1733,10 @@ document.addEventListener("keydown", (e) => {
 			setSettingsOpen(false);
 			return;
 		}
-		if (state.deriveOpen) {
-			state.deriveOpen = false;
-			renderDerive();
+		if (state.deriveView) {
+			state.deriveView = false;
+			updateDeriveButtons();
+			renderMain();
 			return;
 		}
 		closeDrawer();

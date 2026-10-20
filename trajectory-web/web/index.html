@@ -41,10 +41,9 @@
 				<div id="session-list" class="session-list" aria-label="会话列表"></div>
 			</section>
 		</aside>
-		<div id="derive-rail" class="derive-rail" hidden></div>
-		<aside id="derive-panel" class="derive-panel" hidden aria-label="派生结构"></aside>
 		<main id="main">
 			<div id="toolbar" class="toolbar" role="toolbar" aria-label="轨迹工具栏">
+				<button id="back-main" class="tb-btn" type="button" hidden title="返回主会话轮次列表"><span class="tb-icon" aria-hidden="true">⟨</span><span>主会话</span></button>
 				<span class="tb-sep" aria-hidden="true"></span>
 				<button id="fold-all" class="tb-btn" type="button" aria-pressed="false" title="收起所有轮次">
 					<span id="fold-icon" class="tb-icon" aria-hidden="true">⊟</span><span>轮次</span>
@@ -57,6 +56,11 @@
 					</button>
 					<div id="filter-menu" class="menu" role="menu" hidden></div>
 				</div>
+				<button id="derive-btn" class="tb-btn" type="button" hidden aria-pressed="false" title="派生子任务轮次列表">
+					<svg class="tb-icon" viewBox="0 0 12 12" aria-hidden="true"><circle cx="3" cy="2.5" r="1.4" fill="currentColor"/><circle cx="9" cy="2.5" r="1.4" fill="currentColor"/><circle cx="9" cy="9.5" r="1.4" fill="currentColor"/><path d="M4.4 2.5h3.2M9 3.9v4.2" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>
+					<span>派生</span>
+				</button>
+				<span class="tb-sep" aria-hidden="true"></span>
 				<label class="tb-search" title="搜索轨迹">
 					<svg class="tb-search-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="4.25" stroke="currentColor" stroke-width="1.25"/><path d="M10.5 10.5 13.5 13.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>
 					<input id="search" type="search" placeholder="搜索" aria-label="搜索轨迹">
