@@ -234,6 +234,11 @@ const check = (label, cond, extra = "") => {
 	check("派生行内联化：不再有独立派生视图", !appSource.includes("deriveView") && !appSource.includes("renderDeriveList"));
 	check("派生行渲染走 deriveTargets 映射", appSource.includes("state.deriveTargets.get(ev.id)") && appSource.includes("openEventRow"));
 
+	// ---- 回归守卫：会话表头的分组总开关 ----
+	const indexSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "web", "index.html"), "utf8");
+	check("会话表头有分组总开关按钮", indexSource.includes('id="groups-toggle"'));
+	check("分组总开关的同步态与点击都接上了", appSource.includes("function updateGroupsToggle") && appSource.includes('el("groups-toggle").addEventListener("click"'));
+
 	console.log(failed === 0 ? "\nALL PASS" : `\n${failed} FAILED`);
 	process.exit(failed === 0 ? 0 : 1);
 })();

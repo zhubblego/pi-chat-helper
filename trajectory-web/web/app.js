@@ -353,6 +353,24 @@ function visibleSessions() {
 	return state.sessions.filter((s) => s.threadSource !== "subagent" && s.threadSource !== "guardian_review");
 }
 
+/** 当前可见的分组 key（只有 all 范围按项目分组；本项目范围是平铺列表）。 */
+function groupKeys() {
+	if (state.scope !== "all") return [];
+	return groupSessions(visibleSessions()).map((group) => group.key);
+}
+
+/** 同步表头的分组总开关：无分组时隐藏，全部收起时显示折叠态。 */
+function updateGroupsToggle() {
+	const btn = el("groups-toggle");
+	const keys = groupKeys();
+	btn.hidden = keys.length === 0;
+	const collapsedCount = keys.filter((key) => groupSet().has(key)).length;
+	const expanded = collapsedCount < keys.length;
+	btn.setAttribute("aria-expanded", String(expanded));
+	btn.title = expanded ? "收起所有分组" : "展开所有分组";
+	btn.firstElementChild.textContent = expanded ? "▾" : "▸";
+}
+
 function renderSessions() {
 	const sessions = visibleSessions();
 	const nodes = [];
@@ -381,6 +399,7 @@ function renderSessions() {
 		for (const session of sessions) nodes.push(sessionItem(session));
 	}
 	sessionList.replaceChildren(...nodes);
+	updateGroupsToggle();
 	updateDeriveButtons();
 }
 
@@ -1597,6 +1616,16 @@ el("fold-all").addEventListener("click", () => {
 	const allFolded = indexes.length > 0 && indexes.every((i) => state.folded.has(i));
 	state.folded = new Set(allFolded ? [] : indexes);
 	renderMain();
+});
+
+el("groups-toggle").addEventListener("click", () => {
+	const keys = groupKeys();
+	if (keys.length === 0) return;
+	const set = groupSet();
+	const allCollapsed = keys.every((key) => set.has(key));
+	set.clear();
+	if (!allCollapsed) for (const key of keys) set.add(key);
+	renderSessions();
 });
 
 sessionList.addEventListener("click", (e) => {
