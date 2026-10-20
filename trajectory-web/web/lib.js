@@ -362,6 +362,40 @@ export function deriveInfo(sessions, selectedId) {
 	return subtaskCount ? { ...hit, subtaskCount } : null;
 }
 
+/**
+ * 派生树 → 按主会话轮次分组的派发行：直属任务实例按 created 归轮（ts 不晚于 created 的最后一轮，
+ * 早于首轮归首轮）；子代任务跟随父任务最新实例所在轮；turns 为空（轮次时间线不可用）退化为单组平铺。
+ * @param {object} root buildAgentTree 的根节点（children 为直属任务节点）
+ * @param {Array<{index:number, summary:string, ts:number}>} turns 主会话轮次时间线（按 ts 升序）
+ * @returns {Array<{turn: object|null, rows: Array<{name: string, depth: number, sessions: object[]}>}>}
+ */
+export function deriveTurnGroups(root, turns) {
+	const instTurn = (created) => {
+		if (!turns.length) return null;
+		let hit = turns[0].index;
+		for (const t of turns) if (t.ts && (created ?? 0) >= t.ts) hit = t.index;
+		return hit;
+	};
+	const groups = new Map();
+	const addRow = (key, name, depth, session) => {
+		if (!groups.has(key)) groups.set(key, { turn: key === null ? null : turns.find((t) => t.index === key) ?? null, rows: [] });
+		const g = groups.get(key);
+		let row = g.rows.find((r) => r.name === name && r.depth === depth);
+		if (!row) {
+			row = { name, depth, sessions: [] };
+			g.rows.push(row);
+		}
+		row.sessions.push(session);
+	};
+	const walk = (node, depth, fixedKey) => {
+		for (const inst of node.sessions) addRow(fixedKey ?? instTurn(inst.created), node.name, depth, inst);
+		const last = node.sessions[node.sessions.length - 1];
+		for (const c of node.children) walk(c, depth + 1, instTurn(last?.created));
+	};
+	for (const c of root.children) walk(c, 0, null);
+	return [...groups.keys()].sort((a, b) => (a === null ? -1 : b === null ? 1 : a - b)).map((k) => groups.get(k));
+}
+
 // ---------------------------------------------------------------------------
 // 轨迹搜索索引（复刻 deepseek ui-trajectory trajectory-search-index.ts）
 // ---------------------------------------------------------------------------

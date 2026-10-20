@@ -914,10 +914,53 @@ mark.ev-hit {
 }
 
 .dl-head {
-	padding: 10px 14px 8px;
+	padding: 10px 4px 0;
 	color: var(--dsw-alias-label-tertiary);
 	font: var(--dsw-font-xxxs-strong-11);
 	letter-spacing: 0.04em;
+}
+
+.dl-turn-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	margin-top: 12px;
+	padding: 6px 10px;
+	border: none;
+	border-radius: var(--dsw-radius-sm);
+	background: var(--dsw-alias-interactive-bg-hover);
+	color: var(--dsw-alias-label-secondary);
+	cursor: pointer;
+	font: var(--dsw-font-xxxs-strong-11);
+	text-align: left;
+}
+
+.dl-turn-head:hover {
+	color: var(--dsw-alias-label-primary);
+}
+
+.dl-turn-no {
+	flex: none;
+	color: var(--dsw-alias-link);
+}
+
+.dl-turn-sum {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.dl-turn-count {
+	flex: none;
+}
+
+.dl-turn-time {
+	flex: none;
+	color: var(--dsw-alias-label-tertiary);
+	font: var(--dsw-font-xxxs-11);
 }
 
 .dl-row,
@@ -960,11 +1003,7 @@ mark.ev-hit {
 	font: var(--dsw-font-xs-13);
 }
 
-.dl-name.is-root {
-	font: var(--dsw-font-xs-strong-13);
-}
-
-.dl-row:not(.is-root) .dl-name {
+.dl-row .dl-name {
 	color: var(--dsw-alias-link);
 }
 

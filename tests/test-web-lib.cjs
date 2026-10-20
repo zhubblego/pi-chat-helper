@@ -11,7 +11,7 @@ const check = (label, cond, extra = "") => {
 
 (async () => {
 	const lib = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "lib.js")).href);
-	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, buildAgentTree, deriveInfo, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments, hitSnippet } = lib;
+	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, buildAgentTree, deriveInfo, deriveTurnGroups, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments, hitSnippet } = lib;
 
 	// ---- 搜索高亮切分 ----
 	check("高亮：单词命中切分", JSON.stringify(highlightSegments("hello world npm", ["npm"])) === JSON.stringify([{ text: "hello world ", hit: false }, { text: "npm", hit: true }]));
@@ -140,6 +140,28 @@ const check = (label, cond, extra = "") => {
 	const diNoise = deriveInfo(noiseSessions, "root1");
 	check("deriveInfo：guardian/无 taskName 旧子会话不作根（不抢占子任务）", !!diNoise && diNoise.path[0].sessions[0].id === "root1" && diNoise.subtaskCount === 2);
 	check("deriveInfo：无派生 → null", deriveInfo([{ id: "lonely", projectPath: "/p", created: 1, modified: 2 }], "lonely") === null && deriveInfo(treeSessions, "不存在") === null && deriveInfo(treeSessions, null) === null);
+
+	// ---- 派生轮次分组（deriveTurnGroups：哪个子任务在哪一轮对话里派生） ----
+	const tgTree = buildAgentTree([
+		{ id: "root1", projectPath: "/p", created: 100, modified: 900 },
+		{ id: "a1", taskName: "/root/alpha", sender: null, created: 150, modified: 200, projectPath: "/p" },
+		{ id: "b1", taskName: "/root/beta", sender: null, created: 250, modified: 300, projectPath: "/p" },
+		{ id: "a2", taskName: "/root/alpha", sender: null, created: 350, modified: 400, projectPath: "/p" },
+		{ id: "c1", taskName: "/root/gamma", sender: "/root/alpha", created: 380, modified: 500, projectPath: "/p" },
+	]);
+	const tg = deriveTurnGroups(tgTree[0], [
+		{ index: -1, summary: "会话开始", ts: 100 },
+		{ index: 0, summary: "第一问", ts: 200 },
+		{ index: 1, summary: "第二问", ts: 300 },
+	]);
+	check("分组：按轮次升序输出三组", tg.map((g) => g.turn?.index).join(",") === "-1,0,1", JSON.stringify(tg.map((g) => g.turn?.index)));
+	check("分组：created 150 落会话开始轮（早于首轮归首轮）", tg[0].rows.length === 1 && tg[0].rows[0].sessions[0].id === "a1");
+	check("分组：created 250 落第 1 轮", tg[1].rows.length === 1 && tg[1].rows[0].sessions[0].id === "b1");
+	const g1 = tg[2];
+	check("分组：created 350 落第 2 轮，子任务 gamma 跟随父任务最新实例同轮且 depth=1", g1.rows.length === 2 && g1.rows.some((r) => r.name === "/root/alpha" && r.sessions[0].id === "a2") && g1.rows.some((r) => r.name === "/root/gamma" && r.depth === 1 && r.sessions[0].id === "c1"), JSON.stringify(g1.rows.map((r) => [r.name, r.depth])));
+	check("分组：同名任务同轮内合并多实例", deriveTurnGroups(tgTree[0], [{ index: 0, summary: "", ts: 0 }])[0].rows.find((r) => r.name === "/root/alpha").sessions.length === 2);
+	const flat = deriveTurnGroups(tgTree[0], []);
+	check("分组：无轮次时间线退化为单组平铺（turn=null）", flat.length === 1 && flat[0].turn === null && flat[0].rows.length === 3, JSON.stringify(flat.map((g) => g.rows.length)));
 
 	// ---- 搜索索引（复刻 deepseek TrajectorySearchIndex） ----
 	const questions = [
