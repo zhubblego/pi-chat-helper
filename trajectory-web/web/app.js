@@ -15,7 +15,6 @@ import {
 	TrajectorySearchIndex,
 	collectToolNames,
 	deriveInfo,
-	deriveTurnGroups,
 	eventPasses,
 	eventTagLabel,
 	eventToolPasses,
@@ -69,9 +68,6 @@ const state = {
 	submenuOpen: false,
 	folded: new Set(),
 	deriveView: false,
-	deriveTurns: null,
-	deriveTurnsLoading: false,
-	pendingTurn: null,
 	source: "pi",
 	sources: [],
 	sourceSel: {},
@@ -409,104 +405,60 @@ function updateDeriveButtons() {
 	el("back-main").hidden = !(state.deriveView || (info && info.path.length > 1));
 }
 
-/** 拉主会话轮次时间线（派生分组依据）：缓存按根会话 id，失败退化为不分组平铺。 */
-async function ensureDeriveTurns(info) {
-	const rootId = latestSessionId(info.root);
-	if (!rootId || state.deriveTurns?.rootId === rootId || state.deriveTurnsLoading) return;
-	state.deriveTurnsLoading = true;
-	try {
-		const params = new URLSearchParams({ source: state.source, id: rootId });
-		const res = await fetch(`/api/session?${params}`);
-		const payload = res.ok ? await res.json() : null;
-		state.deriveTurns = { rootId, turns: Array.isArray(payload?.questions) ? payload.questions.map((q) => ({ index: q.index, summary: q.summary ?? "", ts: q.ts ?? 0 })) : null };
-	} catch {
-		state.deriveTurns = { rootId, turns: null };
-	} finally {
-		state.deriveTurnsLoading = false;
-		if (state.deriveView) renderMain();
-	}
-}
-
-/** 派生行：任务一行（live/任务名/×N/当前/最新相对时间）；实例子行（#序号/时间）可单独进入。 */
-function dlRowNode(name, depth, sessions, isInst = false, seq = 0) {
-	const s = sessions[sessions.length - 1];
-	if (isInst) {
-		return h(
+/** 派生列表行：任务节点一行（live/任务名/×N/当前/最新相对时间），多实例平铺子行可单独进入。 */
+function deriveListRow(node, depth) {
+	const isRoot = node.name === null;
+	const latest = node.sessions[node.sessions.length - 1];
+	const live = node.sessions.some((s) => s.live);
+	const active = node.sessions.some((s) => s.id === state.selectedId);
+	const rows = [
+		h(
 			"button",
 			{
-				class: `dl-inst${s.id === state.selectedId ? " active" : ""}`,
+				class: `dl-row${isRoot ? " is-root" : ""}${active ? " active" : ""}`,
 				type: "button",
-				style: `padding-left:${28 + depth * 16}px`,
-				title: s.firstMessage || s.file || "",
-				onclick: () => selectSession(s.id),
+				style: `padding-left:${10 + depth * 16}px`,
+				title: isRoot ? "进入主会话轮次" : `${node.name}（最新实例）`,
+				onclick: () => latest && selectSession(latest.id),
 			},
-			s.live ? h("span", { class: "live-dot" }) : null,
-			h("span", { class: "dl-inst-no", text: `#${seq + 1}` }),
-			h("span", { class: "dl-inst-time", text: fmtRelative(s.modified) }),
-		);
-	}
-	const active = sessions.some((x) => x.id === state.selectedId);
-	return h(
-		"button",
-		{
-			class: `dl-row${active ? " active" : ""}`,
-			type: "button",
-			style: `padding-left:${10 + depth * 16}px`,
-			title: `${name}（最新实例）`,
-			onclick: () => selectSession(s.id),
-		},
-		sessions.some((x) => x.live) ? h("span", { class: "live-dot" }) : null,
-		h("span", { class: "dl-name", text: taskShort(name) }),
-		sessions.length > 1 ? h("span", { class: "dl-count", text: `×${sessions.length}` }) : null,
-		active ? h("span", { class: "dl-here", text: "当前" }) : null,
-		h("span", { class: "dl-time", text: fmtRelative(s.modified) }),
-	);
-}
-
-/** 派生视图主区：按主会话轮次分组——每轮一行头（第 N 轮/摘要/派发数，点击回主会话该轮），轮下挂该轮派生的任务。 */
-function renderDeriveList() {
-	const info = currentDeriveInfo();
-	if (!info) return;
-	void ensureDeriveTurns(info);
-	const rootId = latestSessionId(info.root);
-	const turns = state.deriveTurns?.rootId === rootId ? state.deriveTurns.turns : null;
-	const groups = deriveTurnGroups(info.root, turns ?? []);
-	const nodes = [h("div", { class: "dl-head", text: `派生子任务 · ${info.subtaskCount}` })];
-	for (const g of groups) {
-		if (g.turn) {
-			const count = g.rows.reduce((n, r) => n + r.sessions.length, 0);
-			nodes.push(
+			live ? h("span", { class: "live-dot" }) : null,
+			h("span", { class: `dl-name${isRoot ? " is-root" : ""}`, text: isRoot ? "主会话" : taskShort(node.name) }),
+			node.sessions.length > 1 ? h("span", { class: "dl-count", text: `×${node.sessions.length}` }) : null,
+			active ? h("span", { class: "dl-here", text: "当前" }) : null,
+			h("span", { class: "dl-time", text: fmtRelative(latest?.modified ?? 0) }),
+		),
+	];
+	if (node.sessions.length > 1) {
+		node.sessions.forEach((s, i) => {
+			rows.push(
 				h(
 					"button",
 					{
-						class: "dl-turn-head",
+						class: `dl-inst${s.id === state.selectedId ? " active" : ""}`,
 						type: "button",
-						title: "回到主会话该轮",
-						onclick: () => jumpToTurn(g.turn.index),
+						style: `padding-left:${28 + depth * 16}px`,
+						title: s.firstMessage || s.file || "",
+						onclick: () => selectSession(s.id),
 					},
-					h("span", { class: "dl-turn-no", text: g.turn.index < 0 ? "会话开始" : `第 ${g.turn.index + 1} 轮` }),
-					h("span", { class: "dl-turn-sum", title: g.turn.summary, text: g.turn.summary || "" }),
-					h("span", { class: "dl-turn-count", text: `${count} 个派发` }),
-					h("span", { class: "dl-turn-time", text: fmtRelative(g.turn.ts) }),
-			),
+					s.live ? h("span", { class: "live-dot" }) : null,
+					h("span", { class: "dl-inst-no", text: `#${i + 1}` }),
+					h("span", { class: "dl-inst-time", text: fmtRelative(s.modified) }),
+				),
 			);
-		}
-		for (const row of g.rows) {
-			nodes.push(dlRowNode(row.name, row.depth, row.sessions));
-			if (row.sessions.length > 1) row.sessions.forEach((s, i) => nodes.push(dlRowNode(row.name, row.depth, [s], true, i)));
-		}
+		});
 	}
-	mainInner.replaceChildren(h("div", { class: "derive-list" }, ...nodes));
+	for (const c of node.children) rows.push(...deriveListRow(c, depth + 1));
+	return rows;
 }
 
-/** 回主会话指定轮：不在主会话先切过去；渲染后定位该轮，折叠则展开。 */
-function jumpToTurn(index) {
-	state.deriveView = false;
-	state.pendingTurn = index;
+/** 派生视图主区：整棵树平铺为独立轮次列表（首行=主会话，点击任意行进入对应会话轮次）。 */
+function renderDeriveList() {
 	const info = currentDeriveInfo();
-	const rootId = info ? latestSessionId(info.root) : null;
-	if (rootId && rootId !== state.selectedId) selectSession(rootId);
-	else renderMain();
+	if (!info) return;
+	mainInner.replaceChildren(
+		h("div", { class: "dl-head", text: `派生子任务 · ${info.subtaskCount}` }),
+		h("div", { class: "derive-list" }, ...deriveListRow(info.root, 0)),
+	);
 }
 
 // ---------------------------------------------------------------------------
@@ -827,17 +779,6 @@ function renderMain() {
 		mainInner.replaceChildren(h("div", { class: "empty", text: "没有匹配的轨迹（搜索与过滤无交集）" }));
 	}
 	updateFoldAll();
-	// 派生轮次跳转：定位到目标轮，折叠则先展开；pollSession 在 renderMain 后会同步恢复 scrollTop，延迟到下一任务再定位
-	if (state.pendingTurn !== null) {
-		const idx = state.pendingTurn;
-		state.pendingTurn = null;
-		if (state.folded.has(idx)) {
-			state.folded.delete(idx);
-			renderMain();
-		}
-		// pollSession 后续重渲染会替换 DOM，执行时重查目标
-		setTimeout(() => document.getElementById(`q-${idx}`)?.scrollIntoView({ block: "start" }), 0);
-	}
 }
 
 // ---------------------------------------------------------------------------
