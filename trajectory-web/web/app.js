@@ -200,6 +200,12 @@ const ICONS = {
 		["rect", { x: 1.5, y: 2.5, width: 9, height: 7, rx: 1.5 }],
 		["path", { d: "M4 5.2 5.4 6.6 4 8" }],
 	],
+	derive: [
+		["circle", { cx: 3, cy: 2.6, r: 1.3 }],
+		["circle", { cx: 9, cy: 2.6, r: 1.3 }],
+		["circle", { cx: 9, cy: 9.4, r: 1.3 }],
+		["path", { d: "M4.3 2.6h3.4M9 3.9v4.2" }],
+	],
 	text: [["path", { d: "M2 3.4h8M2 6h8M2 8.6h5" }]],
 	context: [
 		["path", { d: "M6 1.7 1.8 4.1 6 6.5l4.2-2.4z" }],
@@ -393,13 +399,9 @@ function currentDeriveInfo() {
 	return state.source === "codex" ? deriveInfo(state.sessions, state.selectedId) : null;
 }
 
-/** 同步工具条「派生」与「⟨ 主会话」按钮：派生按钮树上任一会话可用；返回按钮在派生视图或当前非主会话时出现。 */
+/** 同步「⟨ 主会话」按钮：派生视图内或当前非主会话时出现（派生入口在过滤菜单内，随菜单重建）。 */
 function updateDeriveButtons() {
 	const info = currentDeriveInfo();
-	const btn = el("derive-btn");
-	btn.hidden = !info;
-	btn.setAttribute("aria-pressed", String(state.deriveView));
-	btn.title = state.deriveView ? "返回当前会话轮次列表" : `派生子任务轮次列表（共 ${info?.subtaskCount ?? 0} 个）`;
 	el("back-main").hidden = !(state.deriveView || (info && info.path.length > 1));
 }
 
@@ -512,6 +514,25 @@ function renderFilterMenu() {
 				svgIcon(group, "menu-item-icon"),
 				h("span", { class: "menu-item-label", text: label }),
 				checked ? svgIcon("check", "menu-check") : null,
+			),
+		);
+	}
+	// 派生行与工具行同级（尾部）：仅当前会话树有子任务时渲染；勾选态 = 派生视图激活
+	if (currentDeriveInfo()) {
+		nodes.push(
+			h(
+				"button",
+				{
+					class: "menu-item",
+					type: "button",
+					role: "menuitemcheckbox",
+					"aria-checked": String(state.deriveView),
+					dataset: { derive: "1" },
+					title: "查看派生子任务轮次列表",
+				},
+				svgIcon("derive", "menu-item-icon"),
+				h("span", { class: "menu-item-label", text: "派生" }),
+				state.deriveView ? svgIcon("check", "menu-check") : null,
 			),
 		);
 	}
@@ -1484,9 +1505,12 @@ async function pollSession(force = false) {
 // ---------------------------------------------------------------------------
 
 el("filter-btn").addEventListener("click", (e) => {
-	// 只负责打开：菜单靠点外部或 Esc 关闭，方便连续调整多项
+	// 点开/点关切换；菜单项点击不关菜单，方便连续调整多项
 	e.stopPropagation();
-	if (state.menuOpen) return;
+	if (state.menuOpen) {
+		setMenuOpen(false);
+		return;
+	}
 	setMenuOpen(true);
 	// 归属映射过期/缺失时刷新，到货后重建菜单（分组表头随之更新）
 	void ensureToolOrigins().then(() => {
@@ -1521,6 +1545,14 @@ el("filter-menu").addEventListener("click", (e) => {
 		updateSubmenuChecks();
 		renderMain();
 		item.focus();
+		return;
+	}
+	if (item.dataset.derive) {
+		state.deriveView = !state.deriveView;
+		updateDeriveButtons();
+		renderMain();
+		main.scrollTop = 0;
+		setMenuOpen(false);
 		return;
 	}
 	if (item.dataset.group) {
@@ -1706,13 +1738,6 @@ el("dv-settings-menu").addEventListener("click", (e) => {
 	else if (item.dataset.mode) applyTranslateSetting({ mode: item.dataset.mode });
 });
 el("theme-btn").addEventListener("click", cycleTheme);
-el("derive-btn").addEventListener("click", () => {
-	if (!currentDeriveInfo()) return;
-	state.deriveView = !state.deriveView;
-	updateDeriveButtons();
-	renderMain();
-	main.scrollTop = 0;
-});
 el("back-main").addEventListener("click", () => {
 	const info = currentDeriveInfo();
 	state.deriveView = false;
