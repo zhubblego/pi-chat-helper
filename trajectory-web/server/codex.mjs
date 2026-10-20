@@ -6,7 +6,7 @@
  * 翻译映射（保留对话与工具，丢弃 UI 流与内部状态）：
  *   session_meta                              → header {type:"session", id, cwd, timestamp}
  *   response_item/message (user|assistant)    → 消息条目（developer/system 为每轮注入指令，跳过）
- *   response_item/reasoning                   → assistant thinking part（summary 有明文用明文，否则 redacted）
+ *   response_item/reasoning                   → assistant thinking part（summary 有明文才进轨迹；仅 encrypted_content 的解不开，跳过）
  *   response_item/function_call               → assistant toolCall part（arguments JSON 字符串→对象）
  *   response_item/custom_tool_call            → assistant toolCall part（input 脚本原文作 arguments）
  *   response_item/function_call_output 等     → toolResult 消息（按 call_id 与 toolCall 配对）
@@ -378,13 +378,15 @@ export function readCodexSession(file) {
 			if (Array.isArray(p.summary)) {
 				summary = p.summary.map((s) => (typeof s?.text === "string" ? s.text : "")).filter(Boolean).join("\n");
 			}
+			// 无明文 summary（仅 encrypted_content，服务端加密解不开）的思考不进轨迹
+			if (!summary) continue;
 			flushSystem();
 			out.push(
 				link({
 					type: "message",
 					id: p.id ?? `cx-rs-${out.length}`,
 					timestamp: ts,
-					message: { role: "assistant", content: [{ type: "thinking", text: summary, redacted: !summary }] },
+					message: { role: "assistant", content: [{ type: "thinking", text: summary }] },
 				}),
 			);
 			continue;

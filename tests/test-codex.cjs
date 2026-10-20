@@ -73,7 +73,7 @@ fs.writeFileSync(
 	const outMsg = byId.get("fco_1")?.message;
 	check("output→toolResult（call_id 配对）", outMsg?.role === "toolResult" && outMsg?.toolCallId === "call_1" && outMsg?.content?.[0]?.text === "done");
 
-	// 加密 reasoning（summary 空）→ redacted
+	// 加密 reasoning（summary 空，仅 encrypted_content）→ 不产生条目（解不开，不进轨迹）
 	const encFile = path.join(day, `rollout-2026-01-02T00-00-00-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl`);
 	fs.writeFileSync(encFile, [
 		H({ timestamp: "2026-01-02T00:00:00.100Z", type: "session_meta", payload: { id: "enc-1", cwd: "/tmp/x" } }),
@@ -82,7 +82,7 @@ fs.writeFileSync(
 	].join("\n"));
 	const enc = codex.readCodexSession(encFile);
 	const encThink = enc.entries.find((e) => e.id === "rs_enc")?.message?.content?.[0];
-	check("加密 reasoning→redacted", encThink?.type === "thinking" && encThink.redacted === true);
+	check("加密 reasoning 不产生条目", encThink === undefined);
 
 	// ---- 投影复用 ----
 	const proj = session.buildProjectionFrom({ header, entries });
@@ -96,7 +96,7 @@ fs.writeFileSync(
 	check("投影层 thinking 明文透传（codex 翻译层 text 字段兼容）", projThink?.text === "先看测试" && projThink.redacted === false && projThink.preview === "先看测试");
 	const encProj = session.buildProjectionFrom({ header: enc.header, entries: enc.entries });
 	const encEv = encProj.questions.flatMap((q) => q.events).find((e) => e.kind === "thinking");
-	check("投影层加密 thinking → redacted 占位", encEv?.text === "" && encEv.redacted === true && encEv.preview === "(空思维)");
+	check("投影层无加密 thinking 事件", encEv === undefined);
 	check("model_change 在 preamble", proj.questions.some((q) => q.index === -1 && q.events.some((e) => e.kind === "model" && e.modelChange?.modelId === "gpt-5.6-sol")));
 	check("思考等级在 preamble（thinking-level → max）", proj.questions.some((q) => q.index === -1 && q.events.some((e) => e.kind === "thinking-level" && e.thinkingLevel?.level === "max" && e.preview === "思考等级 → max")));
 	check("meta.cwd 透传", proj.meta?.cwd === "/tmp/proj");

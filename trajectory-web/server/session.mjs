@@ -237,7 +237,7 @@ export function buildProjectionFrom({ header, entries, file }) {
 					const meta = { ...base, first: i === 0 };
 					const id = `${entry.id ?? "e"}:p${i}`;
 					if (part?.type === "thinking") {
-						// pi 原生字段是 thinking/thinkingSignature；codex 翻译层（server/codex.mjs）输出 text/redacted，两者都兼容
+						// pi 原生字段是 thinking/thinkingSignature；codex 翻译层（server/codex.mjs）输出 text，两者都兼容
 						const thinkText = part.thinking ?? part.text ?? "";
 						pushEvent(
 							current,
@@ -248,7 +248,7 @@ export function buildProjectionFrom({ header, entries, file }) {
 								iso: isoOf(ts),
 								preview: previewOf(thinkText) || "(空思维)",
 								text: String(thinkText),
-								redacted: !thinkText && !!(part.thinkingSignature || part.redacted),
+								redacted: !thinkText && !!part.thinkingSignature,
 							},
 							meta,
 						);
