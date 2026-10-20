@@ -517,7 +517,19 @@ function renderDerive() {
 			"header",
 			{ class: "derive-head" },
 			h("span", { class: "derive-title", text: `派生结构 · ${info.subtaskCount}` }),
-			h("button", { class: "btn icon", type: "button", title: "收起（Esc）", onclick: () => { state.deriveOpen = false; renderDerive(); }, text: "✕" }),
+			h(
+				"button",
+				{
+					class: "btn derive-collapse",
+					type: "button",
+					title: "收起面板（Esc）",
+					onclick: () => {
+						state.deriveOpen = false;
+						renderDerive();
+					},
+				},
+				"⟨ 收起",
+			),
 		),
 		h("nav", { class: "derive-crumbs", "aria-label": "当前位置" }, ...crumbs),
 		h("div", { class: "derive-tree" }, ...deriveNodeRow(info.root, 0)),
