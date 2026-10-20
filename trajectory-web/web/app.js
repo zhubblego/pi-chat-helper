@@ -673,7 +673,7 @@ function renderEvent(ev, terms = []) {
 	let preview;
 	if (deriveName) {
 		// 派生行不展示 JSON 参数（message 是密文）：直接给任务名，能跳的再加箭头
-		preview = [h("span", { class: "ev-derive-name", text: `${taskShort(deriveName)}${deriveTarget ? " →" : ""}` })];
+		preview = [h("span", { class: "ev-derive-name", text: `${DERIVE_TOOL} ${taskShort(deriveName)}${deriveTarget ? " →" : ""}` })];
 	} else {
 		// 搜索激活时预览里高亮命中关键词；预览无命中时展示命中字段的上下文片段（如「结果 » …」）
 		preview = highlightNodes(ev.preview, terms);

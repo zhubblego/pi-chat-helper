@@ -31,6 +31,7 @@ fs.writeFileSync(
 		H({ timestamp: "2026-01-01T00:00:02.000Z", type: "response_item", payload: { type: "function_call", id: "fc_1", name: "wait", arguments: '{"cell_id":"84"}', call_id: "call_1" } }),
 		H({ timestamp: "2026-01-01T00:00:03.000Z", type: "response_item", payload: { type: "function_call_output", id: "fco_1", call_id: "call_1", output: [{ type: "input_text", text: "done" }] } }),
 		H({ timestamp: "2026-01-01T00:00:04.000Z", type: "response_item", payload: { type: "message", id: "msg_a1", role: "assistant", content: [{ type: "output_text", text: "测试通过" }] } }),
+		H({ timestamp: "2026-01-01T00:00:04.500Z", type: "response_item", payload: { type: "agent_message", id: "amsg_peer", author: "/root/child", recipient: "/root", content: [{ type: "input_text", text: "Message Type: FINAL_ANSWER\nTask name: /root\nPayload:\n子 agent 汇报" }] } }),
 		"{坏行跳过",
 		H({ timestamp: "2026-01-01T00:00:05.000Z", type: "compacted", payload: { message: "" } }),
 		H({ timestamp: "2026-01-01T00:00:06.000Z", type: "turn_context", payload: { model: "gpt-5.6-sol", effort: "max" } }),
@@ -83,6 +84,29 @@ fs.writeFileSync(
 	const enc = codex.readCodexSession(encFile);
 	const encThink = enc.entries.find((e) => e.id === "rs_enc")?.message?.content?.[0];
 	check("加密 reasoning 不产生条目", encThink === undefined);
+
+	// ---- 子 agent 会话：派发任务（agent_message NEW_TASK）投影为提问行 ----
+	const subFile = path.join(day, "rollout-2026-01-03T00-00-00-11111111-2222-3333-4444-555555555555.jsonl");
+	fs.writeFileSync(
+		subFile,
+		[
+			H({ timestamp: "2026-01-03T00:00:00.100Z", type: "session_meta", payload: { id: "sub-1", cwd: "/tmp/proj", thread_source: "subagent", agent_path: "/root/child", source: { subagent: { thread_spawn: { agent_path: "/root/child", depth: 1 } } } } }),
+			H({ timestamp: "2026-01-03T00:00:00.200Z", type: "response_item", payload: { type: "message", id: "sub_dev", role: "developer", content: [{ type: "input_text", text: "<multi_agent_role>团队协作" }] } }),
+			H({ timestamp: "2026-01-03T00:00:00.300Z", type: "response_item", payload: { type: "agent_message", id: "amsg_new", author: "/root", recipient: "/root/child", content: [{ type: "input_text", text: "Message Type: NEW_TASK\nTask name: /root/child\nSender: /root\nPayload:" }, { type: "encrypted_content", encrypted_content: "gAAAAAB" }] } }),
+			H({ timestamp: "2026-01-03T00:00:09.000Z", type: "response_item", payload: { type: "agent_message", id: "amsg_out", author: "/root/child", recipient: "/root", content: [{ type: "input_text", text: "Message Type: FINAL_ANSWER\nTask name: /root\nPayload:\n做完了" }] } }),
+		].join("\n"),
+	);
+	const sub = codex.readCodexSession(subFile);
+	const taskMsg = sub.entries.find((e) => e.id === "amsg_new")?.message;
+	check("子会话 NEW_TASK 翻译为 user 提问条目", taskMsg?.role === "user" && taskMsg.content?.[0]?.text.includes("NEW_TASK") && taskMsg.content[0].text.includes("Task name: /root/child"));
+	check("加密正文补占位说明", taskMsg?.content?.[0]?.text.endsWith("（任务正文由 codex 加密，本地不可读）"));
+	check("子会话发给父的 FINAL_ANSWER 不当提问", sub.entries.every((e) => e.id !== "amsg_out"));
+	check("主会话收到的子 agent 汇报不收", entries.every((e) => e.id !== "amsg_peer"));
+	const subProj = session.buildProjectionFrom({ header: sub.header, entries: sub.entries });
+	const subAsked = subProj.questions.filter((q) => q.index >= 0);
+	check("子会话投影出 1 个提问组", subAsked.length === 1, String(subAsked.length));
+	const subFirst = subAsked[0]?.events?.[0];
+	check("子会话首事件是提问（能看出来被派了什么任务）", subFirst?.kind === "user" && subFirst.preview.startsWith("Message Type: NEW_TASK"), subFirst?.preview);
 
 	// ---- 投影复用 ----
 	const proj = session.buildProjectionFrom({ header, entries });

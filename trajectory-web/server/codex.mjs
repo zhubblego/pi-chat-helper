@@ -294,6 +294,9 @@ export function readCodexSession(file) {
 	let lastModel;
 	let lastEffort;
 	let baseEmitted = false;
+	// 子 agent 会话：任务通过 agent_message(NEW_TASK/MESSAGE) 注入，不是 user 消息
+	let isSubagent = false;
+	let agentPath = null;
 	// 连续的上下文注入合并为一条 system 条目（sections 多段落），与 pi 的 system_context 形态一致
 	let pendingSystem = null;
 	const link = (entry) => {
@@ -323,6 +326,8 @@ export function readCodexSession(file) {
 		const p = o.payload ?? {};
 		if (o.type === "session_meta") {
 			if (!header) header = { type: "session", id: p.id ?? p.session_id, timestamp: ts, cwd: p.cwd };
+			isSubagent = p.thread_source === "subagent";
+			agentPath = p.agent_path ?? p.source?.subagent?.thread_spawn?.agent_path ?? null;
 			// 系统提示词全文 → 并入会话开头的上下文批次（只取首次）
 			const base = typeof p.base_instructions === "string" ? p.base_instructions : p.base_instructions?.text;
 			if (!baseEmitted && typeof base === "string" && base) {
@@ -424,7 +429,23 @@ export function readCodexSession(file) {
 			);
 			continue;
 		}
-		// 其余 response_item（agent_message 等）跳过
+		// 子 agent 会话的派发任务/追加消息 → 提问行。正文是 codex 服务端加密的 encrypted_content，
+		// 本地只能拿到 Message Type / Task name / Sender 明文头，补一句占位说明。
+		// 只收「发给本 agent 的」：主会话里收到的子 agent 汇报（recipient 不是自己）不收。
+		if (p.type === "agent_message") {
+			if (!isSubagent || (agentPath && p.recipient && p.recipient !== agentPath)) continue;
+			const parts = Array.isArray(p.content) ? p.content : [];
+			const head = parts
+				.map((c) => (c?.type === "input_text" ? String(c.text ?? "") : ""))
+				.join("")
+				.trim();
+			if (!head) continue;
+			const text = parts.some((c) => c?.type === "encrypted_content") ? `${head}\n（任务正文由 codex 加密，本地不可读）` : head;
+			flushSystem();
+			out.push(link({ type: "message", id: p.id ?? `cx-agent-${out.length}`, timestamp: ts, message: { role: "user", content: [{ type: "text", text }] } }));
+			continue;
+		}
+		// 其余 response_item（FINAL_ANSWER 等）跳过
 	}
 	flushSystem();
 	return { header, entries: out };
