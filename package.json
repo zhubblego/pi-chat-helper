@@ -1,6 +1,6 @@
 {
 	"name": "pi-chat-helper",
-	"version": "0.4.0",
+	"version": "0.5.0",
 	"type": "module",
 	"description": "pi coding agent 扩展包：浏览器会话轨迹回放 + TUI 提问跳转面板（trajectory web viewer + question panel）",
 	"license": "MIT",
