@@ -42,6 +42,7 @@ import {
 const LS_FILTERS = "tw.filters";
 const LS_THEME = "tw.theme";
 const LS_TRANSLATE = "tw.translate";
+const LS_DRAWER_W = "tw.drawerWidth";
 const POLL_MS = 2000;
 const SESSION_LIST_EVERY = 3; // 每 3 个 tick 刷一次会话列表（约 6s）
 
@@ -1062,6 +1063,86 @@ function closeDrawer() {
 }
 
 // ---------------------------------------------------------------------------
+// 详情抽屉宽度：左边界拖拽（360px ~ 94vw），双击恢复默认，宽度存 localStorage
+// ---------------------------------------------------------------------------
+
+const DRAWER_DEFAULT_W = 620;
+const DRAWER_MIN_W = 360;
+
+function drawerMaxWidth() {
+	return Math.min(Math.round(window.innerWidth * 0.94), 1400);
+}
+
+/** 把任意宽度夹到合法区间（考虑 94vw 上限）。 */
+function clampDrawerWidth(width) {
+	return Math.min(Math.max(Math.round(width), DRAWER_MIN_W), drawerMaxWidth());
+}
+
+/** 只改当前宽度（拖动过程用，不写存储）。 */
+function previewDrawerWidth(width) {
+	drawer.style.setProperty("--tw-drawer-w", `${clampDrawerWidth(width)}px`);
+}
+
+/** 落定宽度并持久化到 localStorage。 */
+function commitDrawerWidth(width) {
+	previewDrawerWidth(width);
+	try {
+		localStorage.setItem(LS_DRAWER_W, String(clampDrawerWidth(width)));
+	} catch {
+		/* 无痕模式忽略 */
+	}
+}
+
+function loadDrawerWidth() {
+	let saved = 0;
+	try {
+		saved = Number(localStorage.getItem(LS_DRAWER_W)) || 0;
+	} catch {
+		saved = 0;
+	}
+	if (saved > 0) previewDrawerWidth(saved);
+}
+
+function bindDrawerResize() {
+	const handle = el("drawer-resize");
+	if (!handle) return;
+	handle.addEventListener("pointerdown", (e) => {
+		if (e.button !== 0) return;
+		e.preventDefault();
+		const start = { x: e.clientX, width: drawer.getBoundingClientRect().width };
+		handle.classList.add("dragging");
+		try {
+			handle.setPointerCapture(e.pointerId);
+		} catch {
+			/* 合成事件/环境不支持捕获时靠 window 监听兜底 */
+		}
+		// 左边界：指针往左拉 = 变宽
+		const onMove = (ev) => previewDrawerWidth(start.width - (ev.clientX - start.x));
+		const onEnd = () => {
+			window.removeEventListener("pointermove", onMove);
+			window.removeEventListener("pointerup", onEnd);
+			window.removeEventListener("pointercancel", onEnd);
+			handle.classList.remove("dragging");
+			commitDrawerWidth(drawer.getBoundingClientRect().width);
+		};
+		window.addEventListener("pointermove", onMove);
+		window.addEventListener("pointerup", onEnd);
+		window.addEventListener("pointercancel", onEnd);
+	});
+	handle.addEventListener("dblclick", () => commitDrawerWidth(DRAWER_DEFAULT_W));
+	handle.addEventListener("keydown", (e) => {
+		if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+		e.preventDefault();
+		const step = e.shiftKey ? 64 : 16;
+		commitDrawerWidth(drawer.getBoundingClientRect().width + (e.key === "ArrowLeft" ? step : -step));
+	});
+	// 窗口变窄时把超宽的抽屉收回可视范围（不写回存储，复原窗口后保留原偏好）
+	window.addEventListener("resize", () => {
+		if (drawer.getBoundingClientRect().width > drawerMaxWidth()) previewDrawerWidth(drawerMaxWidth());
+	});
+}
+
+// ---------------------------------------------------------------------------
 // 视图位置（URL hash）：#s=<会话id>&e=<事件id> —— 刷新不丢详情抽屉。
 // 事件 id 仅会话内唯一，必须连同会话一起记录；用 replaceState 不产生历史记录。
 // ---------------------------------------------------------------------------
@@ -1826,6 +1907,8 @@ try {
 	/* 无痕模式等场景忽略 */
 }
 renderToolbar();
+loadDrawerWidth();
+bindDrawerResize();
 void ensureToolOrigins();
 void pollSources();
 pollSessions();

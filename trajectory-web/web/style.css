@@ -973,13 +973,46 @@ mark.ev-hit {
 	top: var(--tw-topbar-height);
 	right: 0;
 	bottom: 0;
-	width: min(620px, 94vw);
+	width: min(var(--tw-drawer-w, 620px), 94vw);
 	background: var(--dsw-alias-bg-layer-1);
 	border-left: 1px solid var(--dsw-alias-border-l1);
 	box-shadow: var(--dsw-elevation-stroke);
 	display: flex;
 	flex-direction: column;
 	z-index: 10;
+}
+
+/* 左边界拖拽：跨在边框上的 9px 抓取区，hover/拖动时显示一条链接色竖线 */
+.drawer-resize {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: -4px;
+	width: 9px;
+	cursor: col-resize;
+	touch-action: none;
+	z-index: 6;
+}
+
+.drawer-resize::after {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 4px;
+	width: 1px;
+	background: transparent;
+	transition: background 0.12s var(--ds-ease-in-out);
+}
+
+.drawer-resize:hover::after,
+.drawer-resize:focus-visible::after,
+.drawer-resize.dragging::after {
+	background: var(--dsw-alias-link);
+}
+
+.drawer-resize:focus-visible {
+	outline: none;
 }
 
 /* 侧边工具条：贴抽屉左缘竖排（译/复制/设置）+ 底部收起把手；收起后只剩贴边箭头 */

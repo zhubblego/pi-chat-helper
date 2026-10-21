@@ -246,6 +246,11 @@ const check = (label, cond, extra = "") => {
 	check("会话表头有分组总开关按钮", indexSource.includes('id="groups-toggle"'));
 	check("分组总开关的同步态与点击都接上了", appSource.includes("function updateGroupsToggle") && appSource.includes('el("groups-toggle").addEventListener("click"'));
 
+	// ---- 回归守卫：详情抽屉左边界拖拽调宽 ----
+	check("抽屉有左边界拖拽把手", indexSource.includes('id="drawer-resize"') && indexSource.includes('role="separator"'));
+	check("拖拽调宽已接线且宽度持久化", appSource.includes("function bindDrawerResize") && appSource.includes('"tw.drawerWidth"') && appSource.includes("commitDrawerWidth(DRAWER_DEFAULT_W)"));
+	check("抽屉宽度写 CSS 变量（CSS 里默认 620px）", appSource.includes('setProperty("--tw-drawer-w"'));
+
 	console.log(failed === 0 ? "\nALL PASS" : `\n${failed} FAILED`);
 	process.exit(failed === 0 ? 0 : 1);
 })();
