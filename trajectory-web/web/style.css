@@ -999,16 +999,21 @@ mark.ev-hit {
 	position: absolute;
 	top: 0;
 	bottom: 0;
-	left: 4px;
-	width: 1px;
+	left: 2px;
+	width: 3px;
+	border-radius: 2px;
 	background: transparent;
 	transition: background 0.12s var(--ds-ease-in-out);
 }
 
+/* 中性灰 + 上下渐隐：只是个看得见抓手的提示，不要用链接蓝抢注意力 */
 .drawer-resize:hover::after,
-.drawer-resize:focus-visible::after,
+.drawer-resize:focus-visible::after {
+	background: linear-gradient(to bottom, transparent, var(--dsw-alias-border-l2) 14%, var(--dsw-alias-border-l2) 86%, transparent);
+}
+
 .drawer-resize.dragging::after {
-	background: var(--dsw-alias-link);
+	background: linear-gradient(to bottom, transparent, var(--dsw-alias-label-tertiary) 8%, var(--dsw-alias-label-tertiary) 92%, transparent);
 }
 
 .drawer-resize:focus-visible {
