@@ -798,6 +798,16 @@ svg.tb-icon {
 	color: var(--dsw-alias-state-success-primary);
 }
 
+/* 模型调用失败（超时/404/限流）：整行偏红，不依赖工具错误 */
+.k-error .ev-tag {
+	background: var(--dsw-alias-interactive-bg-hover-danger);
+	color: var(--dsw-alias-state-error-primary);
+}
+
+.ev.k-error {
+	border-left-color: var(--dsw-alias-state-error-primary);
+}
+
 /* 上下文类事件（系统/压缩/分支/模型/等级/用量/编辑/自定义）：统一低调灰蓝 */
 .k-system .ev-tag,
 .k-compaction .ev-tag,

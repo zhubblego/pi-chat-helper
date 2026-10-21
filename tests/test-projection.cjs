@@ -139,6 +139,23 @@ const branchFile = writeSession("branch.jsonl", [
 	const entries = mod.parseSessionFile(branchFile).entries;
 	check("activeBranch 沿 parentId 回溯", activeBranch(entries).map((e) => e.id).join(",") === "u1,a1,a2b", activeBranch(entries).map((e) => e.id).join(","));
 
+	// ---- 模型调用失败：errorMessage → 错误事件 ----
+	const errFile = writeSession("err.jsonl", [
+		{ type: "session", version: 3, id: "sess-3", timestamp: H, cwd: "/tmp/proj" },
+		msg("u1", null, 1000, { role: "user", content: "问题" }),
+		msg("e1", "u1", 2000, { role: "assistant", model: "glm-5.1", provider: "prov", stopReason: "error", errorMessage: "Request timed out.", content: [] }),
+		msg("e2", "e1", 3000, { role: "assistant", model: "m2", provider: "prov", stopReason: "error", errorMessage: "404 no active route found", content: [{ type: "thinking", thinking: "半截思考" }] }),
+	]);
+	const errProj = buildProjection(errFile);
+	const errQ = errProj.questions[0];
+	check("errorMessage → 错误事件（content 为空也不丢）", errQ.events.map((e) => e.kind).join(",") === "user,error,error,thinking", errQ.events.map((e) => e.kind).join(","));
+	const errEv = errQ.events.find((e) => e.kind === "error");
+	check("错误事件内容与摘要", errEv.error.message === "Request timed out." && errEv.preview === "错误：Request timed out." && errEv.error.stopReason === "error", JSON.stringify(errEv.preview));
+	check("错误事件带模型信息", errEv.error.model === "glm-5.1" && errEv.msg.model === "glm-5.1");
+	check("错误计入轮次统计", errQ.stats.errors === 2 && errQ.stats.events === 4, JSON.stringify(errQ.stats));
+	const errLight = toLight(errProj).questions[0].events.find((e) => e.kind === "error");
+	check("light 投影保留错误正文", errLight.error.message === "Request timed out." && errLight.truncated === false);
+
 	// ---- 无 id 的遗留格式按文件顺序 ----
 	const legacyEntries = [{ type: "message", message: { role: "user", content: "旧" } }];
 	check("无 id 时按文件顺序返回", activeBranch(legacyEntries).length === 1);

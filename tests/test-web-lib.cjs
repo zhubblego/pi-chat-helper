@@ -32,17 +32,21 @@ const check = (label, cond, extra = "") => {
 	check("片段：点号字面量", hitSnippet({ tool: { result: "axb" } }, ["a.b"]) === null);
 	const sn3 = hitSnippet({ tool: { result: "a".repeat(200) + "needle" } }, ["needle"]);
 	check("片段：长文本窗口截断", sn3?.snippet.startsWith("…"));
+	const snErr = hitSnippet({ error: { message: "Request timed out." } }, ["timed"]);
+	check("片段：错误字段带标签", snErr?.label === "错误" && snErr.snippet.includes("timed out"));
 
 	// ---- 过滤映射 ----
 	check("tool → tools 组", kindGroup("tool") === "tools" && kindGroup("bash") === "tools");
 	check("thinking → thinking 组", kindGroup("thinking") === "thinking");
 	check("system/compaction → context 组", kindGroup("system") === "context" && kindGroup("compaction") === "context");
+	check("error → error 组（独立开关）", kindGroup("error") === "error");
 	check("未知 kind 归入 context", kindGroup("what") === "context");
 
 	const onlyThinking = presetFilters("thinking");
 	check("仅思考预设：thinking 通过、其余不过", eventPasses(onlyThinking, "thinking") === true && eventPasses(onlyThinking, "tool") === false && eventPasses(onlyThinking, "text") === false && eventPasses(onlyThinking, "system") === false);
 	const all = presetFilters("all");
 	check("全部预设：所有组通过", ["thinking", "tool", "text", "system", "user"].every((k) => eventPasses(all, k)));
+	check("预设不隐藏错误（仅思考/仅工具/仅输出时仍显示失败）", presetFilters("thinking").error === true && presetFilters("tools").error === true && presetFilters("text").error === true && all.error === true);
 
 	// ---- 工具名子菜单助手 ----
 	const toolQuestions = [
@@ -80,6 +84,7 @@ const check = (label, cond, extra = "") => {
 
 	check("标签：文本行统一显示为输出（最终答复仅靠绿色竖条区分）", eventTagLabel({ kind: "text", isFinal: true }) === "输出" && eventTagLabel({ kind: "text" }) === "输出");
 	check("标签：出错工具", eventTagLabel({ kind: "tool", tool: { isError: true } }) === "工具✗");
+	check("标签：错误事件", eventTagLabel({ kind: "error" }) === "错误");
 
 	// ---- 格式化（时长格式复刻自 deepseek trajectory-record.ts） ----
 	check(
@@ -203,6 +208,8 @@ const check = (label, cond, extra = "") => {
 	const qUser = [{ index: 2, summary: "", events: [{ id: "u1", kind: "user", text: "今天天气怎么样" }] }];
 	index.update(qUser);
 	check("提问正文仍可搜（user 事件自身文本）", index.search("天气").has("u1"));
+	index.update([{ index: 3, summary: "", events: [{ id: "x1", kind: "error", error: { message: "Request timed out." } }] }]);
+	check("错误事件正文可搜", index.search("timed out").has("x1"));
 	index.update(questions);
 	index.update([{ ...questions[0], events: [questions[0].events[0]] }]);
 	check("增量同步移除消失的事件", index.search("先看配置").size === 0);

@@ -468,7 +468,7 @@ function revealEvent(eid) {
 // ---------------------------------------------------------------------------
 
 /** 过滤菜单里可开关的类型（工具走子菜单，不是开关）。 */
-const TOGGLE_GROUPS = ["user", "thinking", "text", "context", "approval"];
+const TOGGLE_GROUPS = ["user", "thinking", "text", "context", "error", "approval"];
 
 /** 过滤菜单：显示类型勾选（照 deepseek Menu 的紧凑卡与选中语义）；工具行是带子菜单入口的行。 */
 function renderFilterMenu() {
@@ -926,6 +926,12 @@ function drawerBodyNodes(view) {
 			return [
 				...(view.custom?.customType ? [h("div", { class: "kv" }, h("span", { text: "类型" }), h("b", { text: String(view.custom.customType) }))] : []),
 				mdNode(view.custom?.text ?? ""),
+			];
+		case "error":
+			return [
+				...(view.error?.stopReason ? [h("div", { class: "kv" }, h("span", { text: "结束原因" }), h("b", { text: String(view.error.stopReason) }))] : []),
+				...(view.error?.model ? [h("div", { class: "kv" }, h("span", { text: "模型" }), h("b", { text: [view.error.provider, view.error.model].filter(Boolean).join("/") }))] : []),
+				preNode(view.error?.message ?? "", "wrap"),
 			];
 		case "usage":
 			return [

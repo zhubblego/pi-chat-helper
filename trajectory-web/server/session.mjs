@@ -152,6 +152,7 @@ function pushEvent(question, event, msgMeta) {
 		st.tools++;
 		if (event.tool && event.tool.isError) st.errors++;
 	}
+	if (event.kind === "error") st.errors++;
 	return event;
 }
 
@@ -232,6 +233,27 @@ export function buildProjectionFrom({ header, entries, file }) {
 					thinkingLevel: msg.thinkingLevel,
 					usage: usage ? cloneJson(usage) : undefined,
 				};
+				// 模型调用失败（超时/路由 404/限流/断流）：content 往往为空，错误只存在 errorMessage 里，
+				// 单记一条错误事件，否则这一轮在轨迹上看不到任何失败痕迹。
+				if (msg.errorMessage) {
+					pushEvent(
+						current,
+						{
+							id: `${entry.id ?? "e"}:err`,
+							kind: "error",
+							ts,
+							iso: isoOf(ts),
+							preview: `错误：${previewOf(msg.errorMessage, 80)}`,
+							error: {
+								message: String(msg.errorMessage),
+								stopReason: msg.stopReason ?? undefined,
+								provider: msg.provider,
+								model: msg.model,
+							},
+						},
+						base,
+					);
+				}
 				const parts = Array.isArray(msg.content) ? msg.content : [];
 				parts.forEach((part, i) => {
 					const meta = { ...base, first: i === 0 };
@@ -637,6 +659,12 @@ export function lightEvent(ev) {
 		case "custom": {
 			const c = cap(ev.custom.text);
 			out.custom = { ...ev.custom, text: c.text };
+			out.truncated = c.truncated;
+			break;
+		}
+		case "error": {
+			const c = cap(ev.error.message);
+			out.error = { ...ev.error, message: c.text };
 			out.truncated = c.truncated;
 			break;
 		}

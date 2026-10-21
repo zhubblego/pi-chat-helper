@@ -11,6 +11,7 @@ export const FILTER_GROUPS = {
 	tools: ["tool", "bash"],
 	text: ["text"],
 	context: ["system", "compaction", "branch", "model", "thinking-level", "usage", "context-edit", "custom"],
+	error: ["error"],
 	approval: ["approval"],
 };
 
@@ -20,6 +21,7 @@ export const GROUP_LABELS = {
 	tools: "工具",
 	text: "输出",
 	context: "上下文",
+	error: "错误",
 	approval: "审批",
 };
 
@@ -95,13 +97,13 @@ export function groupToolNames(names, origins = {}) {
 export function presetFilters(name) {
 	switch (name) {
 		case "thinking":
-			return { user: false, thinking: true, tools: false, text: false, context: false };
+			return { user: false, thinking: true, tools: false, text: false, context: false, error: true, approval: false };
 		case "tools":
-			return { user: false, thinking: false, tools: true, text: false, context: false };
+			return { user: false, thinking: false, tools: true, text: false, context: false, error: true, approval: false };
 		case "text":
-			return { user: false, thinking: false, tools: false, text: true, context: false };
+			return { user: false, thinking: false, tools: false, text: true, context: false, error: true, approval: false };
 		default:
-			return { user: true, thinking: true, tools: true, text: true, context: true };
+			return { user: true, thinking: true, tools: true, text: true, context: true, error: true, approval: true };
 	}
 }
 
@@ -135,6 +137,8 @@ export function eventTagLabel(ev) {
 			return "编辑";
 		case "custom":
 			return "自定义";
+		case "error":
+			return "错误";
 		default:
 			return String(ev.kind ?? "?");
 	}
@@ -246,6 +250,7 @@ export function hitSnippet(ev, terms) {
 		["正文", ev.text],
 		["压缩", ev.compaction?.summary],
 		["消息", ev.custom?.text],
+		["错误", ev.error?.message],
 	];
 	for (const [label, text] of fields) {
 		if (typeof text !== "string" || !text) continue;
@@ -454,6 +459,7 @@ function eventSources(_question, event) {
 	const system = event.system ?? {};
 	const compaction = event.compaction ?? {};
 	const custom = event.custom ?? {};
+	const error = event.error ?? {};
 	const msg = event.msg ?? {};
 	return [
 		// 轮次标签与摘要不参与索引：命中只算事件自身内容，避免摘要/「会话开始」标签命中把整轮无关键词的事件带出（提问正文已由 user 事件覆盖）
@@ -471,6 +477,7 @@ function eventSources(_question, event) {
 		compaction.summary ?? "",
 		custom.customType ?? "",
 		custom.text ?? "",
+		error.message ?? "",
 		msg.model ?? "",
 		msg.provider ?? "",
 	];
