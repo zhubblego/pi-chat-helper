@@ -1,13 +1,15 @@
 /**
  * trajectory-web — 轨迹观察服务（模式 A：绑定当前 pi 实例）。
  *
- * `/deepseek-trail start [端口]`：在 pi 进程内启动本地 web 服务（默认 127.0.0.1:7717，
- *   端口被占用自动改用随机端口），观察**当前项目的全部会话**——默认选中当前会话，
- *   页面左侧会话栏可切换项目内其它会话，运行中的会话自动刷新。
- *   服务随本 pi 实例退出而停止（绑定语义）。
+ * `/deepseek-trail start [端口] [--codex] [--all]`：在 pi 进程内启动本地 web 服务
+ *   （默认 127.0.0.1:7717，端口被占用自动改用随机端口）：
+ *   - 无选项：当前项目的全部 pi 会话（默认选中当前会话）。
+ *   - `--codex`：范围不变，同时开放 Codex 轨迹源（`~/.codex/sessions`，按当前工作目录过滤）。
+ *   - `--all`：观察全部 pi 历史与会话 + 宿主机上全部可用轨迹源（等价模式 B 的范围）。
+ *   页面左侧会话栏可切换会话，运行中的会话自动刷新；服务随本 pi 实例退出而停止（绑定语义）。
  * `/deepseek-trail stop`：停止服务。
  *
- * 模式 B（观察全部 pi 历史与运行中的会话）由独立入口提供：`npm run dev`。
+ * 模式 B（不绑 pi、可常驻）由独立入口提供：`npm run dev`。
  *
  * 设计：
  *   - 只读会话 JSONL，不写回会话；仅监听回环地址。
@@ -30,7 +32,52 @@ const WEB_DIR = join(HERE, "web");
 
 const COMMAND_NAME = "deepseek-trail";
 const DEFAULT_PORT = 7717;
-const USAGE = `用法：/${COMMAND_NAME} start [端口]（默认 ${DEFAULT_PORT}）| /${COMMAND_NAME} stop`;
+const USAGE = `用法：/${COMMAND_NAME} start [端口] [--codex] [--all]（默认 ${DEFAULT_PORT}）| /${COMMAND_NAME} stop`;
+
+/** start 的参数：端口 + 范围（--all 全部历史）+ 源白名单（--codex 放开 Codex 源）。 */
+interface StartOptions {
+	port: number;
+	scope: "project" | "all";
+	sources?: string[];
+}
+
+/**
+ * 解析 `start [端口] [--codex] [--all] [--port <n>]`。
+ * 端口可用位置参数（向后兼容）或 --port；--all 隐含全部源，与 --codex 同时给时以 --all 为准。
+ */
+function parseStartOptions(args: string[]): { options?: StartOptions; error?: string } {
+	let portText: string | undefined;
+	let codex = false;
+	let all = false;
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if (arg === "--codex") {
+			codex = true;
+			continue;
+		}
+		if (arg === "--all") {
+			all = true;
+			continue;
+		}
+		if (arg === "--port" || arg.startsWith("--port=")) {
+			const value = arg === "--port" ? args[++i] : arg.slice("--port=".length);
+			if (!value) return { error: "--port 需要一个端口号" };
+			portText = value;
+			continue;
+		}
+		if (arg.startsWith("-")) return { error: `未知选项：${arg}` };
+		if (portText !== undefined) return { error: `多余的参数：${arg}` };
+		portText = arg;
+	}
+	let port = DEFAULT_PORT;
+	if (portText !== undefined) {
+		const n = Number(portText);
+		if (!Number.isInteger(n) || n < 1024 || n > 65535) return { error: `端口非法：${portText}（需 1024–65535 的整数）` };
+		port = n;
+	}
+	if (all) return { options: { port, scope: "all" } };
+	return { options: { port, scope: "project", sources: codex ? ["pi", "codex"] : undefined } };
+}
 
 type Notice = (message: string, type?: "info" | "warning" | "error") => void;
 
@@ -105,9 +152,23 @@ async function closeSlot(): Promise<void> {
 }
 
 /** 进程内启动；端口占用时降级为系统分配端口（port 0）。 */
-async function startInProcess(port: number, sessionFile: string, toolOrigins: () => Record<string, ToolOriginEntry>): Promise<ServerHandle> {
+async function startInProcess(
+	options: StartOptions,
+	sessionFile: string,
+	projectPath: string | undefined,
+	toolOrigins: () => Record<string, ToolOriginEntry>,
+): Promise<ServerHandle> {
 	const { createTrajectoryServer } = await import("./server/app.mjs");
-	const base = { scope: "project" as const, sessionFile, webDir: WEB_DIR, host: "127.0.0.1", toolOrigins };
+	const base = {
+		scope: options.scope,
+		sessionFile,
+		projectPath,
+		sources: options.sources,
+		webDir: WEB_DIR,
+		host: "127.0.0.1",
+		toolOrigins,
+	};
+	const port = options.port;
 	try {
 		return await createTrajectoryServer({ ...base, port });
 	} catch (err) {
@@ -118,16 +179,14 @@ async function startInProcess(port: number, sessionFile: string, toolOrigins: ()
 	}
 }
 
-async function runStart(portArg: string | undefined, ctx: ExtensionCommandContext, pi: ExtensionAPI, notify: Notice): Promise<void> {
-	let port = DEFAULT_PORT;
-	if (portArg) {
-		const n = Number(portArg);
-		if (!Number.isInteger(n) || n < 1024 || n > 65535) {
-			notify(`端口非法：${portArg}（需 1024–65535 的整数）`, "warning");
-			return;
-		}
-		port = n;
+async function runStart(rawArgs: string[], ctx: ExtensionCommandContext, pi: ExtensionAPI, notify: Notice): Promise<void> {
+	const parsed = parseStartOptions(rawArgs);
+	if (parsed.error) {
+		notify(`${parsed.error}；${USAGE}`, "warning");
+		return;
 	}
+	// parseStartOptions 保证 options 与 error 二选一
+	const options = parsed.options as StartOptions;
 
 	const existing = slot().handle;
 	if (existing) {
@@ -141,11 +200,17 @@ async function runStart(portArg: string | undefined, ctx: ExtensionCommandContex
 		return;
 	}
 
+	// codex 源按真实工作目录过滤；老版本 pi 或测试替身可能缺 getCwd，缺失时退回不过滤。
+	const getCwd = (ctx.sessionManager as { getCwd?: () => string }).getCwd;
+	const projectPath = options.scope === "project" && typeof getCwd === "function" ? getCwd.call(ctx.sessionManager) : undefined;
+
 	try {
-		const handle = await startInProcess(port, sessionFile, () => toolOriginsFromPi(pi));
+		const handle = await startInProcess(options, sessionFile, projectPath, () => toolOriginsFromPi(pi));
 		slot().handle = handle;
-		const note = handle.port === port ? "" : `（端口 ${port} 被占用，改用 ${handle.port}）`;
-		notify(`轨迹服务已启动：${handle.url}${note}\n范围：当前项目的全部会话；随本 pi 实例退出而停止`);
+		const note = handle.port === options.port ? "" : `（端口 ${options.port} 被占用，改用 ${handle.port}）`;
+		const scopeText = options.scope === "all" ? "全部项目历史 + 全部可用轨迹源" : "当前项目的全部会话";
+		const sourceText = options.sources?.length ? `（轨迹源：${options.sources.join(" + ")}）` : "";
+		notify(`轨迹服务已启动：${handle.url}${note}\n范围：${scopeText}${sourceText}；随本 pi 实例退出而停止`);
 	} catch (err) {
 		notify(`轨迹服务启动失败：${(err as Error).message}`, "error");
 	}
@@ -162,10 +227,12 @@ async function runStop(notify: Notice): Promise<void> {
 
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand(COMMAND_NAME, {
-		description: `轨迹观察服务（绑定本 pi 实例，观察本项目全部会话）：start [端口] 启动（默认 ${DEFAULT_PORT}），stop 停止`,
+		description: `轨迹观察服务（绑定本 pi 实例）：start [端口] [--codex] [--all] 启动（默认 ${DEFAULT_PORT}），stop 停止`,
 		getArgumentCompletions: (prefix) => {
 			const items = [
-				{ value: "start", label: "start", description: "启动轨迹观察 web 服务（当前项目全部会话）" },
+				{ value: "start", label: "start", description: "启动轨迹观察 web 服务（当前项目的 pi 会话）" },
+				{ value: "start --codex", label: "start --codex", description: "当前项目 + Codex 轨迹源" },
+				{ value: "start --all", label: "start --all", description: "全部项目历史 + 全部可用轨迹源" },
 				{ value: "stop", label: "stop", description: "停止服务" },
 			];
 			const p = (prefix ?? "").trim();
@@ -178,7 +245,7 @@ export default function (pi: ExtensionAPI) {
 			};
 			const [subcommand, ...rest] = (args ?? "").trim().split(/\s+/).filter(Boolean);
 			if (subcommand === "start") {
-				await runStart(rest[0], ctx, pi, notify);
+				await runStart(rest, ctx, pi, notify);
 				return;
 			}
 			if (subcommand === "stop") {

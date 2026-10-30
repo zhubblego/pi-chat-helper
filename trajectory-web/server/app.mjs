@@ -5,11 +5,14 @@
  *   project：只观察一个项目会话目录（mode A，pi 扩展进程内启动；绑定 pi 实例）
  *   all：观察全部 pi 会话历史与运行中的会话（mode B，`npm run dev` 独立启动）
  *
+ * 轨迹源白名单（sources）：显式指定开放哪些源（如 ["pi", "codex"]）；缺省按 scope 推导
+ *   ——project 只开 pi（模式 A 默认），all 开全部可用源。
+ *
  * 接口：
  *   GET /                       web/index.html
  *   GET /app.js /lib.js /style.css /tokens.css
  *   GET /api/health             {ok, pid, scope, port, sessionsRoot, current}
- *   GET /api/sources            可用轨迹源（宿主机存在才列出；现在只有 pi）
+ *   GET /api/sources            可用轨迹源（宿主机存在才列出；白名单见 sources 选项）
  *   GET /api/sessions           会话列表（按最近活跃倒序，live = 30s 内有写入；?source=）
  *   GET /api/session?id=&v=     指定会话的 light 投影；etag 未变时 {changed:false}
  *   GET /api/event?session=&id= 单个事件的 full 载荷
@@ -127,6 +130,8 @@ const MAX_CACHED_PROJECTIONS = 4;
  *   toolOrigins?: Record<string, { kind: string, label: string }>,
  *   piDir?: string,
  *   agentDir?: string,
+ *   sources?: string[],
+ *   projectPath?: string,
  * }} options
  * @returns {Promise<{port:number, host:string, url:string, server:import("node:http").Server, close:() => Promise<void>}>}
  */
@@ -141,6 +146,11 @@ export function createTrajectoryServer(options) {
 	const scope = options.scope ?? (sessionFile ? "project" : "all");
 	if (scope === "project" && !sessionFile) throw new Error("scope=project 需要 --session <会话文件>");
 	const projectDir = scope === "project" ? dirname(sessionFile) : undefined;
+	// codex 的项目过滤按 rollout 里的真实 cwd，pi 会话目录是 `--<encoded-cwd>--` 编码路径，
+	// 两者前缀匹配不上——项目范围下必须用当前工作目录，不能复用 projectDir。
+	const projectPath = options.projectPath ? resolve(options.projectPath) : undefined;
+	// 源白名单：命令侧（--codex / --all）显式指定；缺省按 scope 推导（见文件头）。
+	const sourceAllow = Array.isArray(options.sources) && options.sources.length ? new Set(options.sources) : null;
 	const log = options.log ?? (() => {});
 
 	// 工具归属：模式 A 传精确映射提供者（每次请求现取，覆盖运行时才注册的工具，
@@ -172,7 +182,7 @@ export function createTrajectoryServer(options) {
 	const projections = new Map();
 
 	function readSessions(sourceId) {
-		if (sourceId === "codex") return listCodexSessions({ codexRoot, projectDir, liveWindowMs });
+		if (sourceId === "codex") return listCodexSessions({ codexRoot, projectDir: scope === "project" ? projectPath : undefined, liveWindowMs });
 		return listSessions({ projectDir, sessionsRoot, liveWindowMs });
 	}
 
@@ -182,9 +192,9 @@ export function createTrajectoryServer(options) {
 		{ id: "codex", label: "Codex", available: () => existsSync(codexRoot) },
 	];
 
-	/** 本服务可用的源：模式 A（scope=project，/deepseek-trail）只开放 pi；模式 B（all）为全部存在者。 */
+	/** 本服务可用的源：白名单优先；缺省模式 A（scope=project）只开放 pi，模式 B（all）为全部存在者。 */
 	function availableSources() {
-		const listed = scope === "project" ? SOURCES.filter((s) => s.id === "pi") : SOURCES;
+		const listed = sourceAllow ? SOURCES.filter((s) => sourceAllow.has(s.id)) : scope === "project" ? SOURCES.filter((s) => s.id === "pi") : SOURCES;
 		return listed.filter((s) => s.available());
 	}
 
@@ -304,6 +314,8 @@ export function createTrajectoryServer(options) {
 					scope,
 					port: server.address()?.port,
 					projectDir: projectDir ?? null,
+					projectPath: projectPath ?? null,
+					sources: availableSources().map((s) => s.id),
 					sessionsRoot,
 					current: defaultSessionId(),
 				});

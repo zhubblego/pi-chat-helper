@@ -207,6 +207,36 @@ async function stopServer(child) {
 		check("默认选中启动时传入的会话", defA.sessionId === "srv-a2", String(defA.sessionId));
 		check("项目范围退出", await stopServer(project));
 		project = null;
+
+		// ---- 模式 A + sources 白名单：放开 codex 源，按 project-path（真实 cwd）过滤 ----
+		project = startServer([
+			"--scope", "project", "--session", aOld,
+			"--sources", "pi,codex",
+			"--project-path", "/tmp/projC",
+			"--codex-root", codexRoot,
+			"--port", "0", "--web", WEB,
+		]);
+		const baseC = await waitForUrl(project);
+		const healthC = await (await fetch(`${baseC}/api/health`)).json();
+		check("项目范围 + sources 放开 codex", healthC.scope === "project" && healthC.sources?.join(",") === "pi,codex", JSON.stringify(healthC.sources));
+		const cxListC = await (await fetch(`${baseC}/api/sessions?source=codex`)).json();
+		check("codex 按 project-path 过滤命中", cxListC.sessions?.length === 1 && cxListC.sessions[0].id === "cx-a1", JSON.stringify(cxListC).slice(0, 160));
+		check("pi 源仍限本项目", (await (await fetch(`${baseC}/api/sessions?source=pi`)).json()).sessions?.length === 2);
+		check("项目范围 + sources 退出", await stopServer(project));
+		project = null;
+
+		// project-path 不匹配时 codex 列表为空（证明过滤用的是 cwd 而不是会话目录）
+		project = startServer([
+			"--scope", "project", "--session", aOld,
+			"--sources", "pi,codex",
+			"--project-path", "/tmp/projZ",
+			"--codex-root", codexRoot,
+			"--port", "0", "--web", WEB,
+		]);
+		const baseZ = await waitForUrl(project);
+		check("project-path 不匹配时 codex 空列表", (await (await fetch(`${baseZ}/api/sessions?source=codex`)).json()).sessions?.length === 0);
+		check("project-path 不匹配退出", await stopServer(project));
+		project = null;
 	} catch (err) {
 		check("测试执行", false, err.stack);
 	} finally {

@@ -29,6 +29,8 @@ function parseArgs(argv) {
 		session: undefined,
 		sessionsRoot: undefined,
 		codexRoot: undefined,
+		sources: undefined,
+		projectPath: undefined,
 		port: 7788,
 		host: "127.0.0.1",
 		web: join(HERE, "..", "web"),
@@ -50,6 +52,12 @@ function parseArgs(argv) {
 				break;
 			case "--codex-root":
 				out.codexRoot = next();
+				break;
+			case "--sources":
+				out.sources = (next() ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+				break;
+			case "--project-path":
+				out.projectPath = next();
 				break;
 			case "--port":
 				out.port = Number(next());
@@ -94,6 +102,8 @@ createTrajectoryServer({
 	sessionFile: options.session,
 	sessionsRoot: options.sessionsRoot,
 	codexRoot: options.codexRoot,
+	sources: options.sources,
+	projectPath: options.projectPath,
 	webDir: options.web,
 	host: options.host,
 	port: options.port,

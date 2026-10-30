@@ -44,6 +44,13 @@ pi -e git:github.com/zhubblego/pi-chat-helper
 
 进程内启动 web 服务（默认 `http://127.0.0.1:7717`），浏览器里看当前项目的全部会话：左侧会话栏 + 问题栏，右侧轨迹按提问分段，条目点开有 Markdown 渲染、工具参数与结果、tokens 与耗时。`/deepseek-trail stop` 停止。
 
+默认只开放 pi 源；加 `--codex` 同时看本机 Codex 轨迹（`.codex/sessions`，按当前工作目录过滤），加 `--all` 放开全部项目历史与全部可用轨迹源：
+
+```text
+/deepseek-trail start --codex      # 当前项目：pi + Codex
+/deepseek-trail start --all        # 全部项目历史 + 全部可用源
+```
+
 也可以脱离 pi 跑独立服务，观察**全部 pi 历史**与运行中会话（按项目分组、live 徽标），以及本机 **Codex 历史**（`.codex/sessions`）：
 
 ```bash
@@ -59,17 +66,20 @@ npm run dev        # 默认 http://127.0.0.1:7788
 
 |  | 模式 A（pi 插件） | 模式 B（独立 web server） |
 |---|---|---|
-| 启动 | pi 内执行 `/deepseek-trail start [端口]` | `npm run dev`（默认 7788） |
-| 范围 | 当前项目的全部会话 | 全部 pi 历史 + 运行中的会话（按项目分组） |
-| 轨迹源 | 只开放 pi（Agent 选择栏只亮 π） | 列出宿主机上全部可用 agent（π、Codex…） |
+| 启动 | pi 内执行 `/deepseek-trail start [端口] [--codex] [--all]` | `npm run dev`（默认 7788） |
+| 范围 | 缺省当前项目的全部会话；`--all` 同模式 B（全部历史） | 全部 pi 历史 + 运行中的会话（按项目分组） |
+| 轨迹源 | 缺省只开放 pi；`--codex` 加 Codex，`--all` 全部可用源 | 列出宿主机上全部可用 agent（π、Codex…） |
 | 生命周期 | 绑定本 pi 实例，退出即停 | 独立常驻，与 pi 无关 |
 | 实现 | 进程内 HTTP 服务 | 独立 node 进程 |
 
 模式 A 命令：
 
 ```text
-/deepseek-trail start          # 默认 127.0.0.1:7717；端口占用自动降级并提示
-/deepseek-trail stop           # 停止服务
+/deepseek-trail start               # 默认 127.0.0.1:7717；端口占用自动降级并提示（只 pi 源）
+/deepseek-trail start --codex       # 当前项目 + Codex 源（codex 按当前工作目录过滤）
+/deepseek-trail start --all         # 全部项目历史 + 全部可用轨迹源
+/deepseek-trail start --port 7799   # 端口也可用 --port 指定，允许与上面两个开关任意组合
+/deepseek-trail stop                # 停止服务
 ```
 
 ### 界面能力
@@ -140,10 +150,12 @@ PI_HOME=<pi 安装目录> node tests/test-turn.cjs
 PI_HOME=<pi 安装目录> node tests/test-headless-tui.cjs
 
 # 类型检查（仓库无本地 typescript，用 npx 缓存路径）
+# 先把 pi 安装目录的依赖链进来（node_modules 已在 .gitignore，tsc/LSP 靠它解析类型）：
+#   ln -s <pi 安装目录>/node_modules node_modules
 node ~/.npm/_npx/483d2954a4c5190c/node_modules/typescript/bin/tsc -p tsconfig.json
 ```
 
-环境变量 `PI_HOME` 指向本机 pi 安装目录（含 jiti 与 pi-tui）。
+环境变量 `PI_HOME` 指向本机 pi 安装目录。两种安装布局都支持：旧布局（`dist/` 与 `node_modules/` 同在 `PI_HOME` 根）或 managed install（`PI_HOME` 指到 `node_modules/@earendil-works/pi-coding-agent`，依赖从上层 `node_modules/` 找）。
 
 ## License
 
