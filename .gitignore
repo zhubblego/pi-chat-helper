@@ -1,4 +1,5 @@
-node_modules/
+# 依赖：不写结尾斜杠，好让软链到 pi 安装目录的 node_modules 也被忽略
+node_modules
 *.log
 .env*
 .DS_Store
