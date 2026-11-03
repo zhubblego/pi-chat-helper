@@ -45,8 +45,10 @@ const check = (label, cond, extra = "") => {
 	const onlyThinking = presetFilters("thinking");
 	check("仅思考预设：thinking 通过、其余不过", eventPasses(onlyThinking, "thinking") === true && eventPasses(onlyThinking, "tool") === false && eventPasses(onlyThinking, "text") === false && eventPasses(onlyThinking, "system") === false);
 	const all = presetFilters("all");
-	check("全部预设：所有组通过", ["thinking", "tool", "text", "system", "user"].every((k) => eventPasses(all, k)));
-	check("预设不隐藏错误（仅思考/仅工具/仅输出时仍显示失败）", presetFilters("thinking").error === true && presetFilters("tools").error === true && presetFilters("text").error === true && all.error === true);
+	check("全部预设：所有组通过", ["thinking", "tool", "text", "answer", "system", "user"].every((k) => eventPasses(all, k)));
+	const onlyAnswer = presetFilters("answer");
+	check("仅回答预设：answer 通过、过程/其余不过", eventPasses(onlyAnswer, "answer") === true && eventPasses(onlyAnswer, "text") === false && eventPasses(onlyAnswer, "tool") === false);
+	check("预设不隐藏错误（仅思考/仅工具/仅回答时仍显示失败）", presetFilters("thinking").error === true && presetFilters("tools").error === true && presetFilters("answer").error === true && all.error === true);
 
 	// ---- 工具名子菜单助手 ----
 	const toolQuestions = [
@@ -82,7 +84,7 @@ const check = (label, cond, extra = "") => {
 	const onlyBuiltin = groupToolNames(["read"], { read: { kind: "builtin", label: "内置" } });
 	check("空分组不渲染", onlyBuiltin.length === 1 && onlyBuiltin[0].label === "内置");
 
-	check("标签：文本行统一显示为输出（最终答复仅靠绿色竖条区分）", eventTagLabel({ kind: "text", isFinal: true }) === "输出" && eventTagLabel({ kind: "text" }) === "输出");
+	check("标签：过程与回答分开命名", eventTagLabel({ kind: "text" }) === "过程" && eventTagLabel({ kind: "answer" }) === "回答");
 	check("标签：出错工具", eventTagLabel({ kind: "tool", tool: { isError: true } }) === "工具✗");
 	check("标签：错误事件", eventTagLabel({ kind: "error" }) === "错误");
 

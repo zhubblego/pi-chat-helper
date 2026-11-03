@@ -793,7 +793,14 @@ svg.tb-icon {
 	color: var(--dsw-alias-state-warn-label);
 }
 
+/* 过程文本（工具调用前的叙述）：低调灰蓝，与上下文类一致 */
 .k-text .ev-tag {
+	background: var(--dsw-alias-markdown-tag);
+	color: var(--dsw-alias-label-tertiary);
+}
+
+/* 轮次最终回答：success 绿（原 is-final 弱区分升级为独立类型） */
+.k-answer .ev-tag {
 	background: var(--dsw-alias-state-success-tertiary);
 	color: var(--dsw-alias-state-success-primary);
 }
@@ -852,11 +859,11 @@ mark.ev-hit {
 	color: var(--dsw-alias-label-secondary);
 }
 
-.k-text.is-final {
+.k-answer {
 	border-left-color: var(--dsw-alias-state-success-primary);
 }
 
-.k-text.is-final .ev-preview {
+.k-answer .ev-preview {
 	font-weight: 500;
 }
 
@@ -1152,6 +1159,11 @@ border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
 .dv-kind.k-text {
+	background: var(--dsw-alias-markdown-tag);
+	color: var(--dsw-alias-label-tertiary);
+}
+
+.dv-kind.k-answer {
 	background: var(--dsw-alias-state-success-tertiary);
 	color: var(--dsw-alias-state-success-primary);
 }
@@ -1239,16 +1251,6 @@ border-bottom: 1px solid var(--dsw-alias-border-l1);
 .kv span {
 	color: var(--dsw-alias-label-tertiary);
 	min-width: 72px;
-}
-
-.badge-final {
-	display: inline-block;
-	background: var(--dsw-alias-state-success-tertiary);
-	color: var(--dsw-alias-state-success-primary);
-	border-radius: var(--dsw-radius-xs);
-	font: var(--dsw-font-xxxs-strong-11);
-	padding: 1px 8px;
-	margin-bottom: 8px;
 }
 
 .muted {

@@ -287,6 +287,31 @@ function injectSectionName(text) {
 	return "developer";
 }
 
+/**
+ * rollout 事件没有终止原因字段：按轮次位置补齐——轮内最后一条 assistant 文本补 stop（最终回答），
+ * 其余补 toolUse（中间过程），使投影层能按 pi 同一规则区分「过程/回答」。
+ * 轮界 = role=user 的消息（子 agent 的派发任务也翻成 user 提问行）；无文本轮不影响。
+ */
+function markStopReasons(entries) {
+	let roundTexts = [];
+	const flushRound = () => {
+		if (!roundTexts.length) return;
+		for (const m of roundTexts) m.stopReason = "toolUse";
+		roundTexts.at(-1).stopReason = "stop";
+		roundTexts = [];
+	};
+	for (const e of entries) {
+		if (e.type !== "message") continue;
+		const m = e.message;
+		if (m?.role === "user") {
+			flushRound();
+			continue;
+		}
+		if (m?.role === "assistant" && Array.isArray(m.content) && m.content.some((c) => c?.type === "text")) roundTexts.push(m);
+	}
+	flushRound();
+}
+
 export function readCodexSession(file) {
 	const out = [];
 	let header = null;
@@ -448,6 +473,7 @@ export function readCodexSession(file) {
 		// 其余 response_item（FINAL_ANSWER 等）跳过
 	}
 	flushSystem();
+	markStopReasons(out);
 	return { header, entries: out };
 }
 

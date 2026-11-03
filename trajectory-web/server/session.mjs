@@ -8,7 +8,8 @@
  * 事件类型（kind）：
  *   user          用户提问原文
  *   thinking      思维链
- *   text          助手输出文本（回合内最后一个 text 会标 isFinal）
+ *   text          助手中间输出（stopReason=toolUse：工具调用前的叙述/计划）
+ *   answer        轮次最终回答（stopReason=stop/aborted/error/length 等终止值）
  *   tool          工具调用（与 toolResult 合并，含 durationMs/nested 子调用）
  *   bash          ! 直执行命令
  *   system        系统提示/工具目录变更
@@ -222,6 +223,9 @@ export function buildProjectionFrom({ header, entries, file }) {
 					totals.cost += usage.cost?.total ?? 0;
 				}
 				if (typeof msg.durationMs === "number") totals.durationMs += msg.durationMs;
+				// 轮次终点判定用协议显式字段：toolUse=中间过程，其余（stop/aborted/error/length…）=最终回答。
+				// 缺 stopReason 时按回答处理（codex 翻译层已补齐；pi 全量审计 38k 条无缺失）。
+				const isAnswer = msg.stopReason !== "toolUse";
 				const base = {
 					model: msg.model,
 					provider: msg.provider,
@@ -279,7 +283,7 @@ export function buildProjectionFrom({ header, entries, file }) {
 							current,
 							{
 								id,
-								kind: "text",
+								kind: isAnswer ? "answer" : "text",
 								ts,
 								iso: isoOf(ts),
 								preview: previewOf(part.text),
@@ -532,14 +536,8 @@ export function buildProjectionFrom({ header, entries, file }) {
 	}
 	flush();
 
-	// 标记每个分组内最后一个 text 为「输出」，并把分组统计汇总
+	// 分组统计汇总（过程/回答已按 stopReason 在事件生成时区分，无需位置标注）
 	for (const q of questions) {
-		for (let i = q.events.length - 1; i >= 0; i--) {
-			if (q.events[i].kind === "text") {
-				q.events[i].isFinal = true;
-				break;
-			}
-		}
 		for (const ev of q.events) {
 			const u = ev.msg?.usage;
 			if (u && ev.msg?.first) {
@@ -603,7 +601,8 @@ export function lightEvent(ev) {
 	const out = { ...ev };
 	switch (ev.kind) {
 		case "thinking":
-		case "text": {
+		case "text":
+		case "answer": {
 			const c = cap(ev.text);
 			out.text = c.text;
 			out.truncated = c.truncated;

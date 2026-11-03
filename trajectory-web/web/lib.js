@@ -10,6 +10,7 @@ export const FILTER_GROUPS = {
 	thinking: ["thinking"],
 	tools: ["tool", "bash"],
 	text: ["text"],
+	answer: ["answer"],
 	context: ["system", "compaction", "branch", "model", "thinking-level", "usage", "context-edit", "custom"],
 	error: ["error"],
 	approval: ["approval"],
@@ -19,7 +20,8 @@ export const GROUP_LABELS = {
 	user: "提问",
 	thinking: "思考",
 	tools: "工具",
-	text: "输出",
+	text: "过程",
+	answer: "回答",
 	context: "上下文",
 	error: "错误",
 	approval: "审批",
@@ -93,17 +95,17 @@ export function groupToolNames(names, origins = {}) {
 		.map(({ key, label, names: groupNames }) => ({ key, label, names: groupNames }));
 }
 
-/** 预设：全部 / 仅思考 / 仅工具 / 仅输出 */
+/** 预设：全部 / 仅思考 / 仅工具 / 仅回答 */
 export function presetFilters(name) {
 	switch (name) {
 		case "thinking":
-			return { user: false, thinking: true, tools: false, text: false, context: false, error: true, approval: false };
+			return { user: false, thinking: true, tools: false, text: false, answer: false, context: false, error: true, approval: false };
 		case "tools":
-			return { user: false, thinking: false, tools: true, text: false, context: false, error: true, approval: false };
-		case "text":
-			return { user: false, thinking: false, tools: false, text: true, context: false, error: true, approval: false };
+			return { user: false, thinking: false, tools: true, text: false, answer: false, context: false, error: true, approval: false };
+		case "answer":
+			return { user: false, thinking: false, tools: false, text: false, answer: true, context: false, error: true, approval: false };
 		default:
-			return { user: true, thinking: true, tools: true, text: true, context: true, error: true, approval: true };
+			return { user: true, thinking: true, tools: true, text: true, answer: true, context: true, error: true, approval: true };
 	}
 }
 
@@ -114,7 +116,9 @@ export function eventTagLabel(ev) {
 		case "thinking":
 			return "思考";
 		case "text":
-			return "输出";
+			return "过程";
+		case "answer":
+			return "回答";
 		case "tool":
 			return ev.tool?.isError ? "工具✗" : "工具";
 		case "bash":

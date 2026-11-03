@@ -28,6 +28,7 @@ fs.writeFileSync(
 		H({ timestamp: "2026-01-01T00:00:00.400Z", type: "turn_context", payload: { model: "gpt-5.6-sol", effort: "max" } }),
 		H({ timestamp: "2026-01-01T00:00:00.400Z", type: "response_item", payload: { type: "message", id: "msg_u1", role: "user", content: [{ type: "input_text", text: "跑一下测试" }] } }),
 		H({ timestamp: "2026-01-01T00:00:01.000Z", type: "response_item", payload: { type: "reasoning", id: "rs_1", summary: [{ type: "summary_text", text: "先看测试" }], encrypted_content: "gAAA" } }),
+		H({ timestamp: "2026-01-01T00:00:01.500Z", type: "response_item", payload: { type: "message", id: "msg_a0", role: "assistant", content: [{ type: "output_text", text: "先跑测试" }] } }),
 		H({ timestamp: "2026-01-01T00:00:02.000Z", type: "response_item", payload: { type: "function_call", id: "fc_1", name: "wait", arguments: '{"cell_id":"84"}', call_id: "call_1" } }),
 		H({ timestamp: "2026-01-01T00:00:03.000Z", type: "response_item", payload: { type: "function_call_output", id: "fco_1", call_id: "call_1", output: [{ type: "input_text", text: "done" }] } }),
 		H({ timestamp: "2026-01-01T00:00:04.000Z", type: "response_item", payload: { type: "message", id: "msg_a1", role: "assistant", content: [{ type: "output_text", text: "测试通过" }] } }),
@@ -58,7 +59,7 @@ fs.writeFileSync(
 	// ---- 翻译层 ----
 	const { header, entries } = codex.readCodexSession(file);
 	check("header id/cwd", header?.id === UUID && header?.cwd === "/tmp/proj");
-	check("event_msg 跳过 + model/effort 不重复：共 9 条", entries.length === 9, String(entries.length));
+	check("event_msg 跳过 + model/effort 不重复：共 10 条", entries.length === 10, String(entries.length));
 	check("parentId 顺序链", entries.every((e, i) => (i === 0 ? e.parentId === null : e.parentId === entries[i - 1].id)));
 	const byId = new Map(entries.map((e) => [e.id, e]));
 	const merged = byId.get("cx-sys-base")?.message;
@@ -68,6 +69,7 @@ fs.writeFileSync(
 	check("user 角色的 AGENTS.md 注入段落", merged.sections["AGENTS.md"]?.startsWith("# AGENTS.md"));
 	check("turn_context.effort → thinking_level_change（重复值不再发）", byId.get("cx-level-2")?.thinkingLevel === "max" && entries.filter((e) => e.type === "thinking_level_change").length === 1, JSON.stringify(entries.filter((e) => e.type === "thinking_level_change")));
 	check("user 翻译", byId.get("msg_u1")?.message?.content?.[0]?.text === "跑一下测试");
+check("stopReason 按轮补齐：轮内中间文本 toolUse、最后文本 stop", byId.get("msg_a0")?.message?.stopReason === "toolUse" && byId.get("msg_a1")?.message?.stopReason === "stop");
 	check("reasoning→thinking 明文", byId.get("rs_1")?.message?.content?.[0]?.type === "thinking" && byId.get("rs_1").message.content[0].text === "先看测试");
 	const callPart = byId.get("fc_1")?.message?.content?.[0];
 	check("function_call→toolCall（arguments 解析为对象）", callPart?.type === "toolCall" && callPart.name === "wait" && callPart.id === "call_1" && callPart.arguments?.cell_id === "84");
@@ -113,7 +115,7 @@ fs.writeFileSync(
 	const asked = proj.questions.filter((q) => q.index >= 0);
 	check("1 个提问组", asked.length === 1);
 	const kinds = asked[0].events.map((e) => e.kind).join(",");
-	check("事件链 user,thinking,tool,text,compaction", kinds === "user,thinking,tool,text,compaction", kinds);
+	check("事件链 user,thinking,text,tool,answer,compaction", kinds === "user,thinking,text,tool,answer,compaction", kinds);
 	const tool = asked[0].events.find((e) => e.kind === "tool");
 	check("工具配对结果", tool?.tool?.name === "wait" && tool.tool.result === "done" && tool.tool.args?.cell_id === "84");
 	const projThink = asked[0].events.find((e) => e.kind === "thinking");

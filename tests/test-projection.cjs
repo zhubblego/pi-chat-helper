@@ -44,6 +44,7 @@ const mainFile = writeSession("main.jsonl", [
 		stopReason: "toolUse",
 		content: [
 			{ type: "thinking", thinking: "想A\n第二行", thinkingSignature: "sig" },
+			{ type: "text", text: "先看文件" },
 			{ type: "toolCall", id: "t1", name: "read", arguments: { path: "a.ts" } },
 		],
 	}),
@@ -102,22 +103,27 @@ const branchFile = writeSession("branch.jsonl", [
 	const q0 = proj.questions[1];
 	check(
 		"问题1 事件链（含回合尾部的压缩边界）",
-		q0.events.map((e) => e.kind).join(",") === "user,thinking,tool,thinking,text,bash,compaction",
+		q0.events.map((e) => e.kind).join(",") === "user,thinking,text,tool,thinking,answer,bash,compaction",
 		q0.events.map((e) => e.kind).join(","),
 	);
 	const tool = q0.events.find((e) => e.kind === "tool");
 	check("工具参数与结果配对", tool.tool.name === "read" && tool.tool.argsText.includes("a.ts") && tool.tool.result === "文件内容" && tool.tool.isError === false);
 	check("工具耗时来自 toolResult.durationMs", tool.tool.durationMs === 30);
-	check("问题1 最后一个 text 标 isFinal", q0.events.filter((e) => e.kind === "text").every((e) => e.isFinal === true));
+	check(
+		"过程/回答按 stopReason 区分（toolUse→text，stop→answer，无 isFinal）",
+		q0.events.find((e) => e.kind === "text").text === "先看文件" &&
+			q0.events.find((e) => e.kind === "answer").text === "# 结果\n\n完成" &&
+			q0.events.every((e) => e.isFinal === undefined),
+	);
 	check(
 		"问题1 统计",
-		q0.stats.events === 7 && q0.stats.thinking === 2 && q0.stats.tools === 2 && q0.stats.errors === 0 && q0.stats.tokens === 43 && q0.stats.cost === 0.001 && q0.stats.durationMs === 2000,
+		q0.stats.events === 8 && q0.stats.thinking === 2 && q0.stats.tools === 2 && q0.stats.errors === 0 && q0.stats.tokens === 43 && q0.stats.cost === 0.001 && q0.stats.durationMs === 2000,
 		JSON.stringify(q0.stats),
 	);
 	check("问题1 摘要", q0.summary === "第一问：帮我看看", q0.summary);
 
 	const q1 = proj.questions[2];
-	check("问题2 事件链", q1.events.map((e) => e.kind).join(",") === "user,text", q1.events.map((e) => e.kind).join(","));
+	check("问题2 事件链（无 stopReason 视为回答）", q1.events.map((e) => e.kind).join(",") === "user,answer", q1.events.map((e) => e.kind).join(","));
 
 	// ---- light / full ----
 	const light = toLight(proj);
@@ -125,7 +131,7 @@ const branchFile = writeSession("branch.jsonl", [
 	check("light 系统事件只留段落名与长度", Array.isArray(lightSys.system.sections) && lightSys.system.sections[0].name === "preamble" && lightSys.system.sections[0].chars === 5000 && lightSys.system.sections[0].text === undefined);
 	const fullSys = findEvent(proj, lightSys.id);
 	check("full 系统事件保留段落正文", fullSys.system.sections[0].text.length === 5000);
-	const lightText = light.questions[2].events.find((e) => e.kind === "text");
+	const lightText = light.questions[2].events.find((e) => e.kind === "answer");
 	check("light 超长文本截断", lightText.truncated === true && lightText.text.length === LIGHT_CAP, `len=${lightText.text.length}`);
 	const fullText = findEvent(proj, lightText.id);
 	check("full 超长文本完整", fullText.text.length === 5 * 600 && fullText.text.length > LIGHT_CAP, `len=${fullText.text.length}`);
@@ -134,7 +140,7 @@ const branchFile = writeSession("branch.jsonl", [
 
 	// ---- 分支重建 ----
 	const projBranch = buildProjection(branchFile);
-	const texts = projBranch.questions.flatMap((q) => q.events.filter((e) => e.kind === "text").map((e) => e.text));
+	const texts = projBranch.questions.flatMap((q) => q.events.filter((e) => e.kind === "answer").map((e) => e.text));
 	check("活动分支取最后叶子", texts.includes("活动分支回答") && !texts.includes("被放弃的分支"), JSON.stringify(texts));
 	const entries = mod.parseSessionFile(branchFile).entries;
 	check("activeBranch 沿 parentId 回溯", activeBranch(entries).map((e) => e.id).join(",") === "u1,a1,a2b", activeBranch(entries).map((e) => e.id).join(","));

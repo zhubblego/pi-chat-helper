@@ -469,7 +469,7 @@ function revealEvent(eid) {
 // ---------------------------------------------------------------------------
 
 /** 过滤菜单里可开关的类型（工具走子菜单，不是开关）。 */
-const TOGGLE_GROUPS = ["user", "thinking", "text", "context", "error", "approval"];
+const TOGGLE_GROUPS = ["user", "thinking", "text", "answer", "context", "error", "approval"];
 
 /** 过滤菜单：显示类型勾选（照 deepseek Menu 的紧凑卡与选中语义）；工具行是带子菜单入口的行。 */
 function renderFilterMenu() {
@@ -684,7 +684,6 @@ function renderEvent(ev, terms = []) {
 	if (deriveName) classes.push("k-derive");
 	if (deriveTarget) classes.push("is-derive-target");
 	if (ev.tool?.isError) classes.push("is-error");
-	if (ev.isFinal) classes.push("is-final");
 	const meta = [
 		fmtTime(ev.ts),
 		ev.msg?.durationMs !== undefined ? formatDurationMillis(ev.msg.durationMs) : "",
@@ -907,7 +906,8 @@ function drawerBodyNodes(view) {
 		case "thinking":
 			return view.redacted && !view.text ? [muted("（加密思维，无明文可展示）")] : [mdNode(view.text)];
 		case "text":
-			return [...(view.isFinal ? [h("div", { class: "badge-final", text: "回合输出" })] : []), mdNode(view.text)];
+		case "answer":
+			return [mdNode(view.text)];
 		case "user":
 			return [...(view.images ? [muted(`含 ${view.images} 张图片`)] : []), mdNode(view.text)];
 		case "tool":

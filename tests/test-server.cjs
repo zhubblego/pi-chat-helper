@@ -130,7 +130,7 @@ async function stopServer(child) {
 		const first = await (await fetch(`${base}/api/session`)).json();
 		check("默认取最近会话", first.changed === true && first.sessionId === "srv-a1" && first.meta.cwd === "/tmp/projA");
 		check("问题分组", first.questions.length === 1 && first.questions[0].summary === "第一问");
-		check("事件链", first.questions[0].events.map((e) => e.kind).join(",") === "user,thinking,tool,text", first.questions[0].events.map((e) => e.kind).join(","));
+		check("事件链", first.questions[0].events.map((e) => e.kind).join(",") === "user,thinking,tool,answer", first.questions[0].events.map((e) => e.kind).join(","));
 
 		const second = await (await fetch(`${base}/api/session?id=srv-a1&v=${encodeURIComponent(first.etag)}`)).json();
 		check("etag 未变 changed=false", second.changed === false);
@@ -167,7 +167,7 @@ async function stopServer(child) {
 		check("codex current 取自身首个", cxList.current === "cx-a1");
 		const cxProj = await (await fetch(`${base}/api/session?source=codex&id=cx-a1`)).json();
 		const cxKinds = (cxProj.questions ?? []).flatMap((q) => q.events.map((e) => e.kind)).join(",");
-		check("codex 投影 user/text", cxProj.changed === true && cxKinds === "user,text", cxKinds);
+		check("codex 投影 user/answer", cxProj.changed === true && cxKinds === "user,answer", cxKinds);
 
 		for (const file of ["/", "/app.js", "/lib.js", "/style.css", "/tokens.css"]) {
 			check(`静态资源 ${file}`, (await fetch(base + file)).status === 200);
