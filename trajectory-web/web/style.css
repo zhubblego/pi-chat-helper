@@ -675,10 +675,57 @@ svg.tb-icon {
 	cursor: pointer;
 }
 
+/* 眼睛：隐藏/恢复本轮（隐藏后整轮收成只剩它的占位行） */
+.q-eye {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	border: 0;
+	border-radius: var(--dsw-radius-xs);
+	background: transparent;
+	color: var(--dsw-alias-label-tertiary);
+	cursor: pointer;
+}
+
+.q-eye:hover {
+	color: var(--dsw-alias-label-primary);
+	background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* 勾选：选中轮次（原生 checkbox，统一状态源在 state，渲染时回填 checked） */
+.q-check {
+	flex: none;
+	width: 13px;
+	height: 13px;
+	margin: 0;
+	accent-color: var(--dsw-alias-label-primary-bluish);
+	cursor: pointer;
+}
+
+.q-caret {
+	flex: none;
+	color: var(--dsw-alias-label-tertiary);
+	font: 9px/18px var(--ds-font-family-code);
+}
+
 .q-no {
 	color: var(--dsw-alias-state-business-primary);
 	font: var(--dsw-font-xxxs-strong-11);
 	white-space: nowrap;
+	cursor: pointer;
+}
+
+.q-no:hover {
+	text-decoration: underline;
+}
+
+.q-no:focus-visible {
+	outline: 1px solid var(--dsw-alias-label-primary-bluish);
+	border-radius: var(--dsw-radius-xs);
 }
 
 .q-time {
@@ -704,6 +751,15 @@ svg.tb-icon {
 	display: none;
 }
 
+/* 手动隐藏的轮次：占位行只留眼睛按钮，低调虚线示意边界 */
+.question.q-hidden {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 3px 16px;
+	border-bottom: 1px dashed var(--dsw-alias-border-l2);
+}
+
 .q-head {
 	position: sticky;
 	top: var(--tw-toolbar-height);
@@ -727,24 +783,6 @@ svg.tb-icon {
 	font: var(--dsw-font-xxxs-11);
 	font-family: var(--ds-font-family-code);
 	white-space: nowrap;
-}
-
-.q-fold {
-	flex: none;
-	width: 18px;
-	height: 18px;
-	padding: 0;
-	border: 0;
-	border-radius: var(--dsw-radius-xs);
-	background: transparent;
-	color: var(--dsw-alias-label-tertiary);
-	cursor: pointer;
-	font: 13px/13px var(--ds-font-family-code);
-}
-
-.q-fold:hover {
-	color: var(--dsw-alias-label-primary);
-	background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .q-body {

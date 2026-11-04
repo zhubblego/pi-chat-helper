@@ -248,6 +248,11 @@ const check = (label, cond, extra = "") => {
 	check("会话表头有分组总开关按钮", indexSource.includes('id="groups-toggle"'));
 	check("分组总开关的同步态与点击都接上了", appSource.includes("function updateGroupsToggle") && appSource.includes('el("groups-toggle").addEventListener("click"'));
 
+	// ---- 回归守卫：轮次头三控件（眼睛隐藏 / checkbox 选中 / 点击轮号折叠） ----
+	check("轮次头三控件接线：眼睛隐藏、勾选选中、点击轮号折叠", appSource.includes('class: "q-eye"') && appSource.includes('class: "q-check"') && appSource.includes('no.closest(".question")'));
+	check("旧 ⊞/⊟ 折叠按钮与双击折叠已移除", !appSource.includes("q-fold") && !appSource.includes("双击收起本轮"));
+	check("隐藏轮占位行 + 选中/隐藏状态随会话与切源重置", appSource.includes("q-hidden") && appSource.includes("hiddenQs = new Set()") && appSource.includes("selectedQs = new Set()"));
+
 	// ---- 回归守卫：详情抽屉左边界拖拽调宽 ----
 	check("抽屉有左边界拖拽把手", indexSource.includes('id="drawer-resize"') && indexSource.includes('role="separator"'));
 	check("拖拽调宽已接线且宽度持久化", appSource.includes("function bindDrawerResize") && appSource.includes('"tw.drawerWidth"') && appSource.includes("commitDrawerWidth(DRAWER_DEFAULT_W)"));

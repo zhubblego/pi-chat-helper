@@ -72,6 +72,8 @@ const state = {
 	toolOriginsMissAt: 0,
 	submenuOpen: false,
 	folded: new Set(),
+	selectedQs: new Set(),
+	hiddenQs: new Set(),
 	deriveTargets: new Map(),
 	deriveNames: new Map(),
 	deriveFrom: null,
@@ -220,6 +222,10 @@ const ICONS = {
 		["path", { d: "M1.8 7.1 6 9.5l4.2-2.4" }],
 	],
 	check: [["path", { d: "M2.6 6.3 4.9 8.7 9.4 3.6" }]],
+	eye: [
+		["path", { d: "M1.2 6S3 2.9 6 2.9 10.8 6 10.8 6 9 9.1 6 9.1 1.2 6 1.2 6z" }],
+		["circle", { cx: 6, cy: 6, r: 1.6 }],
+	],
 	light: [
 		["circle", { cx: 6, cy: 6, r: 2.5 }],
 		["path", { d: "M6 .8v1.5M6 9.7v1.5M.8 6h1.5M9.7 6h1.5M2.4 2.4l1.06 1.06M8.54 8.54l1.06 1.06M9.6 2.4 8.54 3.46M3.46 8.54 2.4 9.6" }],
@@ -741,26 +747,39 @@ function renderMain() {
 			);
 			// 搜索激活时：无命中的轮次整轮隐藏（过滤 ∩ 搜索，不再渲染空框）
 			if (matches && shown.length === 0) return null;
+			const roundLabel = q.index < 0 ? "会话开始" : `第 ${q.index + 1} 轮`;
+			// 手动隐藏的轮次：只留占位行（一个眼睛按钮），点眼睛恢复显示
+			if (state.hiddenQs.has(q.index)) {
+				return h(
+					"section",
+					{ class: "question q-hidden", id: `q-${q.index}`, dataset: { q: String(q.index) } },
+					h("button", { class: "q-eye", type: "button", dataset: { eye: String(q.index) }, title: `显示${roundLabel}`, "aria-label": `显示${roundLabel}` }, svgIcon("eye")),
+				);
+			}
 			const body = shown.length ? shown.map((ev) => renderEvent(ev, terms)) : h("div", { class: "ev-empty" });
 			// 搜索激活时命中轮次强制展开（否则只显示轮次头看不到命中内容）；清空搜索恢复原折叠状态
 			const folded = matches ? false : state.folded.has(q.index);
 			return h(
 				"section",
 				{ class: `question${folded ? " folded" : ""}`, id: `q-${q.index}`, dataset: { q: String(q.index) } },
-				h("header", { class: "q-head", title: folded ? "双击展开本轮" : "双击收起本轮" },
-					h("button", {
-						class: "q-fold",
-						type: "button",
-						dataset: { fold: String(q.index) },
-						title: folded ? "展开本轮" : "收起本轮",
-						"aria-expanded": String(!folded),
-						text: folded ? "⊞" : "⊟",
+				h(
+					"header",
+					{ class: "q-head" },
+					h("button", { class: "q-eye", type: "button", dataset: { eye: String(q.index) }, title: `隐藏${roundLabel}`, "aria-label": `隐藏${roundLabel}` }, svgIcon("eye")),
+					h("input", {
+						class: "q-check",
+					type: "checkbox",
+						dataset: { check: String(q.index) },
+						title: `选中${roundLabel}`,
+						"aria-label": `选中${roundLabel}`,
+						checked: state.selectedQs.has(q.index),
 					}),
-					h("span", { class: "q-no", text: q.index < 0 ? "会话开始" : `第 ${q.index + 1} 轮` }),
+					h("span", { class: "q-caret", text: folded ? "▸" : "▾", "aria-hidden": "true" }),
+					h("span", { class: "q-no", text: roundLabel, title: folded ? "点击展开本轮" : "点击收起本轮", role: "button", tabindex: 0 }),
 					h("span", { class: "q-time", text: fmtTime(q.ts) || "" }),
 					h("span", { class: "q-sum", title: q.summary }, highlightNodes(q.summary, terms)),
 					h("span", { class: "q-stats", text: qStats(q) }),
-				),
+			),
 				h("div", { class: "q-body" }, body),
 			);
 		})
@@ -1219,6 +1238,8 @@ function switchSource(id) {
 	state.sessions = [];
 	state.sessionListKey = "";
 	state.folded = new Set();
+	state.selectedQs = new Set();
+	state.hiddenQs = new Set();
 	state.query = "";
 	el("search").value = "";
 	state.toolExcluded = new Set();
@@ -1742,6 +1763,8 @@ function selectSession(id, from = null) {
 	state.data = null;
 	state.etag = null;
 	state.folded = new Set();
+	state.selectedQs = new Set();
+	state.hiddenQs = new Set();
 	state.query = "";
 	state.toolExcluded = new Set();
 	state.toolNames = [];
@@ -1772,9 +1795,28 @@ function openEventRow(row) {
 }
 
 mainInner.addEventListener("click", (e) => {
-	const fold = e.target.closest(".q-fold");
-	if (fold) {
-		const index = Number(fold.dataset.fold);
+	const eye = e.target.closest(".q-eye");
+	if (eye) {
+		const index = Number(eye.dataset.eye);
+		if (state.hiddenQs.has(index)) state.hiddenQs.delete(index);
+		else state.hiddenQs.add(index);
+		renderMain();
+		return;
+	}
+	const check = e.target.closest(".q-check");
+	if (check) {
+		// 阻止原生勾选，统一从 state 渲染（单一数据源，避免重渲染丢勾选态）
+		e.preventDefault();
+		const index = Number(check.dataset.check);
+		if (state.selectedQs.has(index)) state.selectedQs.delete(index);
+		else state.selectedQs.add(index);
+		renderMain();
+		return;
+	}
+	const no = e.target.closest(".q-no");
+	if (no) {
+		const index = Number(no.closest(".question")?.dataset.q);
+		if (Number.isNaN(index)) return;
 		if (state.folded.has(index)) state.folded.delete(index);
 		else state.folded.add(index);
 		renderMain();
@@ -1786,21 +1828,16 @@ mainInner.addEventListener("click", (e) => {
 
 mainInner.addEventListener("keydown", (e) => {
 	if (e.key !== "Enter" && e.key !== " ") return;
+	const no = e.target.closest?.(".q-no");
+	if (no) {
+		e.preventDefault();
+		no.click();
+		return;
+	}
 	const row = e.target.closest(".ev");
 	if (!row) return;
 	e.preventDefault();
 	openEventRow(row);
-});
-
-mainInner.addEventListener("dblclick", (e) => {
-	if (e.target.closest(".q-fold")) return;
-	const head = e.target.closest(".q-head");
-	if (!head) return;
-	const index = Number(head.parentElement?.dataset.q);
-	if (Number.isNaN(index)) return;
-	if (state.folded.has(index)) state.folded.delete(index);
-	else state.folded.add(index);
-	renderMain();
 });
 
 el("agent-rail").addEventListener("click", (e) => {
