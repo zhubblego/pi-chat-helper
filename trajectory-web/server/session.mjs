@@ -186,8 +186,51 @@ export function buildProjectionFrom({ header, entries, file }) {
 		}
 	};
 
+	/** system 消息 → 上下文事件（延迟归属时也走同一段解析，见 pendingSystem）。 */
+	const pushSystemEvent = (target, entry, ts) => {
+		const msg = entry.message ?? {};
+		const sections = msg.sections && typeof msg.sections === "object" ? msg.sections : {};
+		const sectionList = Object.entries(sections)
+			.filter(([, v]) => typeof v === "string")
+			.map(([name, text]) => ({ name, text }));
+		const added = Array.isArray(msg.toolsAdded) ? msg.toolsAdded.map((t) => t?.name).filter(Boolean) : [];
+		const removed = Array.isArray(msg.toolsRemoved) ? msg.toolsRemoved.map((t) => t?.name).filter(Boolean) : [];
+		const previewBits = [];
+		if (sectionList.length) previewBits.push(sectionList.map((s) => s.name).join(", "));
+		if (added.length) previewBits.push(`+${added.join(",")}`);
+		if (removed.length) previewBits.push(`-${removed.join(",")}`);
+		pushEvent(target, {
+			id: `${entry.id ?? "e"}:sys`,
+			kind: "system",
+			ts,
+			iso: isoOf(ts),
+			preview: `系统上下文：${previewBits.join(" · ") || "(变更)"}`,
+			system: {
+				sections: sectionList,
+				toolsAdded: added,
+				toolsRemoved: removed,
+				toolsAddedFull: Array.isArray(msg.toolsAdded) ? cloneJson(msg.toolsAdded) : [],
+			},
+		});
+	};
+
+	// 紧贴下一条提问的 system 补丁（skills/tools 段变更，落盘时间仅比提问早 1ms）语义上是
+	//「为下一轮请求生效的上下文」：延迟归属到下一轮开头；若后续出现其它事件条目或文件结束
+	// 都没有新提问，则按时间顺序归上一轮末尾。首问前的完整快照（起始组）不延迟。
+	const pendingSystem = [];
+	const drainPendingSystem = () => {
+		for (const { entry, ts } of pendingSystem.splice(0)) pushSystemEvent(current, entry, ts);
+	};
+	const rendersEvent = (entry) =>
+		!(entry.type === "custom" || entry.type === "label" || entry.type === "session_info") &&
+			!(entry.type === "message" && entry.message?.role === "system");
+
 	for (const entry of branch) {
 		const ts = entryTs(entry);
+		// 当前条目会渲染成事件时，先消化挂起的 system 补丁（它们在时间上位于本条目之前，归上一轮末尾）；
+		// user 提问例外——由 user 分支开新轮后再消化，使补丁挂到下一轮开头
+		const isUserMsg = entry.type === "message" && entry.message?.role === "user";
+		if (pendingSystem.length && rendersEvent(entry) && !isUserMsg) drainPendingSystem();
 
 		// ---- message 条目 ----
 		if (entry.type === "message") {
@@ -199,6 +242,8 @@ export function buildProjectionFrom({ header, entries, file }) {
 				const text = extractText(msg.content).trim();
 				const images = countImages(msg.content);
 				current = newQuestion(questions.length - (hasPreamble ? 1 : 0), text || (images ? "[图片]" : "[空消息]"), ts, images);
+				// 挂起的 system 补丁成为本轮开头的上下文事件（先于提问行显示）
+				drainPendingSystem();
 				if (text || images) {
 					pushEvent(
 						current,
@@ -384,29 +429,9 @@ export function buildProjectionFrom({ header, entries, file }) {
 			}
 
 			if (role === "system") {
-				const sections = msg.sections && typeof msg.sections === "object" ? msg.sections : {};
-				const sectionList = Object.entries(sections)
-					.filter(([, v]) => typeof v === "string")
-					.map(([name, text]) => ({ name, text }));
-				const added = Array.isArray(msg.toolsAdded) ? msg.toolsAdded.map((t) => t?.name).filter(Boolean) : [];
-				const removed = Array.isArray(msg.toolsRemoved) ? msg.toolsRemoved.map((t) => t?.name).filter(Boolean) : [];
-				const previewBits = [];
-				if (sectionList.length) previewBits.push(sectionList.map((s) => s.name).join(", "));
-				if (added.length) previewBits.push(`+${added.join(",")}`);
-				if (removed.length) previewBits.push(`-${removed.join(",")}`);
-				pushEvent(current, {
-					id: `${entry.id ?? "e"}:sys`,
-					kind: "system",
-					ts,
-					iso: isoOf(ts),
-					preview: `系统上下文：${previewBits.join(" · ") || "(变更)"}`,
-					system: {
-						sections: sectionList,
-						toolsAdded: added,
-						toolsRemoved: removed,
-						toolsAddedFull: Array.isArray(msg.toolsAdded) ? cloneJson(msg.toolsAdded) : [],
-					},
-				});
+				// 起始组（首问前的完整快照）直接进当前分组；轮间补丁延迟归属，见 pendingSystem 注释
+				if (current.index === -1) pushSystemEvent(current, entry, ts);
+				else pendingSystem.push({ entry, ts });
 				continue;
 			}
 
@@ -535,6 +560,8 @@ export function buildProjectionFrom({ header, entries, file }) {
 		// custom（扩展私有数据）、label、session_info 等不进入 LLM 上下文，跳过
 	}
 	flush();
+	// 文件尾仍挂起的补丁（下一问尚未落盘）：按时间顺序归最后一轮末尾，live 轮询下不丢事件
+	drainPendingSystem();
 
 	// 分组统计汇总（过程/回答已按 stopReason 在事件生成时区分，无需位置标注）
 	for (const q of questions) {

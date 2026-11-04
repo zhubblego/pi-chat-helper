@@ -70,11 +70,15 @@ const mainFile = writeSession("main.jsonl", [
 	}),
 	msg("b1", "a2", 6000, { role: "bashExecution", command: "ls", output: "x.txt", exitCode: 0 }),
 	{ type: "compaction", id: "cp1", parentId: "b1", timestamp: H, summary: "压缩摘要", firstKeptEntryId: "u2", tokensBefore: 12345 },
-	msg("u2", "cp1", 7000, { role: "user", content: "第二问" }),
+	// 轮间 system 补丁（紧贴下一问前落盘，仅 1ms 之差）：应划归下一轮开头而非本轮末尾
+	msg("sysp1", "cp1", 6999, { role: "system", content: "", sections: { skills: "<skills>新技能清单</skills>" } }),
+	msg("u2", "sysp1", 7000, { role: "user", content: "第二问" }),
 	msg("a3", "u2", 8000, {
 		role: "assistant",
 		content: [{ type: "text", text: "很长的输出".repeat(600) }],
 	}),
+	// 末尾孤儿补丁（下一问尚未落盘）：按时间顺序归最后一轮末尾，不丢事件
+	msg("sysp2", "a3", 9000, { role: "system", content: "", sections: { tools: "<tools>…</tools>" }, toolsAdded: [{ name: "newtool" }] }),
 	"{坏行，不是合法 JSON}",
 ]);
 
@@ -95,7 +99,7 @@ const branchFile = writeSession("branch.jsonl", [
 	check("问题数 = 起始 + 2", proj.questions.length === 3, `got ${proj.questions.length}`);
 	check("一级分组序号 -1/0/1", proj.questions.map((q) => q.index).join(",") === "-1,0,1", proj.questions.map((q) => q.index).join(","));
 	check("meta.questionCount = 2", proj.meta.questionCount === 2);
-	check("坏行被跳过（entryCount=10）", proj.meta.entryCount === 10, String(proj.meta.entryCount));
+	check("坏行被跳过（entryCount=12）", proj.meta.entryCount === 12, String(proj.meta.entryCount));
 
 	const pre = proj.questions[0];
 	check("起始分组事件 = 模型+系统", pre.events.map((e) => e.kind).join(",") === "model,system", pre.events.map((e) => e.kind).join(","));
@@ -123,7 +127,13 @@ const branchFile = writeSession("branch.jsonl", [
 	check("问题1 摘要", q0.summary === "第一问：帮我看看", q0.summary);
 
 	const q1 = proj.questions[2];
-	check("问题2 事件链（无 stopReason 视为回答）", q1.events.map((e) => e.kind).join(",") === "user,answer", q1.events.map((e) => e.kind).join(","));
+	check(
+		"问题2 事件链（轮间补丁归本轮开头、末尾孤儿归本轮末尾）",
+		q1.events.map((e) => e.kind).join(",") === "system,user,answer,system",
+		q1.events.map((e) => e.kind).join(","),
+	);
+	check("轮间补丁在提问行之前且内容正确", q1.events[0].id === "sysp1:sys" && q1.events[0].system.sections[0].name === "skills");
+	check("末尾孤儿补丁留在本轮末尾（toolsAdded 解析）", q1.events.at(-1).id === "sysp2:sys" && q1.events.at(-1).system.toolsAdded.join(",") === "newtool");
 
 	// ---- light / full ----
 	const light = toLight(proj);
