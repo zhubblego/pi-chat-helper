@@ -74,6 +74,9 @@ const state = {
 	folded: new Set(),
 	selectedQs: new Set(),
 	hiddenQs: new Set(),
+	// 模型上下文编辑（模式 A）：是否可写 + 扩展当前会话已隐藏的轮（轮首 user entry id）
+	canContextEdit: false,
+	hiddenUserIds: new Set(),
 	deriveTargets: new Map(),
 	deriveNames: new Map(),
 	deriveFrom: null,
@@ -660,6 +663,45 @@ function updateFoldAll() {
 // 问题导航
 // ---------------------------------------------------------------------------
 
+/** 轮的模型隐藏态：投影派生（context_edit 整轮剔除）∪ 扩展隐藏集（轮首 user 事件 id 的条目前缀对齐）。 */
+function modelHiddenOf(q) {
+	if (q?.modelHidden === true) return true;
+	const userEv = (q?.events ?? []).find((e) => e.kind === "user");
+	return !!(userEv && state.hiddenUserIds.has(String(userEv.id).split(":")[0]));
+}
+
+/**
+ * 眼睛：切换整轮隐藏。可写会话（模式 A 的当前 pi 会话）联动模型上下文：POST /api/context-edit
+ * 成功后本地切换视觉并立即拉取（服务端已作废投影缓存）；只读场景退化为纯视觉隐藏。
+ */
+async function toggleRoundHidden(index) {
+	const q = (state.data?.questions ?? []).find((x) => x.index === index);
+	const target = !(state.hiddenQs.has(index) || modelHiddenOf(q));
+	if (state.canContextEdit && state.source === "pi" && index >= 0 && q) {
+		try {
+			const res = await fetch("/api/context-edit", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ source: "pi", session: state.selectedId, qIndex: index, hidden: target }),
+			});
+			if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+		} catch (err) {
+			console.error("[trajectory-web] 上下文编辑失败：", err.message);
+			setSync(`上下文编辑失败：${err.message}`, "warn");
+			return;
+		}
+		if (target) state.hiddenQs.add(index);
+		else state.hiddenQs.delete(index);
+		renderMain();
+		void pollSession(true);
+		return;
+	}
+	// 只读路径（模式 B / 其它会话 / 起始组）：纯视觉隐藏，不改模型上下文
+	if (target) state.hiddenQs.add(index);
+	else state.hiddenQs.delete(index);
+	renderMain();
+}
+
 function qStats(q) {
 	const st = q.stats ?? {};
 	return [
@@ -748,12 +790,13 @@ function renderMain() {
 			// 搜索激活时：无命中的轮次整轮隐藏（过滤 ∩ 搜索，不再渲染空框）
 			if (matches && shown.length === 0) return null;
 			const roundLabel = q.index < 0 ? "会话开始" : `第 ${q.index + 1} 轮`;
-			// 手动隐藏的轮次：只留占位行（一个眼睛按钮），点眼睛恢复显示
-			if (state.hiddenQs.has(q.index)) {
+			const mHidden = modelHiddenOf(q);
+			// 隐藏的轮次：只留占位行（一个眼睛按钮），点眼睛恢复显示；模型上下文剔除的轮附提示
+			if (state.hiddenQs.has(q.index) || mHidden) {
 				return h(
 					"section",
 					{ class: "question q-hidden", id: `q-${q.index}`, dataset: { q: String(q.index) } },
-					h("button", { class: "q-eye", type: "button", dataset: { eye: String(q.index) }, title: `显示${roundLabel}`, "aria-label": `显示${roundLabel}` }, svgIcon("eye")),
+					h("button", { class: "q-eye", type: "button", dataset: { eye: String(q.index) }, title: `显示${roundLabel}${mHidden ? "（模型上下文已剔除）" : ""}`, "aria-label": `显示${roundLabel}` }, svgIcon("eye")),
 				);
 			}
 			const body = shown.length ? shown.map((ev) => renderEvent(ev, terms)) : h("div", { class: "ev-empty" });
@@ -1240,6 +1283,8 @@ function switchSource(id) {
 	state.folded = new Set();
 	state.selectedQs = new Set();
 	state.hiddenQs = new Set();
+	state.canContextEdit = false;
+	state.hiddenUserIds = new Set();
 	state.query = "";
 	el("search").value = "";
 	state.toolExcluded = new Set();
@@ -1567,6 +1612,8 @@ async function pollSession(force = false) {
 			return;
 		}
 		state.data = { meta: j.meta, questions: j.questions };
+		state.canContextEdit = j.contextEdit === true;
+		state.hiddenUserIds = new Set(Array.isArray(j.hiddenUserIds) ? j.hiddenUserIds : []);
 		state.searchIndex.update(state.data.questions);
 		syncDeriveTargets();
 		const namesChanged = syncToolNames();
@@ -1765,6 +1812,8 @@ function selectSession(id, from = null) {
 	state.folded = new Set();
 	state.selectedQs = new Set();
 	state.hiddenQs = new Set();
+	state.canContextEdit = false;
+	state.hiddenUserIds = new Set();
 	state.query = "";
 	state.toolExcluded = new Set();
 	state.toolNames = [];
@@ -1797,10 +1846,7 @@ function openEventRow(row) {
 mainInner.addEventListener("click", (e) => {
 	const eye = e.target.closest(".q-eye");
 	if (eye) {
-		const index = Number(eye.dataset.eye);
-		if (state.hiddenQs.has(index)) state.hiddenQs.delete(index);
-		else state.hiddenQs.add(index);
-		renderMain();
+		void toggleRoundHidden(Number(eye.dataset.eye));
 		return;
 	}
 	const check = e.target.closest(".q-check");

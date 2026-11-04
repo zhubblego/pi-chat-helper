@@ -26,11 +26,16 @@ fs.writeFileSync(
 );
 const sessionFile = path.join(tmp, "2026-01-01T00-00-00-000Z_ext-1.jsonl");
 const line = (o) => JSON.stringify(o);
+// 会话条目（fake sessionManager 与文件内容一致；assistant 使轮 0 有完整可隐藏内容）
+const fakeEntries = [
+	{ type: "message", id: "u1", parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: "测试", timestamp: 1000 } },
+	{ type: "message", id: "a1", parentId: "u1", timestamp: "2026-01-01T00:00:00.000Z", message: { role: "assistant", content: [{ type: "text", text: "完成" }], stopReason: "stop", timestamp: 2000 } },
+];
 fs.writeFileSync(
 	sessionFile,
 	[
 		line({ type: "session", version: 3, id: "ext-1", timestamp: "2026-01-01T00:00:00.000Z", cwd: tmp }),
-		line({ type: "message", id: "u1", parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: "测试", timestamp: 1000 } }),
+		...fakeEntries.map(line),
 	].join("\n") + "\n",
 );
 
@@ -72,13 +77,16 @@ function freePort() {
 
 		const commands = {};
 		const shutdownHandlers = [];
-		const mod = jiti(path.join(__dirname, "..", "trajectory-web", "index.ts"));
-		mod.default({
+		const handlers = {};
+		const appendedEntries = [];
+		const fakePi = {
 			registerCommand: (name, def) => (commands[name] = def),
 			on: (event, handler) => {
+				(handlers[event] ??= []).push(handler);
 				if (event === "session_shutdown") shutdownHandlers.push(handler);
 				return () => {};
 			},
+			appendEntry: (customType, data) => appendedEntries.push({ customType, data }),
 			// 模式 A 的精确归属来源（真实形状：sourceInfo.source = builtin / npm:<pkg>）；
 			// 第 2 次调用起多一个 late_tool，用于验证「每次请求现取」而非启动快照
 			getAllTools: (() => {
@@ -94,7 +102,9 @@ function freePort() {
 					return calls === 1 ? base : [...base, { name: "late_tool", sourceInfo: { path: "/tmp/late/index.ts", source: "npm:late-pkg" } }];
 				};
 			})(),
-		});
+		};
+		const mod = jiti(path.join(__dirname, "..", "trajectory-web", "index.ts"));
+		mod.default(fakePi);
 		trail = commands["deepseek-trail"];
 		check("注册单一命令 /deepseek-trail", typeof trail?.handler === "function" && typeof trail?.getArgumentCompletions === "function");
 		check("不再注册裸 /start 与 /stop", !commands.start && !commands.stop);
@@ -116,7 +126,13 @@ function freePort() {
 		const ctx = {
 			hasUI: true,
 			ui: { notify: (message, type) => notices.push({ message, type }) },
-			sessionManager: { getSessionFile: () => sessionFile, getCwd: () => tmp },
+			sessionManager: {
+				getSessionFile: () => sessionFile,
+				getCwd: () => tmp,
+				getEntries: () => fakeEntries,
+				getBranch: () => fakeEntries,
+				getEntry: (id) => fakeEntries.find((e) => e.id === id),
+			},
 		};
 		const lastNotice = () => notices[notices.length - 1];
 
@@ -153,6 +169,42 @@ function freePort() {
 		check("模式 A 精确映射与静态扫描合并", origins.source === "pi" && Object.keys(origins.tools).length > 4, String(Object.keys(origins.tools).length));
 		const originsLater = await (await fetch(`${url}api/tool-origins`)).json();
 		check("每次请求现取：运行时才注册的工具能进映射", originsLater.tools.late_tool?.label === "late-pkg", JSON.stringify(originsLater.tools.late_tool));
+
+		// ---- 纯函数：划轮 / 指纹 / 恢复 / 过滤 ----
+		check("fingerprintOfContent：string 原样、块数组拼 text", mod.fingerprintOfContent("测试") === "测试" && mod.fingerprintOfContent([{ type: "text", text: "a" }, { type: "image" }]) === "a");
+		check("userEntryIdOfQIndex：按 user 切轮、越界 null", mod.userEntryIdOfQIndex(fakeEntries, 0) === "u1" && mod.userEntryIdOfQIndex(fakeEntries, 5) === null);
+		check("hiddenIdsFromEntries：最新 custom 生效", JSON.stringify(mod.hiddenIdsFromEntries([
+			{ type: "custom", customType: "pi-chat-helper.trajectory-hidden", data: { hidden: ["x"] } },
+			{ type: "custom", customType: "pi-chat-helper.trajectory-hidden", data: { hidden: [] } },
+		])) === "[]" && mod.hiddenIdsFromEntries([]).length === 0);
+		const filtered = mod.filterHiddenMessages(
+			[
+				{ role: "system", content: "" },
+				{ role: "user", content: "隐藏我" },
+				{ role: "assistant", content: [{ type: "text", text: "答" }] },
+				{ role: "user", content: "留下" },
+			],
+			new Set(["隐藏我"]),
+		);
+		check("filterHiddenMessages：隐藏轮整轮剔除、system 保留", filtered?.length === 2 && filtered[0].role === "system" && filtered[1].content === "留下");
+		check("filterHiddenMessages：空隐藏集返回 null（零改动）", mod.filterHiddenMessages([{ role: "user", content: "x" }], new Set()) === null);
+
+		// ---- 模型上下文隐藏（模式 A）：端点 → custom 持久化 → context 过滤 ----
+		for (const h of handlers.session_start ?? []) await h({}, ctx);
+		const cePost = (body) => fetch(`${url}api/context-edit`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+		check("context-edit 隐藏第 0 轮成功", (await (await cePost({ qIndex: 0, hidden: true })).json()).ok === true);
+		check("隐藏状态持久化为 custom 条目", appendedEntries.at(-1)?.customType === "pi-chat-helper.trajectory-hidden" && appendedEntries.at(-1).data.hidden.includes("u1"));
+		const projH = await (await fetch(`${url}api/session`)).json();
+		check("投影带回 contextEdit 与 hiddenUserIds", projH.contextEdit === true && projH.hiddenUserIds.includes("u1"), JSON.stringify(projH.hiddenUserIds));
+		const ctxFiltered = handlers.context?.[0]?.({ messages: [
+			{ role: "system", content: "" },
+			{ role: "user", content: "测试" },
+			{ role: "assistant", content: [{ type: "text", text: "完成" }] },
+		] });
+		check("context 事件过滤隐藏轮（仅剩 system）", ctxFiltered?.messages?.length === 1 && ctxFiltered.messages[0].role === "system", JSON.stringify(ctxFiltered?.messages?.map((m) => m.role)));
+		check("context-edit 解除隐藏成功", (await (await cePost({ qIndex: 0, hidden: false })).json()).ok === true);
+		check("解除后 context 不再过滤", handlers.context?.[0]?.({ messages: [{ role: "user", content: "测试" }] }) === undefined);
+		check("context-edit 未知会话 404", (await cePost({ session: "nope", qIndex: 0, hidden: true })).status === 404);
 
 		// ---- 幂等 ----
 		await trail.handler(`start ${port}`, ctx);

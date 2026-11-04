@@ -79,6 +79,10 @@ const mainFile = writeSession("main.jsonl", [
 	}),
 	// 末尾孤儿补丁（下一问尚未落盘）：按时间顺序归最后一轮末尾，不丢事件
 	msg("sysp2", "a3", 9000, { role: "system", content: "", sections: { tools: "<tools>…</tools>" }, toolsAdded: [{ name: "newtool" }] }),
+	// context_edit：先整轮剔除第 2 轮（u2/a3 → null），聚合显示；再部分恢复 u2 → 不算整轮隐藏
+	{ type: "context_edit", id: "ce1", parentId: "sysp2", timestamp: H, targetId: "u2", replacement: null },
+	{ type: "context_edit", id: "ce2", parentId: "ce1", timestamp: H, targetId: "a3", replacement: null },
+	{ type: "context_edit", id: "ce3", parentId: "ce2", timestamp: H, targetId: "u2", replacement: { content: "第二问（恢复）" } },
 	"{坏行，不是合法 JSON}",
 ]);
 
@@ -99,7 +103,7 @@ const branchFile = writeSession("branch.jsonl", [
 	check("问题数 = 起始 + 2", proj.questions.length === 3, `got ${proj.questions.length}`);
 	check("一级分组序号 -1/0/1", proj.questions.map((q) => q.index).join(",") === "-1,0,1", proj.questions.map((q) => q.index).join(","));
 	check("meta.questionCount = 2", proj.meta.questionCount === 2);
-	check("坏行被跳过（entryCount=12）", proj.meta.entryCount === 12, String(proj.meta.entryCount));
+	check("坏行被跳过（entryCount=15）", proj.meta.entryCount === 15, String(proj.meta.entryCount));
 
 	const pre = proj.questions[0];
 	check("起始分组事件 = 模型+系统", pre.events.map((e) => e.kind).join(",") === "model,system", pre.events.map((e) => e.kind).join(","));
@@ -126,14 +130,17 @@ const branchFile = writeSession("branch.jsonl", [
 	);
 	check("问题1 摘要", q0.summary === "第一问：帮我看看", q0.summary);
 
-	const q1 = proj.questions[2];
-	check(
-		"问题2 事件链（轮间补丁归本轮开头、末尾孤儿归本轮末尾）",
-		q1.events.map((e) => e.kind).join(",") === "system,user,answer,system",
+		const q1 = proj.questions[2];
+check(
+		"问题2 事件链（轮间补丁归本轮开头、末尾孤儿与聚合编辑归本轮末尾）",
+		q1.events.map((e) => e.kind).join(",") === "system,user,answer,system,context-edit",
 		q1.events.map((e) => e.kind).join(","),
-	);
-	check("轮间补丁在提问行之前且内容正确", q1.events[0].id === "sysp1:sys" && q1.events[0].system.sections[0].name === "skills");
-	check("末尾孤儿补丁留在本轮末尾（toolsAdded 解析）", q1.events.at(-1).id === "sysp2:sys" && q1.events.at(-1).system.toolsAdded.join(",") === "newtool");
+);
+check("轮间补丁在提问行之前且内容正确", q1.events[0].id === "sysp1:sys" && q1.events[0].system.sections[0].name === "skills");
+check("末尾孤儿补丁留在本轮末尾（toolsAdded 解析）", q1.events.some((e) => e.id === "sysp2:sys" && e.system.toolsAdded.join(",") === "newtool"));
+check("连续 context_edit 聚合为一条（×3，含恢复项）", q1.events.at(-1).kind === "context-edit" && q1.events.at(-1).contextEdit.edits.length === 3 && q1.events.at(-1).preview === "上下文编辑 ×3");
+check("部分剔除不算整轮隐藏（u2 已恢复、a3 仍剔除）", q1.modelHidden !== true);
+check("问题 1 未被编辑，不标隐藏", q0.modelHidden !== true);
 
 	// ---- light / full ----
 	const light = toLight(proj);
@@ -171,6 +178,25 @@ const branchFile = writeSession("branch.jsonl", [
 	check("错误计入轮次统计", errQ.stats.errors === 2 && errQ.stats.events === 4, JSON.stringify(errQ.stats));
 	const errLight = toLight(errProj).questions[0].events.find((e) => e.kind === "error");
 	check("light 投影保留错误正文", errLight.error.message === "Request timed out." && errLight.truncated === false);
+
+	// 整轮剔除后恢复验证：在 ce3 之后把 a3 也恢复 → 两轮都不隐藏
+	const projHidden = buildProjection(mainFile);
+	check("主 fixture 部分恢复后无整轮隐藏", projHidden.questions.every((x) => x.modelHidden !== true));
+
+	// ---- 整轮全部剔除 → modelHidden = true ----
+	const hiddenFile = writeSession("hidden.jsonl", [
+		{ type: "session", version: 3, id: "sess-h", timestamp: H, cwd: "/tmp/proj" },
+		msg("hu1", null, 1000, { role: "user", content: "问" }),
+		msg("ha1", "hu1", 2000, { role: "assistant", content: [{ type: "text", text: "答" }], stopReason: "stop" }),
+		msg("hu2", "ha1", 3000, { role: "user", content: "问 2" }),
+		msg("ha2", "hu2", 4000, { role: "assistant", content: [{ type: "text", text: "答 2" }], stopReason: "stop" }),
+		{ type: "context_edit", id: "hce1", parentId: "ha2", timestamp: H, targetId: "hu1", replacement: null },
+		{ type: "context_edit", id: "hce2", parentId: "hce1", timestamp: H, targetId: "ha1", replacement: null },
+	]);
+	const hiddenProj = buildProjection(hiddenFile);
+	const hq0 = hiddenProj.questions.find((x) => x.index === 0);
+	const hq1 = hiddenProj.questions.find((x) => x.index === 1);
+	check("整轮全部剔除 → modelHidden=true（未编辑轮不受影响）", hq0.modelHidden === true && hq1.modelHidden !== true && hq0.editableIds.join(",") === "hu1,ha1");
 
 	// ---- 无 id 的遗留格式按文件顺序 ----
 	const legacyEntries = [{ type: "message", message: { role: "user", content: "旧" } }];

@@ -23,8 +23,8 @@
  *   pi -ne -e .                                      # 仓库根聚合入口（见 ../index.ts）
  *   pi -e ./trajectory-web/index.ts
  */
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { basename, dirname, join } from "node:path";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -87,6 +87,74 @@ interface ServerHandle {
 	close: () => Promise<void>;
 }
 
+// ---------------------------------------------------------------------------
+// 模型上下文隐藏（轨迹页眼睛联动）：custom 条目持久化 + context 事件过滤
+// ---------------------------------------------------------------------------
+
+/** 隐藏轮状态的 custom 条目类型（不进 LLM 上下文，pi 负责落盘；最新一条生效）。 */
+const HIDDEN_CUSTOM_TYPE = "pi-chat-helper.trajectory-hidden";
+
+/** 会话条目的最小结构（划轮/恢复/指纹计算只用这几个字段，测试可直接造对象）。 */
+export interface EntryLike {
+	type: string;
+	id?: string;
+	message?: { role?: string; content?: unknown };
+	customType?: string;
+	data?: { hidden?: string[] };
+}
+
+/** 轮首 user 内容指纹：string 原样，块数组取 text 块拼接（与 context 事件 messages 对齐）。 */
+export function fingerprintOfContent(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (Array.isArray(content))
+		return content
+			.map((b) => (b && typeof b === "object" && typeof (b as { text?: unknown }).text === "string" ? (b as { text: string }).text : ""))
+			.join("");
+	return "";
+}
+
+/** 划轮：第 qIndex 轮（0 起）的轮首 user entry id；不存在返回 null（与投影层按 user 切轮一致）。 */
+export function userEntryIdOfQIndex(entries: EntryLike[], qIndex: number): string | null {
+	let n = -1;
+	for (const e of entries) {
+		if (e.type === "message" && e.message?.role === "user") {
+			n++;
+			if (n === qIndex) return e.id ?? null;
+		}
+	}
+	return null;
+}
+
+/** 从会话条目恢复隐藏轮：取最新一条 trajectory-hidden custom 的 hidden 列表。 */
+export function hiddenIdsFromEntries(entries: EntryLike[]): string[] {
+	let ids: string[] | null = null;
+	for (const e of entries) {
+		if (e.type === "custom" && e.customType === HIDDEN_CUSTOM_TYPE && Array.isArray(e.data?.hidden)) {
+			ids = e.data.hidden.filter((x): x is string => typeof x === "string");
+		}
+	}
+	return ids ?? [];
+}
+
+/**
+ * 过滤发给模型的 messages：轮首 user 指纹命中隐藏集 → 剔除整轮对话消息。
+ * 只剔 user/assistant/toolResult/custom（保证 toolCall 配对自洽）；system 补丁、
+ * 压缩/分支摘要等提示词状态一律保留（与轮归属无关）。无命中返回 null（零改动）。
+ * 按内容指纹对齐而非引用：context 事件的 messages 由投影重建，引用不稳定。
+ */
+export function filterHiddenMessages<T extends { role: string; content?: unknown }>(messages: T[], hiddenFingerprints: Set<string>): T[] | null {
+	if (!hiddenFingerprints.size) return null;
+	const droppable = new Set(["user", "assistant", "toolResult", "custom"]);
+	const out: T[] = [];
+	let dropping = false;
+	for (const m of messages) {
+		if (m.role === "user") dropping = hiddenFingerprints.has(fingerprintOfContent(m.content));
+		if (dropping && droppable.has(m.role)) continue;
+		out.push(m);
+	}
+	return out.length === messages.length ? null : out;
+}
+
 interface ToolOriginEntry {
 	kind: "builtin" | "mcp" | "package";
 	label: string;
@@ -131,6 +199,11 @@ function toolOriginsFromPi(pi: ExtensionAPI): Record<string, ToolOriginEntry> {
 
 interface GlobalSlot {
 	handle: ServerHandle | null;
+	/** 最新 runtime（session_start 时刷新）：server 回调经它拿当前 ctx，跨会话不失效 */
+	runtime: { pi: ExtensionAPI; ctx: ExtensionContext } | null;
+	/** 模型上下文隐藏的轮（轮首 user entry id）与其内容指纹；随会话重置 */
+	hiddenUserIds: Set<string>;
+	hiddenFingerprints: Set<string>;
 }
 
 const GLOBAL_KEY = Symbol.for("pi-chat-helper.trajectory-web");
@@ -140,7 +213,7 @@ function slot(): GlobalSlot {
 	// SAFETY: globalThis 的类型声明里没有这个 symbol 键；这里只在同一进程内按约定
 	// 读写本扩展自己的槽位，值的形状由本函数构造（GlobalSlot），不存在外部来源。
 	const g = globalThis as unknown as Record<symbol, unknown>;
-	if (!g[GLOBAL_KEY]) g[GLOBAL_KEY] = { handle: null };
+	if (!g[GLOBAL_KEY]) g[GLOBAL_KEY] = { handle: null, runtime: null, hiddenUserIds: new Set(), hiddenFingerprints: new Set() };
 	return g[GLOBAL_KEY] as GlobalSlot;
 }
 
@@ -151,12 +224,27 @@ async function closeSlot(): Promise<void> {
 	await existing.close();
 }
 
+/** 全量重建隐藏轮的内容指纹集（context 事件按指纹过滤 messages；集合小，重建即可）。 */
+function syncFingerprints(s: GlobalSlot, ctx: ExtensionContext): void {
+	s.hiddenFingerprints.clear();
+	for (const id of s.hiddenUserIds) {
+		// SAFETY: getEntry 返回真实会话条目，字段是 EntryLike 的运行时超集。
+		const entry = ctx.sessionManager.getEntry(id) as EntryLike | undefined;
+		const fp = entry?.message ? fingerprintOfContent(entry.message.content) : "";
+		if (fp) s.hiddenFingerprints.add(fp);
+	}
+}
+
 /** 进程内启动；端口占用时降级为系统分配端口（port 0）。 */
 async function startInProcess(
 	options: StartOptions,
 	sessionFile: string,
 	projectPath: string | undefined,
 	toolOrigins: () => Record<string, ToolOriginEntry>,
+	hooks: {
+		onContextEdit: (req: { sessionFile: string; qIndex: number; hidden: boolean }) => Promise<void>;
+		getContextHidden: () => { sessionFile: string; ids: string[] } | null;
+	},
 ): Promise<ServerHandle> {
 	const { createTrajectoryServer } = await import("./server/app.mjs");
 	const base = {
@@ -167,6 +255,8 @@ async function startInProcess(
 		webDir: WEB_DIR,
 		host: "127.0.0.1",
 		toolOrigins,
+		onContextEdit: hooks.onContextEdit,
+		getContextHidden: hooks.getContextHidden,
 	};
 	const port = options.port;
 	try {
@@ -204,8 +294,32 @@ async function runStart(rawArgs: string[], ctx: ExtensionCommandContext, pi: Ext
 	const getCwd = (ctx.sessionManager as { getCwd?: () => string }).getCwd;
 	const projectPath = options.scope === "project" && typeof getCwd === "function" ? getCwd.call(ctx.sessionManager) : undefined;
 
+	// 隐藏轮回调：经 slot().runtime 动态取最新会话的 ctx（服务跨 runtime 存活，闭包里的 ctx 会失效）。
+	// 实现是 custom 条目持久化（pi 落盘，重启可恢复）+ context 事件过滤（下次提问生效）。
+	const hooks = {
+		onContextEdit: async ({ sessionFile: file, qIndex, hidden }: { sessionFile: string; qIndex: number; hidden: boolean }) => {
+			const rt = slot().runtime;
+			if (!rt) throw new Error("扩展 runtime 未就绪");
+			const current = rt.ctx.sessionManager.getSessionFile();
+			if (!current || resolvePath(current) !== resolvePath(file)) throw new Error("只能编辑当前 pi 会话（其它会话只读）");
+			// SAFETY: getBranch() 返回真实会话条目，字段是 EntryLike 的运行时超集（type/id/message 同名同义）。
+			const userId = userEntryIdOfQIndex(rt.ctx.sessionManager.getBranch() as unknown as EntryLike[], qIndex);
+			if (!userId) throw new Error(`轮次 ${qIndex} 不存在（或轮首条目缺 id）`);
+			const s = slot();
+			if (hidden) s.hiddenUserIds.add(userId);
+			else s.hiddenUserIds.delete(userId);
+			syncFingerprints(s, rt.ctx);
+			rt.pi.appendEntry(HIDDEN_CUSTOM_TYPE, { hidden: [...s.hiddenUserIds] });
+		},
+		getContextHidden: (): { sessionFile: string; ids: string[] } | null => {
+			const rt = slot().runtime;
+			const current = rt?.ctx.sessionManager.getSessionFile();
+			return current ? { sessionFile: current, ids: [...slot().hiddenUserIds] } : null;
+		},
+	};
+
 	try {
-		const handle = await startInProcess(options, sessionFile, projectPath, () => toolOriginsFromPi(pi));
+		const handle = await startInProcess(options, sessionFile, projectPath, () => toolOriginsFromPi(pi), hooks);
 		slot().handle = handle;
 		const note = handle.port === options.port ? "" : `（端口 ${options.port} 被占用，改用 ${handle.port}）`;
 		const scopeText = options.scope === "all" ? "全部项目历史 + 全部可用轨迹源" : "当前项目的全部会话";
@@ -260,5 +374,22 @@ export default function (pi: ExtensionAPI) {
 	// 退出与 reload 时关闭，避免端口/句柄泄漏（reload 后新代码重新 start）。
 	pi.on("session_shutdown", async (event) => {
 		if (event.reason === "quit" || event.reason === "reload") await closeSlot();
+	});
+
+	// 每个新 runtime 都刷新槽位里的当前引用（server 回调经它拿最新 ctx，跨会话不失效），
+	// 并从 custom 条目恢复隐藏轮状态（pi 落盘过，重启/换会话后仍生效）。
+	pi.on("session_start", async (_event, ctx) => {
+		const s = slot();
+		s.runtime = { pi, ctx };
+		// SAFETY: getEntries() 返回真实会话条目，字段是 EntryLike 的运行时超集（type/id/customType/data 同名同义）。
+		s.hiddenUserIds = new Set(hiddenIdsFromEntries(ctx.sessionManager.getEntries() as unknown as EntryLike[]));
+		syncFingerprints(s, ctx);
+	});
+
+	// 模型上下文隐藏的过滤点：每次 LLM 调用前，命中隐藏轮指纹的整轮对话消息不发给模型。
+	// 无隐藏时零开销直通；返回 null 表示不改 messages。
+	pi.on("context", (event) => {
+		const filtered = filterHiddenMessages(event.messages, slot().hiddenFingerprints);
+		return filtered ? { messages: filtered } : undefined;
 	});
 }

@@ -24,6 +24,10 @@
  * 事件数据分两档：buildProjection() 生成 full（完整内容）；toLight() 派生
  * light（重字段截断到 LIGHT_CAP，system.sections 只留名称与长度），轮询接口用
  * light，详情接口按 id 从 full 取原文。
+ *
+ * 模型上下文联动：轮级暴露 editableIds（可编辑条目）与 modelHidden（整轮被最新 context_edit
+ * 剔除）；扩展侧用 custom 条目存隐藏状态 + context 事件过滤 messages（见 index.ts），
+ * server 经 /api/context-edit 转发（见 app.mjs）。
  */
 import { readFileSync } from "node:fs";
 
@@ -139,6 +143,9 @@ function newQuestion(index, summary, ts, images) {
 		ts,
 		iso: isoOf(ts),
 		events: [],
+		// 轮内可被 context_edit 编辑的条目 id（user/assistant/toolResult/custom_message），
+		// 用于派生 modelHidden 与 /api/context-edit 的轮校验
+		editableIds: [],
 		stats: { events: 0, thinking: 0, tools: 0, errors: 0, tokens: 0, cost: 0, durationMs: 0 },
 	};
 }
@@ -221,27 +228,51 @@ export function buildProjectionFrom({ header, entries, file }) {
 	const drainPendingSystem = () => {
 		for (const { entry, ts } of pendingSystem.splice(0)) pushSystemEvent(current, entry, ts);
 	};
+	// 连续的 context_edit 条目聚合为一条「上下文编辑」事件（隐藏/恢复一轮会连发 N 条，逐条显示太吵）
+	let pendingCtxEdits = [];
+	const drainCtxEdits = () => {
+		if (!pendingCtxEdits.length) return;
+		const first = pendingCtxEdits[0];
+		const items = pendingCtxEdits.splice(0).map((e) => ({ targetId: e.targetId, replacement: safeStringify(e.replacement) }));
+		const single = items.length === 1;
+		pushEvent(current, {
+			id: `${first.id ?? "e"}:ctxedit`,
+			kind: "context-edit",
+			ts: first.ts,
+			iso: isoOf(first.ts),
+			preview: single ? `上下文编辑 → ${first.targetId ?? "?"}` : `上下文编辑 ×${items.length}`,
+			contextEdit: single ? { targetId: first.targetId, replacement: items[0].replacement, edits: items } : { edits: items },
+		});
+	};
+	// context_edit 终态（同 targetId 最新编辑胜出，重放语义）：用于派生轮级模型可见性
+	const editsByTarget = new Map();
 	const rendersEvent = (entry) =>
-		!(entry.type === "custom" || entry.type === "label" || entry.type === "session_info") &&
+		!(entry.type === "custom" || entry.type === "label" || entry.type === "session_info" || entry.type === "context_edit") &&
 			!(entry.type === "message" && entry.message?.role === "system");
 
 	for (const entry of branch) {
 		const ts = entryTs(entry);
-		// 当前条目会渲染成事件时，先消化挂起的 system 补丁（它们在时间上位于本条目之前，归上一轮末尾）；
+		// 当前条目会渲染成事件时，先消化挂起的 system 补丁与聚合编辑（它们在时间上位于本条目之前，归上一轮末尾）；
 		// user 提问例外——由 user 分支开新轮后再消化，使补丁挂到下一轮开头
 		const isUserMsg = entry.type === "message" && entry.message?.role === "user";
-		if (pendingSystem.length && rendersEvent(entry) && !isUserMsg) drainPendingSystem();
+		if ((pendingSystem.length || pendingCtxEdits.length) && rendersEvent(entry) && !isUserMsg) {
+			drainPendingSystem();
+			drainCtxEdits();
+		}
 
 		// ---- message 条目 ----
 		if (entry.type === "message") {
 			const msg = entry.message ?? {};
 			const role = msg.role;
+			if (entry.id && (role === "assistant" || role === "toolResult")) current.editableIds.push(entry.id);
 
 			if (role === "user") {
+				drainCtxEdits();
 				flush();
 				const text = extractText(msg.content).trim();
 				const images = countImages(msg.content);
 				current = newQuestion(questions.length - (hasPreamble ? 1 : 0), text || (images ? "[图片]" : "[空消息]"), ts, images);
+				if (entry.id) current.editableIds.push(entry.id);
 				// 挂起的 system 补丁成为本轮开头的上下文事件（先于提问行显示）
 				drainPendingSystem();
 				if (text || images) {
@@ -518,14 +549,8 @@ export function buildProjectionFrom({ header, entries, file }) {
 			continue;
 		}
 		if (entry.type === "context_edit") {
-			pushEvent(current, {
-				id: `${entry.id ?? "e"}:ctxedit`,
-				kind: "context-edit",
-				ts,
-				iso: isoOf(ts),
-				preview: `上下文编辑 → ${entry.targetId ?? "?"}`,
-				contextEdit: { targetId: entry.targetId, replacement: safeStringify(entry.replacement) },
-			});
+			editsByTarget.set(entry.targetId, entry.replacement);
+			pendingCtxEdits.push({ id: entry.id, ts, targetId: entry.targetId, replacement: entry.replacement });
 			continue;
 		}
 		if (entry.type === "guardian_approval") {
@@ -547,6 +572,7 @@ export function buildProjectionFrom({ header, entries, file }) {
 		}
 		if (entry.type === "custom_message") {
 			const text = extractText(entry.content);
+			if (entry.id) current.editableIds.push(entry.id);
 			pushEvent(current, {
 				id: `${entry.id ?? "e"}:custom`,
 				kind: "custom",
@@ -560,8 +586,17 @@ export function buildProjectionFrom({ header, entries, file }) {
 		// custom（扩展私有数据）、label、session_info 等不进入 LLM 上下文，跳过
 	}
 	flush();
-	// 文件尾仍挂起的补丁（下一问尚未落盘）：按时间顺序归最后一轮末尾，live 轮询下不丢事件
+	// 文件尾仍挂起的补丁/聚合编辑（下一问尚未落盘）：按时间顺序归最后一轮末尾，live 轮询下不丢事件
 	drainPendingSystem();
+	drainCtxEdits();
+
+	// 模型视角的轮可见性：轮内可编辑条目全部被最新 context_edit 剔除（replacement=null）时标记；
+	// 部分剔除（外部手动编辑）不算隐藏，避免误标。可编辑角色与 pi SessionManager 的
+	// appendContextEdit 校验一致：user/assistant/toolResult/custom_message
+	for (const q of questions) {
+		if (!q.editableIds?.length) continue;
+		q.modelHidden = q.editableIds.every((id) => editsByTarget.has(id) && editsByTarget.get(id) === null);
+	}
 
 	// 分组统计汇总（过程/回答已按 stopReason 在事件生成时区分，无需位置标注）
 	for (const q of questions) {
@@ -601,7 +636,7 @@ export function buildProjectionFrom({ header, entries, file }) {
 			questionCount: questions.filter((q) => q.index >= 0).length,
 			totals,
 		},
-		questions,
+			questions,
 	};
 }
 
@@ -695,9 +730,12 @@ export function lightEvent(ev) {
 			break;
 		}
 		case "context-edit": {
-			const c = cap(ev.contextEdit.replacement);
-			out.contextEdit = { ...ev.contextEdit, replacement: c.text };
-			out.truncated = c.truncated;
+			// 单条：顶层 replacement 摘要截断；聚合（多条）：edits 内已是短摘要字符串，无需截断
+			if (typeof ev.contextEdit.replacement === "string") {
+				const c = cap(ev.contextEdit.replacement);
+				out.contextEdit = { ...ev.contextEdit, replacement: c.text };
+				out.truncated = c.truncated;
+			}
 			break;
 		}
 		default:

@@ -17,6 +17,7 @@
  *   GET /api/session?id=&v=     指定会话的 light 投影；etag 未变时 {changed:false}
  *   GET /api/event?session=&id= 单个事件的 full 载荷
  *   POST /api/translate        抽屉正文翻译转发（Google 免费通道；https_proxy 环境变量出代理）
+ *   POST /api/context-edit   隐藏/解除一轮的模型上下文（需扩展注入 onContextEdit；独立模式 501）
  *
  * 只读：不写入会话文件；仅监听回环地址。
  */
@@ -297,8 +298,8 @@ export function createTrajectoryServer(options) {
 			const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 			const pathname = url.pathname;
 			if (req.method === "POST") {
-				// 只开放翻译转发；其余 POST 一律 405
-				if (pathname !== "/api/translate") {
+				// 只开放翻译转发与上下文编辑；其余 POST 一律 405
+				if (pathname !== "/api/translate" && pathname !== "/api/context-edit") {
 					sendJson(res, 405, { error: "method not allowed" });
 				return;
 				}
@@ -398,6 +399,13 @@ export function createTrajectoryServer(options) {
 				}
 				sendJson(res, 200, {
 					changed: true,
+					// 是否可写上下文（模式 A 注入了 onContextEdit）；扩展当前会话的隐藏轮（轮首 user entry id），
+					// 前端用事件 id 前缀对齐轮次，刷新后眼睛状态自动恢复
+					contextEdit: typeof options.onContextEdit === "function",
+					hiddenUserIds: (() => {
+						const state = typeof options.getContextHidden === "function" ? options.getContextHidden() : null;
+						return state && state.sessionFile === session.file ? state.ids : [];
+					})(),
 					etag: entry.etag,
 					sessionId: session.id,
 					stale: false,
@@ -440,6 +448,61 @@ export function createTrajectoryServer(options) {
 				return;
 			}
 
+			if (pathname === "/api/context-edit") {
+				// 隐藏/解除一轮的模型上下文：仅扩展注入 onContextEdit（模式 A）时可写，
+				// 独立服务（模式 B）改文件不会被运行中的 pi 感知，一律 501 只读。
+				// 实现由扩展负责：custom 条目持久化 + context 事件过滤 messages（见 index.ts）
+				if (typeof options.onContextEdit !== "function") {
+					sendJson(res, 501, { error: "本服务未接入上下文编辑（独立模式只读）" });
+					return;
+				}
+				const body = await readBody(req);
+				let payload;
+				try {
+					payload = JSON.parse(body || "{}");
+				} catch {
+					sendJson(res, 400, { error: "请求体不是合法 JSON" });
+					return;
+				}
+				if (String(payload.source ?? "pi") !== "pi") {
+					sendJson(res, 400, { error: "仅 pi 源支持上下文编辑" });
+					return;
+				}
+				const qIndex = Number(payload.qIndex);
+				const hidden = payload.hidden === true;
+				if (!Number.isInteger(qIndex) || qIndex < 0) {
+					sendJson(res, 400, { error: "qIndex 需为非负整数（轮次序号）" });
+					return;
+				}
+				const sessions = readSessions("pi");
+				const session = resolveSession(sessions, payload.session ?? null);
+				if (!session) {
+					sendJson(res, 404, { error: "会话不存在（可能已被删除或列表已刷新）" });
+					return;
+				}
+				let entry;
+				try {
+					entry = getProjection(session, "pi");
+				} catch (err) {
+					sendJson(res, 500, { error: err.message });
+					return;
+				}
+				const q = entry.full.questions.find((x) => x.index === qIndex);
+				if (!q) {
+					sendJson(res, 400, { error: `轮次 ${qIndex} 不存在` });
+					return;
+				}
+				try {
+					await options.onContextEdit({ sessionFile: session.file, qIndex, hidden });
+				} catch (err) {
+					sendJson(res, 409, { error: err.message });
+					return;
+				}
+				// 状态已持久化（custom 条目）：作废缓存，下一次轮询拿到新的 hiddenUserIds
+				projections.delete(session.file);
+				sendJson(res, 200, { ok: true, qIndex, hidden });
+				return;
+			}
 			if (pathname === "/api/translate") {
 				const body = await readBody(req);
 				let payload;

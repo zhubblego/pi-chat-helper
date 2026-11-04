@@ -153,6 +153,10 @@ async function stopServer(child) {
 		check("translate 超长段 400", (await trPost(JSON.stringify({ q: ["x".repeat(20001)], to: "zh-CN" }))).status === 400);
 		check("未知 POST 路径 405", (await fetch(`${base}/api/nothing`, { method: "POST" })).status === 405);
 
+		// context-edit 端点：无 handler 501（本 server 未注入 onContextEdit）
+		const cePost = (body) => fetch(`${base}/api/context-edit`, { method: "POST", headers: { "content-type": "application/json" }, body });
+		check("context-edit 无 handler 501", (await cePost(JSON.stringify({ qIndex: 0, hidden: true }))).status === 501);
+
 		// 轨迹源：/api/sources 列出 + source 参数白名单
 		const sources = await (await fetch(`${base}/api/sources`)).json();
 		check("源列表含 pi", Array.isArray(sources.sources) && sources.sources.some((s) => s.id === "pi" && s.sessions >= 2), JSON.stringify(sources));

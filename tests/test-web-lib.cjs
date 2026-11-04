@@ -250,6 +250,10 @@ const check = (label, cond, extra = "") => {
 
 	// ---- 回归守卫：轮次头三控件（眼睛隐藏 / checkbox 选中 / 点击轮号折叠） ----
 	check("轮次头三控件接线：眼睛隐藏、勾选选中、点击轮号折叠", appSource.includes('class: "q-eye"') && appSource.includes('class: "q-check"') && appSource.includes('no.closest(".question")'));
+	check("眼睛联动模型上下文：可写走 /api/context-edit，只读退化纯 UI 隐藏", appSource.includes("async function toggleRoundHidden") && appSource.includes('"/api/context-edit"') && appSource.includes("function modelHiddenOf") && appSource.includes('state.canContextEdit && state.source === "pi"'));
+	check("隐藏态从投影恢复（modelHidden 派生 + hiddenUserIds 对齐）", appSource.includes("j.contextEdit === true") && appSource.includes("j.hiddenUserIds") && appSource.includes('String(userEv.id).split(":")[0]'));
+	const serverSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "server", "app.mjs"), "utf8");
+	check("服务端 context-edit 端点：无 handler 501、有 handler 转发", serverSource.includes('"/api/context-edit"') && serverSource.includes("501") && serverSource.includes("options.onContextEdit({ sessionFile: session.file, qIndex, hidden })"));
 	check("旧 ⊞/⊟ 折叠按钮与双击折叠已移除", !appSource.includes("q-fold") && !appSource.includes("双击收起本轮"));
 	check("隐藏轮占位行 + 选中/隐藏状态随会话与切源重置", appSource.includes("q-hidden") && appSource.includes("hiddenQs = new Set()") && appSource.includes("selectedQs = new Set()"));
 
