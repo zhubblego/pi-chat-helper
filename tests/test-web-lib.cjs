@@ -273,7 +273,8 @@ const check = (label, cond, extra = "") => {
 	check("顶栏对话按钮在主题按钮右侧", indexSource.includes('id="chat-btn"') && indexSource.indexOf('id="theme-btn"') < indexSource.indexOf('id="chat-btn"'));
 	check("对话栏独立成侧栏，顶部上下文行与关闭按钮已移除（顶部直接是消息流）", indexSource.includes('id="chat-drawer"') && !indexSource.includes("chat-ctx") && !indexSource.includes('id="chat-close"'));
 	check("对话栏开关接线：按钮切换 + 开态持久化 + Esc 兕底", appSource.includes("function setChatOpen") && appSource.includes('el("chat-btn").addEventListener("click"') && appSource.includes('"tw.chat"') && appSource.includes("if (state.chatOpen) setChatOpen(false)"));
-	check("对话栏样式就位（固定右侧栏）", styleSource.includes(".chat-drawer") && !styleSource.includes(".chat-ctx"));
+	check("对话栏样式就位（分屏 flex 列，非 fixed 覆盖）", styleSource.includes(".chat-drawer") && !styleSource.includes(".chat-ctx") && !/\.chat-drawer\s*\{[^}]*position:\s*fixed/s.test(styleSource));
+	check("分屏结构：chat-drawer 在 #layout 内、#main 之后，layout 随其后闭合（主区收窄不遮盖）", indexSource.indexOf('id="main"') < indexSource.indexOf('id="chat-drawer"') && /<\/main>\s*<!--[\s\S]*?-->\s*<aside id="chat-drawer"/.test(indexSource) && /<\/aside>\s*<\/div>/.test(indexSource));
 
 	// ---- 回归守卫：对话页 UI（消息流 + 输入卡，本地消息流未接模型） ----
 	check("对话页两段结构：消息流(role=log) + 输入卡", indexSource.includes('id="chat-list"') && indexSource.includes('role="log"') && indexSource.includes('id="chat-input"') && indexSource.includes('id="chat-send"'));

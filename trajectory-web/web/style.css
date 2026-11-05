@@ -1160,20 +1160,16 @@ mark.ev-hit {
 	font: var(--dsw-font-xs-13);
 }
 
-/* 侧边对话栏（顶栏对话按钮开关）：消息流 + 输入卡（后续接 AI 对话后端） */
+/* 侧边对话栏（分屏）：#layout 的最后一列，打开时主区自动收窄不覆盖；顶栏对话按钮开关 */
 .chat-drawer {
 	--dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
-	position: fixed;
-	top: var(--tw-topbar-height);
-	right: 0;
-	bottom: 0;
-	width: min(440px, 96vw);
+	flex: 0 1 440px;
+	min-width: 260px;
 	background: var(--dsw-alias-bg-layer-1);
 	border-left: 1px solid var(--dsw-alias-border-l1);
-	box-shadow: var(--dsw-elevation-stroke);
 	display: flex;
 	flex-direction: column;
-	z-index: 10;
+	overflow: hidden;
 }
 
 /* 消息流：用户右气泡 / AI 左全宽 markdown（复刻上游 MessageItem + AssistantMarkdown 布局） */

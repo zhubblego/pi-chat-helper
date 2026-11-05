@@ -69,6 +69,20 @@
 			</div>
 			<div id="main-inner" class="main-inner"></div>
 		</main>
+		<!-- 侧边对话栏（分屏）：参与 #layout 的 flex 布局，打开时主区收窄不覆盖；顶栏按钮开关 -->
+		<aside id="chat-drawer" class="chat-drawer" hidden>
+			<div id="chat-list" class="chat-list" role="log" aria-live="polite" aria-label="对话消息"></div>
+			<div class="chat-composer">
+				<div class="chat-card">
+					<textarea id="chat-input" class="chat-input" rows="1" placeholder="问问这条轨迹…" aria-label="对话输入"></textarea>
+					<div class="chat-row">
+						<button id="chat-send" class="chat-send" type="button" title="发送（Enter）" disabled>
+							<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 12V4M8 4 4.5 7.5M8 4l3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+						</button>
+					</div>
+				</div>
+			</div>
+		</aside>
 	</div>
 	<!-- 详情内联面板：点轨迹行后插到该行下方（app.js 负责挂载位置，随行重渲染重挂）。
 	     工具条（译/⧉/⚙）随面板迁移，仍作用于当前展开的这一行。 -->
@@ -95,20 +109,6 @@
 			<div id="dv-meta" class="dv-meta"></div>
 			<div id="dv-body" class="dv-body"></div>
 		</article>
-	<!-- 侧边对话栏：顶栏对话按钮开关，本地消息流围绕当前会话（未接模型） -->
-	<aside id="chat-drawer" class="chat-drawer" hidden>
-		<div id="chat-list" class="chat-list" role="log" aria-live="polite" aria-label="对话消息"></div>
-		<div class="chat-composer">
-			<div class="chat-card">
-				<textarea id="chat-input" class="chat-input" rows="1" placeholder="问问这条轨迹…" aria-label="对话输入"></textarea>
-				<div class="chat-row">
-				<button id="chat-send" class="chat-send" type="button" title="发送（Enter）" disabled>
-					<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 12V4M8 4 4.5 7.5M8 4l3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-				</button>
-			</div>
-			</div>
-		</div>
-	</aside>
 	<script type="module" src="/app.js"></script>
 </body>
 </html>
