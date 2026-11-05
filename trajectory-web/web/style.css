@@ -1028,11 +1028,11 @@ mark.ev-hit {
 	box-shadow: var(--dsw-elevation-stroke);
 }
 
-/* 头部：类型徽章 + 标题 + 工具条（译/⧉/⚙/✕，随面板迁移，作用于当前展开行） */
+/* 头部：类型徽章 + 工具条（译/⧉/⚙），二者靠左排列；行本身已有预览文字，不重复标题 */
 .ev-panel-head {
 	display: flex;
 	align-items: center;
-	gap: 10px;
+	gap: 8px;
 	padding: 5px 8px 5px 12px;
 	border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
@@ -1044,7 +1044,7 @@ mark.ev-hit {
 	flex: none;
 }
 
-/* 工具按钮：面板头部的小方钮（译/⧉/⚙/✕） */
+/* 工具按钮：面板头部的小方钮（译/⧉/⚙） */
 .dv-tool-btn {
 	display: inline-flex;
 	align-items: center;
@@ -1149,15 +1149,6 @@ mark.ev-hit {
 .dv-kind.k-approval {
 	background: var(--dsw-specific-bubble);
 	color: var(--dsw-alias-label-primary-bluish);
-}
-
-.dv-title {
-	flex: 1;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	font: var(--dsw-font-xs-13);
 }
 
 /* 侧边对话栏（分屏）：#layout 的最后一列，打开时主区自动收窄不覆盖；顶栏对话按钮开关 */

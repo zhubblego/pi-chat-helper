@@ -1063,7 +1063,6 @@ function renderPanel(keepState = false) {
 	const openKeys = keepState ? new Set([...body.querySelectorAll("details[open]")].map(detailKey)) : null;
 	el("dv-kind").textContent = eventTagLabel(light);
 	el("dv-kind").className = `dv-kind k-${kindGroup(light.kind)}`;
-	el("dv-title").textContent = light.preview;
 	el("dv-meta").replaceChildren(...panelMetaNodes(view, light));
 	body.replaceChildren(...panelBodyNodes(view));
 	if (openKeys) for (const d of body.querySelectorAll("details")) if (openKeys.has(detailKey(d))) d.open = true;
@@ -1884,7 +1883,6 @@ el("agent-rail").addEventListener("click", (e) => {
 	const btn = e.target.closest(".rail-btn");
 	if (btn) switchSource(btn.dataset.source);
 });
-el("dv-close").addEventListener("click", closePanel);
 el("chat-btn").addEventListener("click", () => setChatOpen(!state.chatOpen));
 el("chat-input").addEventListener("input", () => {
 	autoGrowChatInput();
