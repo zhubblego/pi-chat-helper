@@ -248,24 +248,30 @@ const check = (label, cond, extra = "") => {
 	check("会话表头有分组总开关按钮", indexSource.includes('id="groups-toggle"'));
 	check("分组总开关的同步态与点击都接上了", appSource.includes("function updateGroupsToggle") && appSource.includes('el("groups-toggle").addEventListener("click"'));
 
-	// ---- 回归守卫：轮次头三控件（眼睛隐藏 / checkbox 选中 / 点击轮号折叠） ----
-	check("轮次头三控件接线：眼睛隐藏、勾选选中、点击轮号折叠", appSource.includes('class: "q-eye"') && appSource.includes('class: "q-check"') && appSource.includes('no.closest(".question")'));
-	check("眼睛联动模型上下文：可写走 /api/context-edit，只读退化纯 UI 隐藏", appSource.includes("async function toggleRoundHidden") && appSource.includes('"/api/context-edit"') && appSource.includes("function modelHiddenOf") && appSource.includes('state.canContextEdit && state.source === "pi"'));
+	// ---- 回归守卫：轮次头三控件（剪刀裁剪 / checkbox 选中 / 点击轮号折叠） ----
+	check("轮次头三控件接线：剪刀裁剪、勾选选中、点击轮号折叠", appSource.includes('class: "q-eye"') && appSource.includes('class: "q-check"') && appSource.includes('no.closest(".question")'));
+	check("整轮裁剪联动模型上下文：可写走 /api/context-edit，只读退化纯 UI", appSource.includes("async function toggleRoundCrop") && appSource.includes('"/api/context-edit"') && appSource.includes("function roundCroppedOf") && appSource.includes('state.canContextEdit && state.source === "pi"'));
 	check("隐藏态从投影恢复（modelHidden 派生 + hiddenUserIds 对齐）", appSource.includes("j.contextEdit === true") && appSource.includes("j.hiddenUserIds") && appSource.includes('String(userEv.id).split(":")[0]'));
 	const serverSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "server", "app.mjs"), "utf8");
 	check("服务端 context-edit 端点：无 handler 501、有 handler 转发", serverSource.includes('"/api/context-edit"') && serverSource.includes("501") && serverSource.includes("options.onContextEdit({ sessionFile: session.file, qIndex, hidden })"));
 	check("旧 ⊞/⊟ 折叠按钮与双击折叠已移除", !appSource.includes("q-fold") && !appSource.includes("双击收起本轮"));
-	check("隐藏轮占位行 + 选中/隐藏状态随会话与切源重置", appSource.includes("q-hidden") && appSource.includes("hiddenQs = new Set()") && appSource.includes("selectedQs = new Set()"));
+	check("整轮裁剪覆盖轮内所有条目（含被过滤掉的）", appSource.includes("function eventCropped") && /function eventCropped\(ev, q\) \{[\s\S]*?roundCroppedOf\(q\)\) return true/.test(appSource) && appSource.includes("hiddenQs = new Set()") && appSource.includes("selectedQs = new Set()"));
 
+	// ---- 回归守卫：裁剪模式（工具栏开关 + 列表内剪刀 + 删除线） ----
 	const styleSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "web", "style.css"), "utf8");
+	check("工具栏有裁剪按钮（过滤右侧）", indexSource.includes('id="crop-btn"') && indexSource.indexOf('id="filter-root"') < indexSource.indexOf('id="crop-btn"') && indexSource.indexOf('id="crop-btn"') < indexSource.indexOf('id="search"'));
+	check("裁剪模式开关接线：按钮变色（aria-pressed）+ Esc 退出 + 裁剪结果不随模式变化", appSource.includes("function setCropMode") && appSource.includes('el("crop-btn").addEventListener("click"') && appSource.includes('btn.setAttribute("aria-pressed", String(state.cropMode))') && appSource.includes("if (state.cropMode) setCropMode(false)"));
+	check("剪刀只在裁剪模式渲染（轮次头 + 行级共两处）", appSource.split('svgIcon("scissors")').length - 1 === 2 && /state\.cropMode\n\t+\? h\(/.test(appSource) && (appSource.match(/state\.cropMode\n\t+\? h\(/g) ?? []).length === 2);
+	check("裁剪只杠掉不隐藏：行仍可点击看详情", appSource.includes('classes.push("is-cropped")') && !appSource.includes("ev-row-hidden") && styleSource.includes(".ev.is-cropped .ev-preview") && styleSource.includes("text-decoration: line-through"));
+	check("非裁剪模式网格收一列（否则勾选/标签错位）", appSource.includes('if (!state.cropMode) classes.push("no-crop")') && styleSource.includes(".ev.no-crop"));
 
-	// ---- 回归守卫：行级控件（每条事件行前的眼睛隐藏 + checkbox 选中） ----
-	check("事件行带行级眼睛与 checkbox", appSource.includes('class: "ev-eye"') && appSource.includes('class: "ev-check"') && appSource.includes("state.selectedEvs.has(ev.id)"));
-	check("行级控件点击先于行展开（否则点眼睛会开面板）", appSource.indexOf('closest(".ev-eye")') < appSource.indexOf('closest(".ev")') && appSource.includes('closest(".ev-check")'));
-	check("行级隐藏收成占位行（纯视觉，不动模型上下文）", appSource.includes("ev-row-hidden") && appSource.includes("function toggleEventHidden") && /function toggleEventHidden\(id\)[\s\S]*?renderMain\(\);\n}/.test(appSource) && !/toggleEventHidden[\s\S]{0,400}context-edit/.test(appSource));
-	check("行级三态随会话与切源重置", appSource.split("state.hiddenEvs = new Set()").length - 1 === 2 && appSource.split("state.selectedEvs = new Set()").length - 1 === 2);
-	check("行级控件复用轮次控件样式 + 行内两列已开", /\.q-eye,\n\.ev-eye \{/.test(styleSource) && /\.q-check,\n\.ev-check \{/.test(styleSource) && /grid-template-columns: 18px 13px 60px 1fr auto/.test(styleSource));
-	check("隐藏按钮用剪刀图标（两个圆环把手 + 交叉刀刃），旧眼睛图标已移除", appSource.includes("scissors: [") && appSource.split('svgIcon("scissors")').length - 1 === 4 && !appSource.includes('svgIcon("eye")') && !appSource.includes("\teye: ["));
+	// ---- 回归守卫：行级控件（每条事件行前的剪刀 + checkbox） ----
+	check("事件行带行级剪刀与 checkbox", appSource.includes('class: "ev-eye"') && appSource.includes('class: "ev-check"') && appSource.includes("state.selectedEvs.has(ev.id)"));
+	check("行级控件点击先于行展开（否则点剪刀会开面板）", appSource.indexOf('closest(".ev-eye")') < appSource.indexOf('closest(".ev")') && appSource.includes('closest(".ev-check")'));
+	check("单条裁剪真剔模型上下文：走 /api/crop-entry，按 entry id 存", appSource.includes("async function toggleEntryCrop") && appSource.includes('\"/api/crop-entry\"') && appSource.includes("function entryIdOf") && serverSource.includes('\"/api/crop-entry\"') && serverSource.includes("options.onCropEntry({ sessionFile: session.file, entryId, cropped })"));
+	check("裁剪与选中两套业务分开（croppedEntries / selectedEvs 互不影响）", appSource.includes("state.croppedEntries.has(entryIdOf(ev))") && appSource.includes("state.selectedEvs.has(ev.id)") && appSource.split("state.croppedEntries = new Set()").length - 1 === 2);
+	check("行级控件复用轮次控件样式 + 行内五列网格", /\.q-eye,\n\.ev-eye \{/.test(styleSource) && /\.q-check,\n\.ev-check \{/.test(styleSource) && /grid-template-columns: 18px 13px 60px 1fr auto/.test(styleSource));
+	check("剪刀图标（两个圆环把手 + 交叉刀刃），旧眼睛图标已移除", appSource.includes("scissors: [") && !appSource.includes('svgIcon("eye")') && !appSource.includes("\teye: ["));
 
 	// ---- 回归守卫：详情内联面板（行下方展开，工具条随面板作用于当前行） ----
 	check("详情在行下方内联展开：面板挂到对应行之后，行不在即收起", appSource.includes("function attachOpenPanel") && appSource.includes("row.after(panel)") && appSource.includes('mainInner.querySelector(`.ev[data-eid="${state.openId}"]`)'));
@@ -282,7 +288,7 @@ const check = (label, cond, extra = "") => {
 	// ---- 回归守卫：侧边对话栏（顶栏按钮开关，主题按钮右侧） ----
 	check("顶栏对话按钮在主题按钮右侧", indexSource.includes('id="chat-btn"') && indexSource.indexOf('id="theme-btn"') < indexSource.indexOf('id="chat-btn"'));
 	check("对话栏独立成侧栏，顶部上下文行与关闭按钮已移除（顶部直接是消息流）", indexSource.includes('id="chat-drawer"') && !indexSource.includes("chat-ctx") && !indexSource.includes('id="chat-close"'));
-	check("对话栏开关接线：按钮切换 + 开态持久化 + Esc 兕底", appSource.includes("function setChatOpen") && appSource.includes('el("chat-btn").addEventListener("click"') && appSource.includes('"tw.chat"') && appSource.includes("if (state.chatOpen) setChatOpen(false)"));
+	check("对话栏开关接线：按钮切换 + 开态持久化 + Esc 兕底", appSource.includes("function setChatOpen") && appSource.includes('el("chat-btn").addEventListener("click"') && appSource.includes('"tw.chat"') && appSource.includes("if (state.chatOpen) {"));
 	check("对话栏样式就位（分屏 flex 列，非 fixed 覆盖）", styleSource.includes(".chat-drawer") && !styleSource.includes(".chat-ctx") && !/\.chat-drawer\s*\{[^}]*position:\s*fixed/s.test(styleSource));
 	check("分屏结构：chat-drawer 在 #layout 内、#main 之后，layout 随其后闭合（主区收窄不遮盖）", indexSource.indexOf('id="main"') < indexSource.indexOf('id="chat-drawer"') && /<\/main>\s*<!--[\s\S]*?-->\s*<aside id="chat-drawer"/.test(indexSource) && /<\/aside>\s*<\/div>/.test(indexSource));
 

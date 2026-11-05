@@ -188,6 +188,36 @@ function freePort() {
 		);
 		check("filterHiddenMessages：隐藏轮整轮剔除、system 保留", filtered?.length === 2 && filtered[0].role === "system" && filtered[1].content === "留下");
 		check("filterHiddenMessages：空隐藏集返回 null（零改动）", mod.filterHiddenMessages([{ role: "user", content: "x" }], new Set()) === null);
+		check("croppedIdsFromEntries：最新 custom 生效", JSON.stringify(mod.croppedIdsFromEntries([
+			{ type: "custom", customType: "pi-chat-helper.trajectory-cropped", data: { cropped: ["a", "b"] } },
+			{ type: "custom", customType: "pi-chat-helper.trajectory-cropped", data: { cropped: ["b"] } },
+		])) === '["b"]' && mod.croppedIdsFromEntries([]).length === 0);
+		// 单条裁剪：user/文本消息整条剔除；带 toolCall 的只留 toolCall；toolResult 保留壳与 toolCallId（配对不能断）
+		const cropMsgs = [
+			{ role: "system", content: "" },
+			{ role: "user", content: "裁我" },
+			{ role: "assistant", content: [{ type: "text", text: "裁答" }] },
+			{ role: "assistant", content: [{ type: "text", text: "裁工具" }, { type: "toolCall", id: "tc1", name: "read", arguments: {} }] },
+			{ role: "toolResult", toolCallId: "tc1", toolName: "read", content: [{ type: "text", text: "裁结果" }] },
+			{ role: "user", content: "保留" },
+		];
+		const cropFiltered = mod.filterCroppedMessages(cropMsgs, new Set(["裁我", "裁答", "裁工具", "裁结果"]));
+		check(
+			"filterCroppedMessages：user/纯文本消息整条剔除，system 保留",
+			cropFiltered?.length === 4 && cropFiltered[0].role === "system" && !cropFiltered.some((m) => m.content === "裁我" || m.content === "裁答"),
+			JSON.stringify(cropFiltered?.map((m) => m.role)),
+		);
+		check(
+			"filterCroppedMessages：带 toolCall 的 assistant 只留 toolCall 块（配对不断）",
+			cropFiltered?.[1]?.role === "assistant" && cropFiltered[1].content.length === 1 && cropFiltered[1].content[0].type === "toolCall" && cropFiltered[1].content[0].id === "tc1",
+			JSON.stringify(cropFiltered?.[1]?.content),
+		);
+		check(
+			"filterCroppedMessages：toolResult 保留壳与 toolCallId，内容换占位",
+			cropFiltered?.[2]?.role === "toolResult" && cropFiltered[2].toolCallId === "tc1" && cropFiltered[2].content.length === 1 && /已被裁剪/.test(cropFiltered[2].content[0].text),
+			JSON.stringify(cropFiltered?.[2]),
+		);
+		check("filterCroppedMessages：无命中返回 null（零改动）", mod.filterCroppedMessages(cropMsgs, new Set(["不存在"])) === null && mod.filterCroppedMessages(cropMsgs, new Set()) === null);
 
 		// ---- 模型上下文隐藏（模式 A）：端点 → custom 持久化 → context 过滤 ----
 		for (const h of handlers.session_start ?? []) await h({}, ctx);
@@ -205,6 +235,23 @@ function freePort() {
 		check("context-edit 解除隐藏成功", (await (await cePost({ qIndex: 0, hidden: false })).json()).ok === true);
 		check("解除后 context 不再过滤", handlers.context?.[0]?.({ messages: [{ role: "user", content: "测试" }] }) === undefined);
 		check("context-edit 未知会话 404", (await cePost({ session: "nope", qIndex: 0, hidden: true })).status === 404);
+
+		// ---- 单条裁剪（模式 A）：端点 → custom 持久化 → context 剔除内容 -------
+		const cropPost = (body) => fetch(`${url}api/crop-entry`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+		check("crop-entry 裁剪 assistant 条目成功", (await (await cropPost({ entryId: "a1", cropped: true })).json()).ok === true);
+		check("单条裁剪持久化为 custom 条目", appendedEntries.at(-1)?.customType === "pi-chat-helper.trajectory-cropped" && appendedEntries.at(-1).data.cropped.includes("a1"));
+		const projC = await (await fetch(`${url}api/session`)).json();
+		check("投影带回 cropEdit 与 croppedEntryIds", projC.cropEdit === true && projC.croppedEntryIds.includes("a1"), JSON.stringify(projC.croppedEntryIds));
+		const cropCtx = handlers.context?.[0]?.({ messages: [
+			{ role: "system", content: "" },
+			{ role: "user", content: "测试" },
+			{ role: "assistant", content: [{ type: "text", text: "完成" }] },
+		] });
+		check("context 事件剔掉被裁剪条目的内容", cropCtx?.messages?.length === 2 && cropCtx.messages.every((m) => m.role !== "assistant"), JSON.stringify(cropCtx?.messages?.map((m) => m.role)));
+		check("crop-entry 取消裁剪成功", (await (await cropPost({ entryId: "a1", cropped: false })).json()).ok === true);
+		check("取消后 context 不再裁剪", handlers.context?.[0]?.({ messages: [{ role: "assistant", content: [{ type: "text", text: "完成" }] }] }) === undefined);
+		check("crop-entry 未知条目 400", (await cropPost({ entryId: "nope", cropped: true })).status === 400);
+		check("crop-entry 未知会话 404", (await cropPost({ session: "nope", entryId: "a1", cropped: true })).status === 404);
 
 		// ---- 幂等 ----
 		await trail.handler(`start ${port}`, ctx);

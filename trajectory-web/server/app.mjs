@@ -298,8 +298,8 @@ export function createTrajectoryServer(options) {
 			const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 			const pathname = url.pathname;
 			if (req.method === "POST") {
-				// 只开放翻译转发与上下文编辑；其余 POST 一律 405
-				if (pathname !== "/api/translate" && pathname !== "/api/context-edit") {
+				// 只开放翻译转发与裁剪（整轮 / 单条）；其余 POST 一律 405
+				if (pathname !== "/api/translate" && pathname !== "/api/context-edit" && pathname !== "/api/crop-entry") {
 					sendJson(res, 405, { error: "method not allowed" });
 				return;
 				}
@@ -400,10 +400,16 @@ export function createTrajectoryServer(options) {
 				sendJson(res, 200, {
 					changed: true,
 					// 是否可写上下文（模式 A 注入了 onContextEdit）；扩展当前会话的隐藏轮（轮首 user entry id），
-					// 前端用事件 id 前缀对齐轮次，刷新后眼睛状态自动恢复
+					// 前端用事件 id 前缀对齐轮次，刷新后剪刀状态自动恢复
 					contextEdit: typeof options.onContextEdit === "function",
 					hiddenUserIds: (() => {
 						const state = typeof options.getContextHidden === "function" ? options.getContextHidden() : null;
+						return state && state.sessionFile === session.file ? state.ids : [];
+					})(),
+					// 单条裁剪：当前会话被裁剪的 entry id（前端用事件 id 前缀对齐条目）
+					cropEdit: typeof options.onCropEntry === "function",
+					croppedEntryIds: (() => {
+						const state = typeof options.getCropState === "function" ? options.getCropState() : null;
 						return state && state.sessionFile === session.file ? state.ids : [];
 					})(),
 					etag: entry.etag,
@@ -501,6 +507,61 @@ export function createTrajectoryServer(options) {
 				// 状态已持久化（custom 条目）：作废缓存，下一次轮询拿到新的 hiddenUserIds
 				projections.delete(session.file);
 				sendJson(res, 200, { ok: true, qIndex, hidden });
+				return;
+			}
+
+			if (pathname === "/api/crop-entry") {
+				// 单条裁剪：把一条事件（entry）从模型上下文剪掉；仅扩展注入 onCropEntry 时可写
+				if (typeof options.onCropEntry !== "function") {
+					sendJson(res, 501, { error: "本服务未接入裁剪（独立模式只读）" });
+					return;
+				}
+				const body = await readBody(req);
+				let payload;
+				try {
+					payload = JSON.parse(body || "{}");
+				} catch {
+					sendJson(res, 400, { error: "请求体不是合法 JSON" });
+					return;
+				}
+				if (String(payload.source ?? "pi") !== "pi") {
+					sendJson(res, 400, { error: "仅 pi 源支持裁剪" });
+					return;
+				}
+				const entryId = typeof payload.entryId === "string" ? payload.entryId : "";
+				const cropped = payload.cropped === true;
+				if (!entryId) {
+					sendJson(res, 400, { error: "缺少 entryId" });
+					return;
+				}
+				const sessions = readSessions("pi");
+				const session = resolveSession(sessions, payload.session ?? null);
+				if (!session) {
+					sendJson(res, 404, { error: "会话不存在（可能已被删除或列表已刷新）" });
+					return;
+				}
+				let entry;
+				try {
+					entry = getProjection(session, "pi");
+				} catch (err) {
+					sendJson(res, 500, { error: err.message });
+					return;
+				}
+				// 事件 id 形如 <entryId>:<blockIndex>：按前缀确认这个 entry 真在当前投影里
+				const known = entry.full.questions.some((q) => (q.events ?? []).some((ev) => String(ev.id).split(":")[0] === entryId));
+				if (!known) {
+					sendJson(res, 400, { error: `条目 ${entryId} 不在该会话的活动分支上` });
+					return;
+				}
+				try {
+					await options.onCropEntry({ sessionFile: session.file, entryId, cropped });
+				} catch (err) {
+					sendJson(res, 409, { error: err.message });
+					return;
+				}
+				// 状态已持久化（custom 条目）：作废缓存，下一次轮询拿到新的 croppedEntryIds
+				projections.delete(session.file);
+				sendJson(res, 200, { ok: true, entryId, cropped });
 				return;
 			}
 			if (pathname === "/api/translate") {

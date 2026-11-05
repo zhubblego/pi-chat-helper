@@ -75,12 +75,18 @@ const state = {
 	submenuOpen: false,
 	folded: new Set(),
 	selectedQs: new Set(),
+	// 整轮裁剪（轮序号）：模型上下文真的剔掉
 	hiddenQs: new Set(),
-	// 行级（单条事件）两态：选中 / 视觉隐藏（纯 UI，不动模型上下文——单条事件没有上下文编辑入口）
+	// 行级选中（与裁剪无关的两套业务）
 	selectedEvs: new Set(),
-	hiddenEvs: new Set(),
-	// 模型上下文编辑（模式 A）：是否可写 + 扩展当前会话已隐藏的轮（轮首 user entry id）
+	// 单条裁剪（entry id）：模型上下文真的剔掉
+	croppedEntries: new Set(),
+	// 裁剪模式：只在开态时列表里才出现剪刀按钮；裁剪结果与它无关（服务端持久化）
+	cropMode: false,
+	// 模型上下文编辑（模式 A）：是否可写 + 扩展当前会话已裁剪的轮（轮首 user entry id）
 	canContextEdit: false,
+	// 单条裁剪可写（模式 A 注入 onCropEntry）
+	canCropEntry: false,
 	hiddenUserIds: new Set(),
 	deriveTargets: new Map(),
 	deriveNames: new Map(),
@@ -640,6 +646,20 @@ function renderToolbar() {
 	renderFilterMenu();
 	updateFilterButton();
 	updateFoldAll();
+	updateCropButton();
+}
+
+/** 裁剪模式开关：只在开态时列表里才出现剪刀；裁剪结果本身与服务端持久化，不受开关影响。 */
+function setCropMode(on) {
+	state.cropMode = on;
+	updateCropButton();
+	renderMain();
+}
+
+function updateCropButton() {
+	const btn = el("crop-btn");
+	btn.setAttribute("aria-pressed", String(state.cropMode));
+	btn.title = state.cropMode ? "退出裁剪模式（已裁剪的保持裁剪）" : "裁剪模式：把对话从模型上下文剪掉";
 }
 
 function setMenuOpen(open) {
@@ -673,20 +693,32 @@ function updateFoldAll() {
 // 问题导航
 // ---------------------------------------------------------------------------
 
-/** 轮的模型隐藏态：投影派生（context_edit 整轮剔除）∪ 扩展隐藏集（轮首 user 事件 id 的条目前缀对齐）。 */
-function modelHiddenOf(q) {
+/** 轮的裁剪态：投影派生（context_edit 整轮剔除）∪ 扩展裁剪集（轮首 user 事件 id 的条目前缀对齐）。 */
+function roundCroppedOf(q) {
 	if (q?.modelHidden === true) return true;
+	if (state.hiddenQs.has(q?.index)) return true;
 	const userEv = (q?.events ?? []).find((e) => e.kind === "user");
 	return !!(userEv && state.hiddenUserIds.has(String(userEv.id).split(":")[0]));
 }
 
+/** 事件所属 entry id（投影事件 id 形如 <entryId>:<blockIndex>）。 */
+function entryIdOf(ev) {
+	return String(ev?.id ?? "").split(":")[0];
+}
+
+/** 单条是否被裁剪：整轮裁剪覆盖所有条目（含被过滤掉的），否则看条目自身。 */
+function eventCropped(ev, q) {
+	if (roundCroppedOf(q)) return true;
+	return state.croppedEntries.has(entryIdOf(ev));
+}
+
 /**
- * 剪刀（.q-eye）：切换整轮隐藏。可写会话（模式 A 的当前 pi 会话）联动模型上下文：POST /api/context-edit
- * 成功后本地切换视觉并立即拉取（服务端已作废投影缓存）；只读场景退化为纯视觉隐藏。
+ * 剪刀（.q-eye）：切换整轮裁剪。可写会话（模式 A 的当前 pi 会话）联动模型上下文：POST /api/context-edit
+ * 成功后本地切换视觉并立即拉取（服务端已作废投影缓存）；只读场景退化为纯视觉标记。
  */
-async function toggleRoundHidden(index) {
+async function toggleRoundCrop(index) {
 	const q = (state.data?.questions ?? []).find((x) => x.index === index);
-	const target = !(state.hiddenQs.has(index) || modelHiddenOf(q));
+	const target = !roundCroppedOf(q);
 	if (state.canContextEdit && state.source === "pi" && index >= 0 && q) {
 		try {
 			const res = await fetch("/api/context-edit", {
@@ -706,20 +738,42 @@ async function toggleRoundHidden(index) {
 		void pollSession(true);
 		return;
 	}
-	// 只读路径（模式 B / 其它会话 / 起始组）：纯视觉隐藏，不改模型上下文
+	// 只读路径（模式 B / 其它会话 / 起始组）：纯视觉标记，不改模型上下文
 	if (target) state.hiddenQs.add(index);
 	else state.hiddenQs.delete(index);
 	renderMain();
 }
 
 /**
- * 行级剪刀（.ev-eye）：切换单条事件的视觉隐藏（收成占位行）。单条事件没有模型上下文编辑入口，
- * 与整轮隐藏不同——这里只改显示，不动模型上下文。
+ * 行级剪刀（.ev-eye）：切换单条裁剪。可写会话联动模型上下文：POST /api/crop-entry
+ * （扩展把该 entry 的内容指纹从后续发给模型的消息里剔掉）；只读场景退化为纯视觉标记。
  */
-function toggleEventHidden(id) {
-	if (!id) return;
-	if (state.hiddenEvs.has(id)) state.hiddenEvs.delete(id);
-	else state.hiddenEvs.add(id);
+async function toggleEntryCrop(evId) {
+	const ev = findEvent(evId);
+	if (!ev) return;
+	const id = entryIdOf(ev);
+	const target = !state.croppedEntries.has(id);
+	if (state.canCropEntry && state.source === "pi") {
+		try {
+			const res = await fetch("/api/crop-entry", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ source: "pi", session: state.selectedId, entryId: id, cropped: target }),
+			});
+			if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+		} catch (err) {
+			console.error("[trajectory-web] 裁剪失败：", err.message);
+			setSync(`裁剪失败：${err.message}`, "warn");
+			return;
+		}
+		if (target) state.croppedEntries.add(id);
+		else state.croppedEntries.delete(id);
+		renderMain();
+		void pollSession(true);
+		return;
+	}
+	if (target) state.croppedEntries.add(id);
+	else state.croppedEntries.delete(id);
 	renderMain();
 }
 
@@ -746,19 +800,13 @@ function highlightNodes(text, terms) {
 	return highlightSegments(text, terms).map((s) => (s.hit ? h("mark", { class: "ev-hit", text: s.text }) : s.text));
 }
 
-function renderEvent(ev, terms = []) {
+function renderEvent(ev, terms = [], cropped = false) {
 	const label = eventTagLabel(ev);
-	// 行级隐藏：收成一条低调占位行（只剩剪刀，点它恢复），与轮次隐藏同一套语义
-	if (state.hiddenEvs.has(ev.id)) {
-		return h(
-			"div",
-			{ class: `ev-row-hidden k-${kindGroup(ev.kind)} k-${ev.kind}`, dataset: { eid: ev.id } },
-			h("button", { class: "ev-eye", type: "button", dataset: { eev: ev.id }, title: `显示这条${label}`, "aria-label": `显示这条${label}` }, svgIcon("scissors")),
-			h("span", { class: "ev-tag", text: label }),
-			h("span", { class: "ev-hidden-preview", text: ev.preview }),
-		);
-	}
 	const classes = ["ev", `k-${kindGroup(ev.kind)}`, `k-${ev.kind}`];
+	// 裁剪只改样式（删除线），行仍可点击看详情
+	if (cropped) classes.push("is-cropped");
+	// 非裁剪模式不渲染行级剪刀，网格少一列（见 .ev.no-crop）
+	if (!state.cropMode) classes.push("no-crop");
 	if (ev.id === state.openId) classes.push("is-open");
 	const deriveName = state.deriveNames.get(ev.id);
 	const deriveTarget = state.deriveTargets.get(ev.id);
@@ -795,8 +843,21 @@ function renderEvent(ev, terms = []) {
 			tabindex: "0",
 			title: deriveTarget ? `进入派生会话 ${taskShort(deriveName ?? "")}` : ev.preview,
 		},
-		// 行级控件（与轮次头同一套语义）：剪刀隐藏本条、checkbox 选中本条
-		h("button", { class: "ev-eye", type: "button", dataset: { eev: ev.id }, title: `隐藏这条${label}`, "aria-label": `隐藏这条${label}` }, svgIcon("scissors")),
+		// 行级控件：剪刀（仅裁剪模式）与 checkbox（选中，与裁剪无关的两套业务）
+		state.cropMode
+			? h(
+					"button",
+					{
+						class: "ev-eye",
+						type: "button",
+						dataset: { eev: ev.id },
+						title: cropped ? `取消裁剪这条${label}` : `裁剪这条${label}（后续对话模型看不到）`,
+						"aria-label": cropped ? `取消裁剪这条${label}` : `裁剪这条${label}`,
+						"aria-pressed": String(cropped),
+					},
+					svgIcon("scissors"),
+				)
+			: null,
 		h("input", {
 			class: "ev-check",
 			type: "checkbox",
@@ -836,25 +897,32 @@ function renderMain() {
 			// 搜索激活时：无命中的轮次整轮隐藏（过滤 ∩ 搜索，不再渲染空框）
 			if (matches && shown.length === 0) return null;
 			const roundLabel = q.index < 0 ? "会话开始" : `第 ${q.index + 1} 轮`;
-			const mHidden = modelHiddenOf(q);
-			// 隐藏的轮次：只留占位行（一个剪刀按钮），点它恢复显示；模型上下文剔除的轮附提示
-			if (state.hiddenQs.has(q.index) || mHidden) {
-				return h(
-					"section",
-					{ class: "question q-hidden", id: `q-${q.index}`, dataset: { q: String(q.index) } },
-					h("button", { class: "q-eye", type: "button", dataset: { eye: String(q.index) }, title: `显示${roundLabel}${mHidden ? "（模型上下文已剔除）" : ""}`, "aria-label": `显示${roundLabel}` }, svgIcon("scissors")),
-				);
-			}
-			const body = shown.length ? shown.map((ev) => renderEvent(ev, terms)) : h("div", { class: "ev-empty" });
+			// 裁剪只改样式（删除线），轮次与条目仍可展开/点开看详情
+			const roundCropped = roundCroppedOf(q);
+			const body = shown.length ? shown.map((ev) => renderEvent(ev, terms, eventCropped(ev, q))) : h("div", { class: "ev-empty" });
 			// 搜索激活时命中轮次强制展开（否则只显示轮次头看不到命中内容）；清空搜索恢复原折叠状态
 			const folded = matches ? false : state.folded.has(q.index);
 			return h(
 				"section",
-				{ class: `question${folded ? " folded" : ""}`, id: `q-${q.index}`, dataset: { q: String(q.index) } },
+				{ class: `question${folded ? " folded" : ""}${roundCropped ? " is-cropped" : ""}`, id: `q-${q.index}`, dataset: { q: String(q.index) } },
 				h(
 					"header",
 					{ class: "q-head" },
-					h("button", { class: "q-eye", type: "button", dataset: { eye: String(q.index) }, title: `隐藏${roundLabel}`, "aria-label": `隐藏${roundLabel}` }, svgIcon("scissors")),
+					// 剪刀只在裁剪模式出现（裁剪结果与模式无关，服务端持久化）
+					state.cropMode
+						? h(
+								"button",
+								{
+									class: "q-eye",
+									type: "button",
+									dataset: { eye: String(q.index) },
+									title: roundCropped ? `取消裁剪${roundLabel}（整轮）` : `裁剪${roundLabel}（整轮，后续对话模型看不到）`,
+									"aria-label": roundCropped ? `取消裁剪${roundLabel}` : `裁剪${roundLabel}`,
+									"aria-pressed": String(roundCropped),
+								},
+								svgIcon("scissors"),
+							)
+						: null,
 					h("input", {
 						class: "q-check",
 					type: "checkbox",
@@ -1330,8 +1398,9 @@ function switchSource(id) {
 	state.selectedQs = new Set();
 	state.hiddenQs = new Set();
 	state.selectedEvs = new Set();
-	state.hiddenEvs = new Set();
+	state.croppedEntries = new Set();
 	state.canContextEdit = false;
+	state.canCropEntry = false;
 	state.hiddenUserIds = new Set();
 	state.query = "";
 	el("search").value = "";
@@ -1646,6 +1715,8 @@ async function pollSession(force = false) {
 		}
 		state.data = { meta: j.meta, questions: j.questions };
 		state.canContextEdit = j.contextEdit === true;
+		state.canCropEntry = j.cropEdit === true;
+		state.croppedEntries = new Set(Array.isArray(j.croppedEntryIds) ? j.croppedEntryIds : []);
 		state.hiddenUserIds = new Set(Array.isArray(j.hiddenUserIds) ? j.hiddenUserIds : []);
 		state.searchIndex.update(state.data.questions);
 		syncDeriveTargets();
@@ -1846,8 +1917,9 @@ function selectSession(id, from = null) {
 	state.selectedQs = new Set();
 	state.hiddenQs = new Set();
 	state.selectedEvs = new Set();
-	state.hiddenEvs = new Set();
+	state.croppedEntries = new Set();
 	state.canContextEdit = false;
+	state.canCropEntry = false;
 	state.hiddenUserIds = new Set();
 	state.query = "";
 	state.toolExcluded = new Set();
@@ -1880,7 +1952,7 @@ mainInner.addEventListener("click", (e) => {
 	// 行级控件先于轮次/行本身处理（否则点剪刀会被当成展开面板）
 	const evEye = e.target.closest(".ev-eye");
 	if (evEye) {
-		toggleEventHidden(evEye.dataset.eev);
+		void toggleEntryCrop(evEye.dataset.eev);
 		return;
 	}
 	const evCheck = e.target.closest(".ev-check");
@@ -1895,7 +1967,7 @@ mainInner.addEventListener("click", (e) => {
 	}
 	const eye = e.target.closest(".q-eye");
 	if (eye) {
-		void toggleRoundHidden(Number(eye.dataset.eye));
+		void toggleRoundCrop(Number(eye.dataset.eye));
 		return;
 	}
 	const check = e.target.closest(".q-check");
@@ -1942,6 +2014,7 @@ el("agent-rail").addEventListener("click", (e) => {
 	if (btn) switchSource(btn.dataset.source);
 });
 el("chat-btn").addEventListener("click", () => setChatOpen(!state.chatOpen));
+el("crop-btn").addEventListener("click", () => setCropMode(!state.cropMode));
 el("chat-input").addEventListener("input", () => {
 	autoGrowChatInput();
 	syncChatSend();
@@ -2011,7 +2084,11 @@ document.addEventListener("keydown", (e) => {
 			closePanel();
 			return;
 		}
-		if (state.chatOpen) setChatOpen(false);
+		if (state.chatOpen) {
+			setChatOpen(false);
+			return;
+		}
+		if (state.cropMode) setCropMode(false);
 	}
 });
 // 点击侧条菜单（设置/复制）外关闭（照过滤菜单的 composedPath 判断）

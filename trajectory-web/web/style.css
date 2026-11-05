@@ -754,13 +754,27 @@ svg.tb-icon {
 	display: none;
 }
 
-/* 手动隐藏的轮次：占位行只留剪刀按钮，低调虚线示意边界 */
-.question.q-hidden {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	padding: 3px 16px;
-	border-bottom: 1px dashed var(--dsw-alias-border-l2);
+/* 裁剪：只把行杠掉（删除线 + 变淡），不隐藏——仍可点开看详情 */
+.ev.is-cropped .ev-preview,
+.ev.is-cropped .ev-tag,
+.ev.is-cropped .ev-meta,
+.ev.is-cropped .ev-derive-name {
+	text-decoration: line-through;
+	opacity: 0.55;
+}
+
+/* 整轮裁剪：轮次头的标题与统计一并杠掉（子行由上面的 .ev.is-cropped 负责） */
+.question.is-cropped .q-sum,
+.question.is-cropped .q-stats,
+.question.is-cropped .q-no,
+.question.is-cropped .q-time {
+	text-decoration: line-through;
+	opacity: 0.55;
+}
+
+/* 非裁剪模式不渲染行级剪刀：网格收一列，否则勾选/标签会错位 */
+.ev.no-crop {
+	grid-template-columns: 13px 60px 1fr auto;
 }
 
 .q-head {
@@ -808,27 +822,6 @@ svg.tb-icon {
 .ev .ev-eye,
 .ev .ev-check {
 	align-self: center;
-}
-
-/* 行级隐藏：收成一条低调占位行（剪刀 + 标签 + 预览），与轮次占位行同一语义 */
-.ev-row-hidden {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	padding: 3px 10px;
-	border-radius: var(--dsw-radius-sm);
-	border-left: 2px solid transparent;
-	border-bottom: 1px dashed var(--dsw-alias-border-l2);
-}
-
-.ev-row-hidden .ev-hidden-preview {
-	flex: 1;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	color: var(--dsw-alias-label-tertiary);
-	font: var(--dsw-font-xs-13);
 }
 
 .ev:hover,

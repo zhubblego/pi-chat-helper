@@ -88,11 +88,14 @@ interface ServerHandle {
 }
 
 // ---------------------------------------------------------------------------
-// 模型上下文隐藏（轨迹页眼睛联动）：custom 条目持久化 + context 事件过滤
+// 模型上下文裁剪（轨迹页剪刀联动）：custom 条目 / context_edit 持久化 + context 事件过滤
 // ---------------------------------------------------------------------------
 
-/** 隐藏轮状态的 custom 条目类型（不进 LLM 上下文，pi 负责落盘；最新一条生效）。 */
+/** 整轮裁剪状态的 custom 条目类型（不进 LLM 上下文，pi 负责落盘；最新一条生效）。 */
 const HIDDEN_CUSTOM_TYPE = "pi-chat-helper.trajectory-hidden";
+
+/** 单条裁剪状态的 custom 条目类型（整轮裁剪走 context_edit 通道，单条走这里）。 */
+const CROPPED_CUSTOM_TYPE = "pi-chat-helper.trajectory-cropped";
 
 /** 会话条目的最小结构（划轮/恢复/指纹计算只用这几个字段，测试可直接造对象）。 */
 export interface EntryLike {
@@ -100,7 +103,7 @@ export interface EntryLike {
 	id?: string;
 	message?: { role?: string; content?: unknown };
 	customType?: string;
-	data?: { hidden?: string[] };
+	data?: { hidden?: string[]; cropped?: string[] };
 }
 
 /** 轮首 user 内容指纹：string 原样，块数组取 text 块拼接（与 context 事件 messages 对齐）。 */
@@ -125,12 +128,23 @@ export function userEntryIdOfQIndex(entries: EntryLike[], qIndex: number): strin
 	return null;
 }
 
-/** 从会话条目恢复隐藏轮：取最新一条 trajectory-hidden custom 的 hidden 列表。 */
+/** 从会话条目恢复整轮裁剪：取最新一条 trajectory-hidden custom 的 hidden 列表。 */
 export function hiddenIdsFromEntries(entries: EntryLike[]): string[] {
 	let ids: string[] | null = null;
 	for (const e of entries) {
 		if (e.type === "custom" && e.customType === HIDDEN_CUSTOM_TYPE && Array.isArray(e.data?.hidden)) {
 			ids = e.data.hidden.filter((x): x is string => typeof x === "string");
+		}
+	}
+	return ids ?? [];
+}
+
+/** 从会话条目恢复单条裁剪：取最新一条 trajectory-cropped custom 的 cropped 列表。 */
+export function croppedIdsFromEntries(entries: EntryLike[]): string[] {
+	let ids: string[] | null = null;
+	for (const e of entries) {
+		if (e.type === "custom" && e.customType === CROPPED_CUSTOM_TYPE && Array.isArray(e.data?.cropped)) {
+			ids = e.data.cropped.filter((x): x is string => typeof x === "string");
 		}
 	}
 	return ids ?? [];
@@ -153,6 +167,42 @@ export function filterHiddenMessages<T extends { role: string; content?: unknown
 		out.push(m);
 	}
 	return out.length === messages.length ? null : out;
+}
+
+/** 被裁剪的 toolResult 用这句占位：消息壳与 toolCallId 必须保留，否则 toolCall 变孤儿。 */
+const CROPPED_PLACEHOLDER = "（该条已被裁剪）";
+
+/**
+ * 过滤发给模型的 messages：命中单条裁剪集的内容不再发给模型，且不破坏工具调用配对：
+ * - user / custom：整条剔除
+ * - assistant：剔掉 text/thinking 块，保留 toolCall 块（它的 toolResult 还在）；无块剩则整条剔除
+ * - toolResult：保留消息壳与 toolCallId，content 换成占位文本（toolCall 必须有对应 result）
+ * 无命中返回 null（零改动）。同样按内容指纹对齐（messages 由投影重建，引用不稳定）。
+ */
+export function filterCroppedMessages<T extends { role: string; content?: unknown }>(messages: T[], croppedFingerprints: Set<string>): T[] | null {
+	if (!croppedFingerprints.size) return null;
+	const out: T[] = [];
+	let changed = false;
+	for (const m of messages) {
+		if (!croppedFingerprints.has(fingerprintOfContent(m.content))) {
+			out.push(m);
+			continue;
+		}
+		changed = true;
+		if (m.role === "assistant" && Array.isArray(m.content)) {
+			// 只保留 toolCall 块（配对需要），文本/思维块全部剪掉
+			const kept = (m.content as unknown[]).filter((b) => !!b && typeof b === "object" && (b as { type?: unknown }).type === "toolCall");
+			if (kept.length === 0) continue; // 无工具调用：整条剔除
+			out.push({ ...m, content: kept });
+			continue;
+		}
+		if (m.role === "toolResult") {
+			out.push({ ...m, content: [{ type: "text", text: CROPPED_PLACEHOLDER }] });
+			continue;
+		}
+		// user / custom / 其它角色：整条剔除
+	}
+	return changed ? out : null;
 }
 
 interface ToolOriginEntry {
@@ -201,9 +251,12 @@ interface GlobalSlot {
 	handle: ServerHandle | null;
 	/** 最新 runtime（session_start 时刷新）：server 回调经它拿当前 ctx，跨会话不失效 */
 	runtime: { pi: ExtensionAPI; ctx: ExtensionContext } | null;
-	/** 模型上下文隐藏的轮（轮首 user entry id）与其内容指纹；随会话重置 */
+	/** 整轮裁剪的轮（轮首 user entry id）与其内容指纹；随会话重置 */
 	hiddenUserIds: Set<string>;
 	hiddenFingerprints: Set<string>;
+	/** 单条裁剪的 entry id 与其内容指纹；随会话重置 */
+	croppedEntryIds: Set<string>;
+	croppedFingerprints: Set<string>;
 }
 
 const GLOBAL_KEY = Symbol.for("pi-chat-helper.trajectory-web");
@@ -213,7 +266,15 @@ function slot(): GlobalSlot {
 	// SAFETY: globalThis 的类型声明里没有这个 symbol 键；这里只在同一进程内按约定
 	// 读写本扩展自己的槽位，值的形状由本函数构造（GlobalSlot），不存在外部来源。
 	const g = globalThis as unknown as Record<symbol, unknown>;
-	if (!g[GLOBAL_KEY]) g[GLOBAL_KEY] = { handle: null, runtime: null, hiddenUserIds: new Set(), hiddenFingerprints: new Set() };
+	if (!g[GLOBAL_KEY])
+		g[GLOBAL_KEY] = {
+			handle: null,
+			runtime: null,
+			hiddenUserIds: new Set(),
+			hiddenFingerprints: new Set(),
+			croppedEntryIds: new Set(),
+			croppedFingerprints: new Set(),
+		};
 	return g[GLOBAL_KEY] as GlobalSlot;
 }
 
@@ -224,7 +285,7 @@ async function closeSlot(): Promise<void> {
 	await existing.close();
 }
 
-/** 全量重建隐藏轮的内容指纹集（context 事件按指纹过滤 messages；集合小，重建即可）。 */
+/** 全量重建裁剪集的内容指纹（context 事件按指纹过滤 messages；集合小，重建即可）。 */
 function syncFingerprints(s: GlobalSlot, ctx: ExtensionContext): void {
 	s.hiddenFingerprints.clear();
 	for (const id of s.hiddenUserIds) {
@@ -232,6 +293,12 @@ function syncFingerprints(s: GlobalSlot, ctx: ExtensionContext): void {
 		const entry = ctx.sessionManager.getEntry(id) as EntryLike | undefined;
 		const fp = entry?.message ? fingerprintOfContent(entry.message.content) : "";
 		if (fp) s.hiddenFingerprints.add(fp);
+	}
+	s.croppedFingerprints.clear();
+	for (const id of s.croppedEntryIds) {
+		const entry = ctx.sessionManager.getEntry(id) as EntryLike | undefined;
+		const fp = entry?.message ? fingerprintOfContent(entry.message.content) : "";
+		if (fp) s.croppedFingerprints.add(fp);
 	}
 }
 
@@ -244,6 +311,8 @@ async function startInProcess(
 	hooks: {
 		onContextEdit: (req: { sessionFile: string; qIndex: number; hidden: boolean }) => Promise<void>;
 		getContextHidden: () => { sessionFile: string; ids: string[] } | null;
+		onCropEntry: (req: { sessionFile: string; entryId: string; cropped: boolean }) => Promise<void>;
+		getCropState: () => { sessionFile: string; ids: string[] } | null;
 	},
 ): Promise<ServerHandle> {
 	const { createTrajectoryServer } = await import("./server/app.mjs");
@@ -257,6 +326,8 @@ async function startInProcess(
 		toolOrigins,
 		onContextEdit: hooks.onContextEdit,
 		getContextHidden: hooks.getContextHidden,
+		onCropEntry: hooks.onCropEntry,
+		getCropState: hooks.getCropState,
 	};
 	const port = options.port;
 	try {
@@ -315,6 +386,25 @@ async function runStart(rawArgs: string[], ctx: ExtensionCommandContext, pi: Ext
 			const rt = slot().runtime;
 			const current = rt?.ctx.sessionManager.getSessionFile();
 			return current ? { sessionFile: current, ids: [...slot().hiddenUserIds] } : null;
+		},
+		// 单条裁剪回调：与整轮裁剪同一套校验（只能改当前 pi 会话），状态存自己的 custom 条目。
+		onCropEntry: async ({ sessionFile: file, entryId, cropped }: { sessionFile: string; entryId: string; cropped: boolean }) => {
+			const rt = slot().runtime;
+			if (!rt) throw new Error("扩展 runtime 未就绪");
+			const current = rt.ctx.sessionManager.getSessionFile();
+			if (!current || resolvePath(current) !== resolvePath(file)) throw new Error("只能裁剪当前 pi 会话（其它会话只读）");
+			// 只能裁当前分支上的条目（getEntry 对不存在/不在分支上的 id 返回 undefined）
+			if (!rt.ctx.sessionManager.getEntry(entryId)) throw new Error(`条目 ${entryId} 不存在（可能已切分支）`);
+			const s = slot();
+			if (cropped) s.croppedEntryIds.add(entryId);
+			else s.croppedEntryIds.delete(entryId);
+			syncFingerprints(s, rt.ctx);
+			rt.pi.appendEntry(CROPPED_CUSTOM_TYPE, { cropped: [...s.croppedEntryIds] });
+		},
+		getCropState: (): { sessionFile: string; ids: string[] } | null => {
+			const rt = slot().runtime;
+			const current = rt?.ctx.sessionManager.getSessionFile();
+			return current ? { sessionFile: current, ids: [...slot().croppedEntryIds] } : null;
 		},
 	};
 
@@ -377,19 +467,25 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// 每个新 runtime 都刷新槽位里的当前引用（server 回调经它拿最新 ctx，跨会话不失效），
-	// 并从 custom 条目恢复隐藏轮状态（pi 落盘过，重启/换会话后仍生效）。
+	// 并从 custom 条目恢复裁剪状态（pi 落盘过，重启/换会话后仍生效）。
 	pi.on("session_start", async (_event, ctx) => {
 		const s = slot();
 		s.runtime = { pi, ctx };
 		// SAFETY: getEntries() 返回真实会话条目，字段是 EntryLike 的运行时超集（type/id/customType/data 同名同义）。
-		s.hiddenUserIds = new Set(hiddenIdsFromEntries(ctx.sessionManager.getEntries() as unknown as EntryLike[]));
+		const entries = ctx.sessionManager.getEntries() as unknown as EntryLike[];
+		s.hiddenUserIds = new Set(hiddenIdsFromEntries(entries));
+		s.croppedEntryIds = new Set(croppedIdsFromEntries(entries));
 		syncFingerprints(s, ctx);
 	});
 
-	// 模型上下文隐藏的过滤点：每次 LLM 调用前，命中隐藏轮指纹的整轮对话消息不发给模型。
-	// 无隐藏时零开销直通；返回 null 表示不改 messages。
+	// 模型上下文的裁剪点：每次 LLM 调用前，先按整轮裁剪剔轮，再按单条裁剪剔内容。
+	// 无裁剪时零开销直通；返回 undefined 表示不改 messages。
 	pi.on("context", (event) => {
-		const filtered = filterHiddenMessages(event.messages, slot().hiddenFingerprints);
-		return filtered ? { messages: filtered } : undefined;
+		const s = slot();
+		const rounds = filterHiddenMessages(event.messages, s.hiddenFingerprints);
+		const base = rounds ?? event.messages;
+		const cropped = filterCroppedMessages(base, s.croppedFingerprints);
+		if (!rounds && !cropped) return undefined;
+		return { messages: cropped ?? base };
 	});
 }
