@@ -88,6 +88,7 @@ const state = {
 	openId: null,
 	openFull: null,
 	openLightJson: "",
+	drawerTab: "detail",
 	translated: false,
 	translating: false,
 	settingsOpen: false,
@@ -1082,6 +1083,8 @@ async function loadFull(id) {
 function openDrawer(id) {
 	state.openId = id;
 	state.openFull = null;
+	// 点轨迹行固定回到「详情」标签（对话是另一功能页，不随行点击打开）
+	setDrawerTab("detail");
 	const light = findEvent(id);
 	state.openLightJson = JSON.stringify(light ?? null);
 	renderDrawer();
@@ -1122,6 +1125,26 @@ function closeDrawer() {
 	setSettingsOpen(false);
 	setCopyMenuOpen(false);
 	writeViewHash();
+}
+
+// ---------------------------------------------------------------------------
+// 抽屉功能切换标签：详情 / 对话（对话页为预留空白面板，后续放 AI 对话窗口）
+// 交互复刻上游 ui-primitives SegmentedTabs：点选 / ←→、Home、End 键盘导航，仅选中项可 Tab 停留
+// ---------------------------------------------------------------------------
+
+const DRAWER_TABS = ["detail", "chat"];
+
+function setDrawerTab(tab) {
+	if (!DRAWER_TABS.includes(tab)) return;
+	state.drawerTab = tab;
+	const detail = tab === "detail";
+	el("dv-tabs").dataset.active = tab;
+	el("dv-tab-detail").setAttribute("aria-selected", String(detail));
+	el("dv-tab-chat").setAttribute("aria-selected", String(!detail));
+	el("dv-tab-detail").tabIndex = detail ? 0 : -1;
+	el("dv-tab-chat").tabIndex = detail ? -1 : 0;
+	el("dv-detail").hidden = !detail;
+	el("dv-chat").hidden = detail;
 }
 
 // ---------------------------------------------------------------------------
@@ -1891,6 +1914,20 @@ el("agent-rail").addEventListener("click", (e) => {
 	if (btn) switchSource(btn.dataset.source);
 });
 el("drawer-close").addEventListener("click", closeDrawer);
+el("dv-tab-detail").addEventListener("click", () => setDrawerTab("detail"));
+el("dv-tab-chat").addEventListener("click", () => setDrawerTab("chat"));
+el("dv-tabs").addEventListener("keydown", (e) => {
+	const index = DRAWER_TABS.indexOf(state.drawerTab);
+	let next;
+	if (e.key === "ArrowLeft") next = (index + DRAWER_TABS.length - 1) % DRAWER_TABS.length;
+	else if (e.key === "ArrowRight") next = (index + 1) % DRAWER_TABS.length;
+	else if (e.key === "Home") next = 0;
+	else if (e.key === "End") next = DRAWER_TABS.length - 1;
+	else return;
+	e.preventDefault();
+	setDrawerTab(DRAWER_TABS[next]);
+	el(`dv-tab-${DRAWER_TABS[next]}`).focus();
+});
 el("dv-side-toggle").addEventListener("click", () => setSideOpen(el("dv-side").dataset.open !== "true"));
 el("dv-translate").addEventListener("click", () => void translateDrawer());
 el("dv-copy").addEventListener("click", (e) => {
@@ -1990,6 +2027,7 @@ try {
 	/* 无痕模式等场景忽略 */
 }
 renderToolbar();
+setDrawerTab(state.drawerTab);
 loadDrawerWidth();
 bindDrawerResize();
 void ensureToolOrigins();

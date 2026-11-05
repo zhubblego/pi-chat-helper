@@ -262,6 +262,23 @@ const check = (label, cond, extra = "") => {
 	check("拖拽调宽已接线且宽度持久化", appSource.includes("function bindDrawerResize") && appSource.includes('"tw.drawerWidth"') && appSource.includes("commitDrawerWidth(DRAWER_DEFAULT_W)"));
 	check("抽屉宽度写 CSS 变量（CSS 里默认 620px）", appSource.includes('setProperty("--tw-drawer-w"'));
 
+	// ---- 回归守卫：抽屉功能切换标签（详情/对话 + 标签行末尾关闭按钮） ----
+	const styleSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "web", "style.css"), "utf8");
+	check("抽屉头是标签行（详情/对话 tablist）", indexSource.includes('id="dv-tabs"') && indexSource.includes('role="tablist"') && indexSource.includes('id="dv-tab-detail"') && indexSource.includes('id="dv-tab-chat"'));
+	const headMatch = indexSource.match(/<header class="drawer-head">([\s\S]*?)<\/header>/);
+	check(
+		"关闭按钮在标签行末尾，kind/标题已移到下方子行（旧位置关闭按钮去掉）",
+		!!headMatch &&
+			headMatch[1].includes('id="drawer-close"') &&
+			!headMatch[1].includes("dv-kind") &&
+			!headMatch[1].includes("dv-title") &&
+			indexSource.indexOf('class="drawer-sub"') !== -1 &&
+			indexSource.indexOf('class="drawer-sub"') < indexSource.indexOf('id="dv-kind"'),
+	);
+	check("对话标签接空白预留面板（dv-chat 默认隐藏）", indexSource.includes('id="dv-chat"') && /<div id="dv-chat"[^>]*\bhidden\b/.test(indexSource));
+	check("切标签接线：点选/键盘导航/点轨迹行重置回详情", appSource.includes("function setDrawerTab") && appSource.includes('el("dv-tab-chat").addEventListener("click"') && appSource.includes('"ArrowLeft"') && appSource.includes('setDrawerTab("detail")'));
+	check("标签样式复刻上游 SegmentedTabs（滑动指示条 + 等宽分栏）", styleSource.includes(".dv-tab-indicator") && styleSource.includes(".dv-tabs[data-active=\"chat\"] .dv-tab-indicator"));
+
 	console.log(failed === 0 ? "\nALL PASS" : `\n${failed} FAILED`);
 	process.exit(failed === 0 ? 0 : 1);
 })();

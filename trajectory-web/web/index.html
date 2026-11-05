@@ -87,12 +87,22 @@
 			<button id="dv-side-toggle" class="dv-side-toggle" type="button" title="收起工具条"><span aria-hidden="true">»</span></button>
 		</div>
 		<header class="drawer-head">
-			<span id="dv-kind" class="dv-kind"></span>
-			<span id="dv-title" class="dv-title"></span>
+			<div id="dv-tabs" class="dv-tabs" role="tablist" aria-label="抽屉视图切换" data-active="detail">
+				<span class="dv-tab-indicator" aria-hidden="true"></span>
+				<button id="dv-tab-detail" class="dv-tab" role="tab" aria-selected="true" aria-controls="dv-detail" tabindex="0">详情</button>
+				<button id="dv-tab-chat" class="dv-tab" role="tab" aria-selected="false" aria-controls="dv-chat" tabindex="-1">对话</button>
+			</div>
 			<button id="drawer-close" class="btn icon" title="关闭（Esc）">✕</button>
 		</header>
-		<div id="dv-meta" class="dv-meta"></div>
-		<div id="dv-body" class="dv-body"></div>
+		<div id="dv-detail" class="dv-detail" role="tabpanel" aria-labelledby="dv-tab-detail">
+			<div class="drawer-sub">
+				<span id="dv-kind" class="dv-kind"></span>
+				<span id="dv-title" class="dv-title"></span>
+			</div>
+			<div id="dv-meta" class="dv-meta"></div>
+			<div id="dv-body" class="dv-body"></div>
+		</div>
+		<div id="dv-chat" class="dv-chat" role="tabpanel" aria-labelledby="dv-tab-chat" hidden></div>
 	</aside>
 	<script type="module" src="/app.js"></script>
 </body>
