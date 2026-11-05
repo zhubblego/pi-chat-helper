@@ -1193,16 +1193,56 @@ mark.ev-hit {
 	min-width: 0;
 }
 
-/* 侧边对话栏（分屏）：#layout 的最后一列，打开时主区自动收窄不覆盖；顶栏对话按钮开关 */
+/* 侧边对话栏（分屏）：#layout 的最后一列，打开时主区自动收窄不覆盖；顶栏对话按钮开关。
+   两个拖拽把手：左缘 #chat-resize 调栏宽（--tw-chat-w），输入区上边 #composer-resize 调输入区高 */
 .chat-drawer {
 	--dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
-	flex: 0 1 440px;
+	position: relative;
+	flex: 0 0 auto;
+	width: min(var(--tw-chat-w, 440px), 90vw);
 	min-width: 260px;
 	background: var(--dsw-alias-bg-layer-1);
 	border-left: 1px solid var(--dsw-alias-border-l1);
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
+}
+
+/* 左缘调宽：骑在边框内的 8px 抓取区（抽屉 overflow:hidden，不能外伸），hover/拖动显示竖线 */
+.chat-resize {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	width: 8px;
+	cursor: col-resize;
+	touch-action: none;
+	z-index: 3;
+}
+
+.chat-resize::after {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 3px;
+	width: 3px;
+	border-radius: 2px;
+	background: transparent;
+	transition: background 0.12s var(--ds-ease-in-out);
+}
+
+.chat-resize:hover::after,
+.chat-resize:focus-visible::after {
+	background: linear-gradient(to bottom, transparent, var(--dsw-alias-border-l2) 14%, var(--dsw-alias-border-l2) 86%, transparent);
+}
+
+.chat-resize.dragging::after {
+	background: linear-gradient(to bottom, transparent, var(--dsw-alias-label-tertiary) 8%, var(--dsw-alias-label-tertiary) 92%, transparent);
+}
+
+.chat-resize:focus-visible {
+	outline: none;
 }
 
 /* 输入区上边拖拽：骑在边框上的 8px 抓取区（向上可伸 4px），hover/拖动时显示横线 */
