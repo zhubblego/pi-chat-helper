@@ -45,7 +45,7 @@ const LS_FILTERS = "tw.filters";
 const LS_THEME = "tw.theme";
 const LS_TRANSLATE = "tw.translate";
 const LS_CHAT = "tw.chat";
-const LS_CHAT_W = "tw.chatWidth";
+const LS_COMPOSER_H = "tw.composerHeight";
 const POLL_MS = 2000;
 const SESSION_LIST_EVERY = 3; // 每 3 个 tick 刷一次会话列表（约 6s）
 
@@ -1349,6 +1349,8 @@ function syncChatSend() {
 }
 
 function autoGrowChatInput() {
+	// 手动拖过高度时交给 CSS 撑满，不再按内容改 height（否则会把拖拽结果覆盖掉）
+	if (el("chat-drawer").dataset.composer === "manual") return;
 	const input = el("chat-input");
 	input.style.height = "auto";
 	input.style.height = `${Math.min(input.scrollHeight, CHAT_INPUT_MAX_H)}px`;
@@ -1385,83 +1387,103 @@ function setChatOpen(open) {
 }
 
 // ---------------------------------------------------------------------------
-// 对话栏宽度：左缘拖拽（260px ~ 90vw），双击恢复默认，宽度存 localStorage
+// 输入区高度：拖拽编辑框上边（96px ~ 70vh），双击恢复自适应，高度存 localStorage
 // ---------------------------------------------------------------------------
 
-const CHAT_DEFAULT_W = 440;
-const CHAT_MIN_W = 260;
+const COMPOSER_MIN_H = 96;
 
-function chatMaxWidth() {
-	return Math.min(Math.round(window.innerWidth * 0.9), 1100);
+function composerMaxHeight() {
+	return Math.min(Math.round(window.innerHeight * 0.7), 600);
 }
 
-function clampChatWidth(width) {
-	return Math.min(Math.max(Math.round(width), CHAT_MIN_W), chatMaxWidth());
+function clampComposerHeight(height) {
+	return Math.min(Math.max(Math.round(height), COMPOSER_MIN_H), composerMaxHeight());
 }
 
-/** 只改当前宽度（拖动过程用，不写存储）。 */
-function previewChatWidth(width) {
-	el("chat-drawer").style.setProperty("--tw-chat-w", `${clampChatWidth(width)}px`);
+/** 当前输入区高度（未手动调过时为 0，表示按内容自适应）。 */
+function composerHeight() {
+	return Number.parseFloat(el("chat-drawer").style.getPropertyValue("--tw-composer-h")) || 0;
 }
 
-/** 落定宽度并持久化到 localStorage。 */
-function commitChatWidth(width) {
-	previewChatWidth(width);
+/** 只改当前高度（拖动过程用，不写存储）；手动态下 textarea 撑满输入区。 */
+function previewComposerHeight(height) {
+	const drawerEl = el("chat-drawer");
+	drawerEl.dataset.composer = "manual";
+	drawerEl.style.setProperty("--tw-composer-h", `${clampComposerHeight(height)}px`);
+}
+
+/** 落定高度并持久化到 localStorage。 */
+function commitComposerHeight(height) {
+	previewComposerHeight(height);
 	try {
-		localStorage.setItem(LS_CHAT_W, String(clampChatWidth(width)));
+		localStorage.setItem(LS_COMPOSER_H, String(clampComposerHeight(height)));
 	} catch {
 		/* 无痕模式忽略 */
 	}
 }
 
-function loadChatWidth() {
+/** 恢复自适应：清掉手动高度（textarea 重新按内容 + 132px 上限增长）。 */
+function resetComposerHeight() {
+	const drawerEl = el("chat-drawer");
+	delete drawerEl.dataset.composer;
+	drawerEl.style.removeProperty("--tw-composer-h");
+	el("chat-input").style.height = "";
+	autoGrowChatInput();
+	try {
+		localStorage.removeItem(LS_COMPOSER_H);
+	} catch {
+		/* 无痕模式忽略 */
+	}
+}
+
+function loadComposerHeight() {
 	let saved = 0;
 	try {
-		saved = Number(localStorage.getItem(LS_CHAT_W)) || 0;
+		saved = Number(localStorage.getItem(LS_COMPOSER_H)) || 0;
 	} catch {
 		saved = 0;
 	}
-	if (saved > 0) previewChatWidth(saved);
+	if (saved > 0) previewComposerHeight(saved);
 }
 
-function bindChatResize() {
-	const handle = el("chat-resize");
+function bindComposerResize() {
+	const handle = el("composer-resize");
 	if (!handle) return;
 	handle.addEventListener("pointerdown", (e) => {
 		if (e.button !== 0) return;
 		e.preventDefault();
-		const drawerEl = el("chat-drawer");
-		const start = { x: e.clientX, width: drawerEl.getBoundingClientRect().width };
+		const composer = handle.parentElement;
+		const start = { y: e.clientY, height: composer.getBoundingClientRect().height };
 		handle.classList.add("dragging");
 		try {
 			handle.setPointerCapture(e.pointerId);
 		} catch {
 			/* 合成事件/环境不支持捕获时靠 window 监听兑底 */
 		}
-		// 左缘：指针往左拉 = 变宽
-		const onMove = (ev) => previewChatWidth(start.width - (ev.clientX - start.x));
+		// 上边：指针往上拉 = 变高
+		const onMove = (ev) => previewComposerHeight(start.height - (ev.clientY - start.y));
 		const onEnd = () => {
 			window.removeEventListener("pointermove", onMove);
 			window.removeEventListener("pointerup", onEnd);
 			window.removeEventListener("pointercancel", onEnd);
 			handle.classList.remove("dragging");
-			commitChatWidth(drawerEl.getBoundingClientRect().width);
+			commitComposerHeight(composer.getBoundingClientRect().height);
 		};
 		window.addEventListener("pointermove", onMove);
 		window.addEventListener("pointerup", onEnd);
 		window.addEventListener("pointercancel", onEnd);
 	});
-	handle.addEventListener("dblclick", () => commitChatWidth(CHAT_DEFAULT_W));
+	handle.addEventListener("dblclick", () => resetComposerHeight());
 	handle.addEventListener("keydown", (e) => {
-		if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+		if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
 		e.preventDefault();
 		const step = e.shiftKey ? 64 : 16;
-		commitChatWidth(el("chat-drawer").getBoundingClientRect().width + (e.key === "ArrowLeft" ? step : -step));
+		const base = composerHeight() || handle.parentElement.getBoundingClientRect().height;
+		commitComposerHeight(base + (e.key === "ArrowUp" ? step : -step));
 	});
-	// 窗口变窄时把超宽的对话栏收回可视范围（不写回存储，复原窗口后保留原偏好）
+	// 窗口变矮时把过高的输入区收回可视范围（不写回存储，复原后保留原偏好）
 	window.addEventListener("resize", () => {
-		const drawerEl = el("chat-drawer");
-		if (drawerEl.getBoundingClientRect().width > chatMaxWidth()) previewChatWidth(chatMaxWidth());
+		if (composerHeight() > composerMaxHeight()) previewComposerHeight(composerMaxHeight());
 	});
 }
 
@@ -2276,8 +2298,8 @@ loadPrefs();
 loadTranslatePrefs();
 renderToolbar();
 renderChat();
-loadChatWidth();
-bindChatResize();
+loadComposerHeight();
+bindComposerResize();
 try {
 	if (localStorage.getItem(LS_CHAT) === "1") setChatOpen(true);
 } catch {

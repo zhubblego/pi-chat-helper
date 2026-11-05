@@ -1196,10 +1196,7 @@ mark.ev-hit {
 /* 侧边对话栏（分屏）：#layout 的最后一列，打开时主区自动收窄不覆盖；顶栏对话按钮开关 */
 .chat-drawer {
 	--dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
-	position: relative;
-	flex: 0 0 auto;
-	/* 宽度由左缘拖拽控制（--tw-chat-w，默认 440px；窄窗口封顶 90vw） */
-	width: min(var(--tw-chat-w, 440px), 90vw);
+	flex: 0 1 440px;
 	min-width: 260px;
 	background: var(--dsw-alias-bg-layer-1);
 	border-left: 1px solid var(--dsw-alias-border-l1);
@@ -1208,43 +1205,59 @@ mark.ev-hit {
 	overflow: hidden;
 }
 
-/* 左缘拖拽：骑在边框内的 8px 抓取区（抽屉 overflow:hidden，不能伸到外面），
-   hover/拖动时显示一条竖线提示（与之前抽屉调宽同一手法） */
-.chat-resize {
+/* 输入区上边拖拽：骑在边框上的 8px 抓取区（向上可伸 4px），hover/拖动时显示横线 */
+.composer-resize {
 	position: absolute;
-	top: 0;
-	bottom: 0;
+	top: -4px;
 	left: 0;
-	width: 8px;
-	cursor: col-resize;
+	right: 0;
+	height: 8px;
+	cursor: row-resize;
 	touch-action: none;
 	z-index: 3;
 }
 
-.chat-resize::after {
+.composer-resize::after {
 	content: "";
 	position: absolute;
-	top: 0;
-	bottom: 0;
-	left: 3px;
-	width: 3px;
+	left: 0;
+	right: 0;
+	top: 3px;
+	height: 3px;
 	border-radius: 2px;
 	background: transparent;
 	transition: background 0.12s var(--ds-ease-in-out);
 }
 
-/* 中性灰 + 上下渐隐：只是个看得见抓手的提示，不要用链接蓝抢注意力 */
-.chat-resize:hover::after,
-.chat-resize:focus-visible::after {
-	background: linear-gradient(to bottom, transparent, var(--dsw-alias-border-l2) 14%, var(--dsw-alias-border-l2) 86%, transparent);
+/* 中性灰 + 左右渐隐：只是个看得见抓手的提示，不要用链接蓝抢注意力 */
+.composer-resize:hover::after,
+.composer-resize:focus-visible::after {
+	background: linear-gradient(to right, transparent, var(--dsw-alias-border-l2) 14%, var(--dsw-alias-border-l2) 86%, transparent);
 }
 
-.chat-resize.dragging::after {
-	background: linear-gradient(to bottom, transparent, var(--dsw-alias-label-tertiary) 8%, var(--dsw-alias-label-tertiary) 92%, transparent);
+.composer-resize.dragging::after {
+	background: linear-gradient(to right, transparent, var(--dsw-alias-label-tertiary) 8%, var(--dsw-alias-label-tertiary) 92%, transparent);
 }
 
-.chat-resize:focus-visible {
+.composer-resize:focus-visible {
 	outline: none;
+}
+
+/* 手动拖过高度：输入区固定高，输入卡与 textarea 撑满（不再按内容自适应） */
+.chat-drawer[data-composer="manual"] .chat-composer {
+	height: var(--tw-composer-h);
+	display: flex;
+	flex-direction: column;
+}
+
+.chat-drawer[data-composer="manual"] .chat-card {
+	flex: 1;
+	min-height: 0;
+}
+
+.chat-drawer[data-composer="manual"] .chat-input {
+	height: 100%;
+	max-height: none;
 }
 
 /* 消息流：用户右气泡 / AI 左全宽 markdown（复刻上游 MessageItem + AssistantMarkdown 布局） */
@@ -1290,6 +1303,7 @@ mark.ev-hit {
 
 /* 输入卡（复刻上游 InputBar：输入面 token 填充 + 面板圆角 + l2 发丝线/软阴影；textarea 透明无边框） */
 .chat-composer {
+	position: relative;
 	flex: none;
 	padding: 10px 12px 12px;
 	border-top: 1px solid var(--dsw-alias-border-l1);
