@@ -26,7 +26,10 @@
 		</div>
 		<div id="session-meta" class="session-meta">加载中…</div>
 		<div class="topbar-right">
-			<button id="theme-btn" class="tb-btn theme-btn" type="button" title="主题：跟随系统（点击切换）" aria-label="主题：跟随系统（点击切换）"></button>
+			<button id="theme-btn" class="tb-btn icon-btn" type="button" title="主题：跟随系统（点击切换）" aria-label="主题：跟随系统（点击切换）"></button>
+			<button id="chat-btn" class="tb-btn icon-btn" type="button" title="打开侧边对话" aria-label="打开侧边对话" aria-pressed="false">
+				<svg class="tb-icon" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3c0-.9.7-1.6 1.6-1.6h4.8c.9 0 1.6.7 1.6 1.6v3c0 .9-.7 1.6-1.6 1.6H5.5L3.7 9.8V7.6h-.1C2.7 7.6 2 6.9 2 6z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>
+			</button>
 			<span id="scope-badge" class="scope-badge"></span>
 			<span id="sync" class="sync">—</span>
 		</div>
@@ -67,53 +70,46 @@
 			<div id="main-inner" class="main-inner"></div>
 		</main>
 	</div>
-	<aside id="drawer" class="drawer" hidden>
-		<div id="drawer-resize" class="drawer-resize" role="separator" aria-orientation="vertical" aria-label="调整详情宽度" tabindex="0" title="拖动调整宽度（双击恢复默认）"></div>
-		<div id="dv-side" class="dv-side" data-open="true">
-			<div class="dv-side-tools">
-				<button id="dv-translate" class="dv-side-btn" type="button" title="翻译正文（再次点击恢复原文）" aria-pressed="false"><span aria-hidden="true">译</span></button>
-				<div id="dv-copy-root" class="menu-root">
-					<button id="dv-copy" class="dv-side-btn" type="button" title="复制正文" aria-haspopup="menu" aria-expanded="false"><span aria-hidden="true">⧉</span></button>
-					<div id="dv-copy-menu" class="menu" role="menu" hidden>
-						<button class="menu-item" type="button" role="menuitem" data-copy="trans"><span class="menu-item-label">仅复制译文</span></button>
-						<button class="menu-item" type="button" role="menuitem" data-copy="all"><span class="menu-item-label">全部（原文＋译文）</span></button>
-					</div>
-				</div>
-				<div id="dv-settings-root" class="menu-root">
-					<button id="dv-settings" class="dv-side-btn" type="button" title="抽屉设置" aria-haspopup="menu" aria-expanded="false"><span aria-hidden="true">⚙</span></button>
-					<div id="dv-settings-menu" class="menu" role="menu" hidden></div>
-				</div>
-			</div>
-			<button id="dv-side-toggle" class="dv-side-toggle" type="button" title="收起工具条"><span aria-hidden="true">»</span></button>
-		</div>
-		<header class="drawer-head">
-			<div id="dv-tabs" class="dv-tabs" role="tablist" aria-label="抽屉视图切换" data-active="detail">
-				<span class="dv-tab-indicator" aria-hidden="true"></span>
-				<button id="dv-tab-detail" class="dv-tab" role="tab" aria-selected="true" aria-controls="dv-detail" tabindex="0">详情</button>
-				<button id="dv-tab-chat" class="dv-tab" role="tab" aria-selected="false" aria-controls="dv-chat" tabindex="-1">对话</button>
-			</div>
-			<button id="drawer-close" class="btn icon" title="关闭（Esc）">✕</button>
-		</header>
-		<div id="dv-detail" class="dv-detail" role="tabpanel" aria-labelledby="dv-tab-detail">
-			<div class="drawer-sub">
+	<!-- 详情内联面板：点轨迹行后插到该行下方（app.js 负责挂载位置，随行重渲染重挂）。
+	     工具条（译/⧉/⚙）随面板迁移，仍作用于当前展开的这一行。 -->
+	<article id="ev-panel" class="ev-panel" hidden>
+			<header class="ev-panel-head">
 				<span id="dv-kind" class="dv-kind"></span>
 				<span id="dv-title" class="dv-title"></span>
-			</div>
+				<div class="ev-panel-tools">
+					<button id="dv-translate" class="dv-tool-btn" type="button" title="翻译正文（再次点击恢复原文）" aria-pressed="false"><span aria-hidden="true">译</span></button>
+					<div id="dv-copy-root" class="menu-root">
+						<button id="dv-copy" class="dv-tool-btn" type="button" title="复制正文" aria-haspopup="menu" aria-expanded="false"><span aria-hidden="true">⧉</span></button>
+						<div id="dv-copy-menu" class="menu" role="menu" hidden>
+							<button class="menu-item" type="button" role="menuitem" data-copy="trans"><span class="menu-item-label">仅复制译文</span></button>
+							<button class="menu-item" type="button" role="menuitem" data-copy="all"><span class="menu-item-label">全部（原文＋译文）</span></button>
+						</div>
+					</div>
+					<div id="dv-settings-root" class="menu-root">
+						<button id="dv-settings" class="dv-tool-btn" type="button" title="翻译设置" aria-haspopup="menu" aria-expanded="false"><span aria-hidden="true">⚙</span></button>
+						<div id="dv-settings-menu" class="menu" role="menu" hidden></div>
+					</div>
+					<button id="dv-close" class="dv-tool-btn" type="button" title="收起（Esc）"><span aria-hidden="true">✕</span></button>
+				</div>
+			</header>
 			<div id="dv-meta" class="dv-meta"></div>
 			<div id="dv-body" class="dv-body"></div>
-		</div>
-		<div id="dv-chat" class="dv-chat" role="tabpanel" aria-labelledby="dv-tab-chat" hidden>
+		</article>
+	<!-- 侧边对话栏：顶栏对话按钮开关，围绕当前展开的轨迹行 -->
+	<aside id="chat-drawer" class="chat-drawer" hidden>
+		<div class="chat-ctx-row">
 			<div id="chat-ctx" class="chat-ctx"></div>
-			<div id="chat-list" class="chat-list" role="log" aria-live="polite" aria-label="对话消息"></div>
-			<div class="chat-composer">
-				<div class="chat-card">
-					<textarea id="chat-input" class="chat-input" rows="1" placeholder="问问这条轨迹…" aria-label="对话输入"></textarea>
-					<div class="chat-row">
-						<button id="chat-send" class="chat-send" type="button" title="发送（Enter）" disabled>
-							<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 12V4M8 4 4.5 7.5M8 4l3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-						</button>
-					</div>
-				</div>
+			<button id="chat-close" class="btn icon" title="关闭（Esc）">✕</button>
+		</div>
+		<div id="chat-list" class="chat-list" role="log" aria-live="polite" aria-label="对话消息"></div>
+		<div class="chat-composer">
+			<div class="chat-card">
+				<textarea id="chat-input" class="chat-input" rows="1" placeholder="问问这条轨迹…" aria-label="对话输入"></textarea>
+				<div class="chat-row">
+				<button id="chat-send" class="chat-send" type="button" title="发送（Enter）" disabled>
+					<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 12V4M8 4 4.5 7.5M8 4l3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+				</button>
+			</div>
 			</div>
 		</div>
 	</aside>

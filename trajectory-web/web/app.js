@@ -1,5 +1,7 @@
 /**
- * app.js — 轨迹观察页：左侧会话栏，右侧轨迹（按轮次分段，工具条过滤/折叠）。
+ * app.js — 轨迹观察页：左侧会话栏，右侧轨迹（按轮次分段，工具条过滤/折叠）；
+ * 点轨迹行在行下方内联展开详情面板（工具条随面板作用于当前行）；
+ * 顶栏按钮开关右侧对话栏（本地消息流，未接模型）。
  *
  * 数据：
  *   - /api/sessions  会话列表（mode A 本项目；mode B 全部项目，按项目分组）
@@ -42,7 +44,7 @@ import {
 const LS_FILTERS = "tw.filters";
 const LS_THEME = "tw.theme";
 const LS_TRANSLATE = "tw.translate";
-const LS_DRAWER_W = "tw.drawerWidth";
+const LS_CHAT = "tw.chat";
 const POLL_MS = 2000;
 const SESSION_LIST_EVERY = 3; // 每 3 个 tick 刷一次会话列表（约 6s）
 
@@ -50,7 +52,7 @@ const el = (id) => document.getElementById(id);
 const main = el("main");
 const mainInner = el("main-inner");
 const sessionList = el("session-list");
-const drawer = el("drawer");
+const panel = el("ev-panel");
 
 const state = {
 	scope: null,
@@ -88,9 +90,9 @@ const state = {
 	openId: null,
 	openFull: null,
 	openLightJson: "",
-	drawerTab: "detail",
-	// 「对话」标签的本地消息流（未接模型）：{ role: "user" | "ai", text }
+	// 「对话」侧栏的本地消息流（未接模型）：{ role: "user" | "ai", text }
 	chat: [],
+	chatOpen: false,
 	translated: false,
 	translating: false,
 	settingsOpen: false,
@@ -730,6 +732,7 @@ function highlightNodes(text, terms) {
 
 function renderEvent(ev, terms = []) {
 	const classes = ["ev", `k-${kindGroup(ev.kind)}`, `k-${ev.kind}`];
+	if (ev.id === state.openId) classes.push("is-open");
 	const deriveName = state.deriveNames.get(ev.id);
 	const deriveTarget = state.deriveTargets.get(ev.id);
 	if (deriveName) classes.push("k-derive");
@@ -773,6 +776,9 @@ function renderEvent(ev, terms = []) {
 
 function renderMain() {
 	updateDeriveButtons();
+	// 面板先停泊到 body：replaceChildren 会把它摘出文档，而 el("dv-*") 依赖
+	// getElementById（文档内可见）；停在文档外时后续 renderPanel/resetTranslateUi 会空引用崩溃
+	if (panel.parentElement !== document.body) document.body.appendChild(panel);
 	if (!state.selectedId) {
 		mainInner.replaceChildren(h("div", { class: "empty", text: "左侧选择一个会话查看轨迹" }));
 		return;
@@ -835,10 +841,12 @@ function renderMain() {
 		mainInner.replaceChildren(h("div", { class: "empty", text: "没有匹配的轨迹（搜索与过滤无交集）" }));
 	}
 	updateFoldAll();
+	// 打开的详情面板重新挂到对应行下方（replaceChildren 会把它摘出文档，重挂不重建，滚动/展开态保留）
+	attachOpenPanel();
 }
 
 // ---------------------------------------------------------------------------
-// 详情抽屉
+// 详情内联面板：点轨迹行在行下方展开；行不在（被过滤/折叠/隐藏）时收起
 // ---------------------------------------------------------------------------
 
 function findEvent(id) {
@@ -867,7 +875,7 @@ function usageText(u) {
 	return bits.join(" · ");
 }
 
-function drawerMetaNodes(view, light) {
+function panelMetaNodes(view, light) {
 	const nodes = [];
 	if (view.iso) nodes.push(chipNode("时间", new Date(view.iso).toLocaleString()));
 	if (view.msg?.model) nodes.push(chipNode("模型", [view.msg.provider, view.msg.model].filter(Boolean).join("/")));
@@ -966,7 +974,7 @@ function systemBody(view) {
 	return nodes;
 }
 
-function drawerBodyNodes(view) {
+function panelBodyNodes(view) {
 	switch (view.kind) {
 		case "thinking":
 			return view.redacted && !view.text ? [muted("（加密思维，无明文可展示）")] : [mdNode(view.text)];
@@ -1042,13 +1050,10 @@ function detailKey(d) {
 	return d.querySelector("summary code")?.textContent ?? d.querySelector("summary")?.textContent ?? "";
 }
 
-/** 重建抽屉内容；keepState=true 时保留滚动位置与各 <details> 展开态（轮询/全文到达不打断阅读）。 */
-function renderDrawer(keepState = false) {
+/** 重建面板内容；keepState=true 时保留滚动位置与各 <details> 展开态（轮询/全文到达不打断阅读）。 */
+function renderPanel(keepState = false) {
 	const light = state.openId ? findEvent(state.openId) : null;
-	if (!light) {
-		drawer.hidden = true;
-		return;
-	}
+	if (!light) return;
 	const full = state.openFull && state.openFull.id === light.id ? state.openFull : null;
 	const view = full ?? light;
 	transSeq++;
@@ -1060,11 +1065,10 @@ function renderDrawer(keepState = false) {
 	el("dv-kind").className = `dv-kind k-${kindGroup(light.kind)}`;
 	el("dv-title").textContent = light.preview;
 	renderChatCtx(light);
-	el("dv-meta").replaceChildren(...drawerMetaNodes(view, light));
-	body.replaceChildren(...drawerBodyNodes(view));
+	el("dv-meta").replaceChildren(...panelMetaNodes(view, light));
+	body.replaceChildren(...panelBodyNodes(view));
 	if (openKeys) for (const d of body.querySelectorAll("details")) if (openKeys.has(detailKey(d))) d.open = true;
 	body.scrollTop = prevScroll;
-	drawer.hidden = false;
 }
 
 async function loadFull(id) {
@@ -1077,90 +1081,96 @@ async function loadFull(id) {
 		const j = await res.json();
 		if (state.openId !== id || !j.event) return;
 		state.openFull = j.event;
-		renderDrawer(true);
+		renderPanel(true);
 	} catch {
 		/* 网络失败时保持 light 展示 */
 	}
 }
 
-function openDrawer(id) {
+/** 展开轨迹行详情（再点同一行收起）；面板挂在行下方，行不可见时不展开。 */
+function openPanel(id) {
+	if (state.openId === id) {
+		closePanel();
+		return;
+	}
 	state.openId = id;
 	state.openFull = null;
-	// 点轨迹行固定回到「详情」标签（对话是另一功能页，不随行点击打开）
-	setDrawerTab("detail");
 	const light = findEvent(id);
 	state.openLightJson = JSON.stringify(light ?? null);
-	renderDrawer();
+	renderPanel();
+	// 行不可见（被过滤/折叠）时 attachOpenPanel 已收尾，不再拉全文/写 hash
+	if (!attachOpenPanel()) return;
+	// behavior 必须显式 instant：#main 的 scroll-behavior 是 smooth（同 revealEvent）
+	panel.scrollIntoView({ block: "nearest", behavior: "instant" });
 	if (light?.truncated) loadFull(id);
 	writeViewHash();
+}
+
+/** 把打开的详情面板挂到对应轨迹行下方；行不在（被过滤/折叠/隐藏轮）时收起面板。返回是否挂载成功。 */
+function attachOpenPanel() {
+	if (!state.openId) return false;
+	const row = mainInner.querySelector(`.ev[data-eid="${state.openId}"]`);
+	if (!row) {
+		closePanel();
+		return false;
+	}
+	// 首次点行不会重绘轨迹：高亮在这里同步（renderEvent 里按 state 补一致）
+	for (const open of mainInner.querySelectorAll(".ev.is-open")) open.classList.remove("is-open");
+	row.classList.add("is-open");
+	row.after(panel);
+	panel.hidden = false;
+	return true;
 }
 
 function refreshOpen() {
 	if (!state.openId) return;
 	const light = findEvent(state.openId);
 	if (!light) {
-		state.openId = null;
-		state.openFull = null;
-		state.openLightJson = "";
-		drawer.hidden = true;
-		writeViewHash();
+		closePanel();
 		return;
 	}
 	// 事件内容没变就完全不动 DOM：轮询期间不打断阅读（展开的段落、滚动位置、已加载全文都保留）
 	const json = JSON.stringify(light);
 	if (json === state.openLightJson) {
-		// 全文尚未到手（如上次拉取失败）则继续尝试；成功后 renderDrawer(true) 保留展开态
+		// 全文尚未到手（如上次拉取失败）则继续尝试；成功后 renderPanel(true) 保留展开态
 		if (!state.openFull && light.truncated) loadFull(light.id);
 		return;
 	}
 	state.openLightJson = json;
 	state.openFull = null;
-	renderDrawer(true);
+	renderPanel(true);
 	if (light.truncated) loadFull(light.id);
 }
 
-function closeDrawer() {
+function closePanel() {
 	state.openId = null;
 	state.openFull = null;
 	state.openLightJson = "";
-	drawer.hidden = true;
+	panel.hidden = true;
+	for (const open of mainInner.querySelectorAll(".ev.is-open")) open.classList.remove("is-open");
 	transSeq++;
 	setSettingsOpen(false);
 	setCopyMenuOpen(false);
+	renderChatCtx(null);
 	writeViewHash();
 }
 
 // ---------------------------------------------------------------------------
-// 抽屉功能切换标签：详情 / 对话（对话页为预留空白面板，后续放 AI 对话窗口）
-// 交互复刻上游 ui-primitives SegmentedTabs：点选 / ←→、Home、End 键盘导航，仅选中项可 Tab 停留
-// ---------------------------------------------------------------------------
-
-const DRAWER_TABS = ["detail", "chat"];
-
-function setDrawerTab(tab) {
-	if (!DRAWER_TABS.includes(tab)) return;
-	state.drawerTab = tab;
-	const detail = tab === "detail";
-	el("dv-tabs").dataset.active = tab;
-	el("dv-tab-detail").setAttribute("aria-selected", String(detail));
-	el("dv-tab-chat").setAttribute("aria-selected", String(!detail));
-	el("dv-tab-detail").tabIndex = detail ? 0 : -1;
-	el("dv-tab-chat").tabIndex = detail ? -1 : 0;
-	el("dv-detail").hidden = !detail;
-	el("dv-chat").hidden = detail;
-}
-
-// ---------------------------------------------------------------------------
-// 「对话」标签：围绕当前事件的 AI 对话窗口（本轮仅 UI + 本地消息流，模型后端后续接入）
-// 视觉复刻上游：用户右气泡（specific-bubble/radius-xl）、AI 左全宽 markdown、
-// 底部输入卡（input-major/radius-panel）+ info 色圆发送钮
+// 侧边对话栏（顶栏对话按钮开关，位于主题按钮右侧）：围绕当前展开的轨迹行
+// 本轮仅 UI + 本地消息流，模型后端后续接入；视觉复刻上游：用户右气泡
+// （specific-bubble/radius-xl）、AI 左全宽 markdown、底部输入卡（input-major/radius-panel）+ info 色圆发送钮
 // ---------------------------------------------------------------------------
 
 const CHAT_INPUT_MAX_H = 132; // 与 CSS .chat-input max-height 同步（约 6 行封顶后内部滚动）
 
-/** 上下文行：当前打开事件的类型徽章 + 标题（随 renderDrawer 同步）。 */
+/** 上下文行：当前展开事件的类型徽章 + 标题（随 renderPanel 同步；未选中时提示）。 */
 function renderChatCtx(light) {
-	el("chat-ctx").replaceChildren(
+	const ctx = el("chat-ctx");
+	if (!light) {
+		ctx.replaceChildren(h("span", { class: "chat-ctx-title", text: "未选中轨迹行（点击轨迹行展开详情后作为对话上下文）" }));
+		return;
+	}
+	ctx.replaceChildren(
 		h("span", { class: `dv-kind k-${kindGroup(light.kind)}`, text: eventTagLabel(light) }),
 		h("span", { class: "chat-ctx-title", text: light.preview }),
 	);
@@ -1203,87 +1213,26 @@ function sendChat() {
 }
 
 // ---------------------------------------------------------------------------
-// 详情抽屉宽度：左边界拖拽（360px ~ 94vw），双击恢复默认，宽度存 localStorage
+// 侧边对话栏开关：顶栏对话按钮（主题按钮右侧）驱动，开态存 localStorage
 // ---------------------------------------------------------------------------
 
-const DRAWER_DEFAULT_W = 620;
-const DRAWER_MIN_W = 360;
-
-function drawerMaxWidth() {
-	return Math.min(Math.round(window.innerWidth * 0.94), 1400);
-}
-
-/** 把任意宽度夹到合法区间（考虑 94vw 上限）。 */
-function clampDrawerWidth(width) {
-	return Math.min(Math.max(Math.round(width), DRAWER_MIN_W), drawerMaxWidth());
-}
-
-/** 只改当前宽度（拖动过程用，不写存储）。 */
-function previewDrawerWidth(width) {
-	drawer.style.setProperty("--tw-drawer-w", `${clampDrawerWidth(width)}px`);
-}
-
-/** 落定宽度并持久化到 localStorage。 */
-function commitDrawerWidth(width) {
-	previewDrawerWidth(width);
+function setChatOpen(open) {
+	state.chatOpen = open;
+	el("chat-drawer").hidden = !open;
+	const btn = el("chat-btn");
+	btn.setAttribute("aria-pressed", String(open));
+	const label = open ? "收起侧边对话" : "打开侧边对话";
+	btn.title = label;
+	btn.setAttribute("aria-label", label);
 	try {
-		localStorage.setItem(LS_DRAWER_W, String(clampDrawerWidth(width)));
+		localStorage.setItem(LS_CHAT, open ? "1" : "0");
 	} catch {
-		/* 无痕模式忽略 */
+		/* 无痕模式等场景忽略 */
 	}
 }
 
-function loadDrawerWidth() {
-	let saved = 0;
-	try {
-		saved = Number(localStorage.getItem(LS_DRAWER_W)) || 0;
-	} catch {
-		saved = 0;
-	}
-	if (saved > 0) previewDrawerWidth(saved);
-}
-
-function bindDrawerResize() {
-	const handle = el("drawer-resize");
-	if (!handle) return;
-	handle.addEventListener("pointerdown", (e) => {
-		if (e.button !== 0) return;
-		e.preventDefault();
-		const start = { x: e.clientX, width: drawer.getBoundingClientRect().width };
-		handle.classList.add("dragging");
-		try {
-			handle.setPointerCapture(e.pointerId);
-		} catch {
-			/* 合成事件/环境不支持捕获时靠 window 监听兜底 */
-		}
-		// 左边界：指针往左拉 = 变宽
-		const onMove = (ev) => previewDrawerWidth(start.width - (ev.clientX - start.x));
-		const onEnd = () => {
-			window.removeEventListener("pointermove", onMove);
-			window.removeEventListener("pointerup", onEnd);
-			window.removeEventListener("pointercancel", onEnd);
-			handle.classList.remove("dragging");
-			commitDrawerWidth(drawer.getBoundingClientRect().width);
-		};
-		window.addEventListener("pointermove", onMove);
-		window.addEventListener("pointerup", onEnd);
-		window.addEventListener("pointercancel", onEnd);
-	});
-	handle.addEventListener("dblclick", () => commitDrawerWidth(DRAWER_DEFAULT_W));
-	handle.addEventListener("keydown", (e) => {
-		if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-		e.preventDefault();
-		const step = e.shiftKey ? 64 : 16;
-		commitDrawerWidth(drawer.getBoundingClientRect().width + (e.key === "ArrowLeft" ? step : -step));
-	});
-	// 窗口变窄时把超宽的抽屉收回可视范围（不写回存储，复原窗口后保留原偏好）
-	window.addEventListener("resize", () => {
-		if (drawer.getBoundingClientRect().width > drawerMaxWidth()) previewDrawerWidth(drawerMaxWidth());
-	});
-}
-
 // ---------------------------------------------------------------------------
-// 视图位置（URL hash）：#s=<会话id>&e=<事件id> —— 刷新不丢详情抽屉。
+// 视图位置（URL hash）：#s=<会话id>&e=<事件id> —— 刷新不丢展开的详情。
 // 事件 id 仅会话内唯一，必须连同会话一起记录；用 replaceState 不产生历史记录。
 // ---------------------------------------------------------------------------
 
@@ -1368,7 +1317,7 @@ function switchSource(id) {
 	state.toolExcluded = new Set();
 	state.toolNames = [];
 	state.searchIndex = new TrajectorySearchIndex();
-	closeDrawer();
+	closePanel();
 	renderRail();
 	renderTopbar();
 	renderSessions();
@@ -1453,7 +1402,7 @@ function flashTranslate(char) {
 	transFlashTimer = setTimeout(() => btn.replaceChildren(h("span", { "aria-hidden": "true", text: "译" })), 1200);
 }
 
-async function translateDrawer() {
+async function translatePanel() {
 	if (state.translating || !state.openId) return;
 	if (state.translated) {
 		restoreTranslation();
@@ -1569,30 +1518,15 @@ function applyTranslateSetting(patch) {
 	// 已翻译时按新设置重翻：先恢复原文再立即重译
 	if (state.translated) {
 		restoreTranslation();
-		void translateDrawer();
+		void translatePanel();
 	}
 }
 
 // ---------------------------------------------------------------------------
-// 侧边工具条：弹出/收起 + 复制正文（翻译状态下可选仅译文/全部）
+// 面板工具条（随详情面板迁移到头部）：复制正文（翻译状态下可选仅译文/全部）
 // ---------------------------------------------------------------------------
 
-const LS_SIDETOOL = "tw.sidetool";
 let copyFlashTimer = 0;
-
-function setSideOpen(open) {
-	const side = el("dv-side");
-	side.dataset.open = String(open);
-	const toggle = el("dv-side-toggle");
-	toggle.replaceChildren(h("span", { "aria-hidden": "true", text: open ? "»" : "«" }));
-	toggle.title = open ? "收起工具条" : "展开工具条";
-	if (!open) setCopyMenuOpen(false);
-	try {
-		localStorage.setItem(LS_SIDETOOL, open ? "1" : "0");
-	} catch {
-		/* 无痕模式等场景忽略 */
-	}
-}
 
 function setCopyMenuOpen(open) {
 	state.copyOpen = open;
@@ -1601,7 +1535,7 @@ function setCopyMenuOpen(open) {
 }
 
 /** 组装复制文本：src = 原文 / trans = 仅译文 / all = 原文＋译文；无 .md 正文时退回整个详情文本。 */
-function drawerCopyText(mode) {
+function panelCopyText(mode) {
 	const blocks = translatableBlocks();
 	if (blocks.length === 0) return el("dv-body").innerText;
 	const parts = [];
@@ -1615,10 +1549,10 @@ function drawerCopyText(mode) {
 	return parts.join("\n\n");
 }
 
-async function copyDrawer(mode) {
+async function copyPanel(mode) {
 	const btn = el("dv-copy");
 	try {
-		await navigator.clipboard.writeText(drawerCopyText(mode));
+		await navigator.clipboard.writeText(panelCopyText(mode));
 		clearTimeout(copyFlashTimer);
 		btn.replaceChildren(h("span", { "aria-hidden": "true", text: "✓" }));
 		copyFlashTimer = setTimeout(() => btn.replaceChildren(h("span", { "aria-hidden": "true", text: "⧉" })), 1200);
@@ -1719,7 +1653,7 @@ async function pollSession(force = false) {
 		if (pendingOpen) {
 			const id = pendingOpen;
 			pendingOpen = null;
-			if (findEvent(id)) openDrawer(id);
+			if (findEvent(id)) openPanel(id);
 			else writeViewHash();
 		}
 		setSync(`已同步 ${fmtClock()}`, "ok");
@@ -1900,10 +1834,7 @@ function selectSession(id, from = null) {
 	state.searchIndex = new TrajectorySearchIndex();
 	setMenuOpen(false);
 	el("search").value = "";
-	state.openId = null;
-	state.openFull = null;
-	drawer.hidden = true;
-	writeViewHash();
+	closePanel();
 	renderSessions();
 	renderTopbar();
 	renderMain();
@@ -1911,14 +1842,14 @@ function selectSession(id, from = null) {
 	pollSession(true);
 }
 
-/** 点事件行：派生行跳到它派生出的子会话，其余开详情抽屉。 */
+/** 点事件行：派生行跳到它派生出的子会话，其余在行下方展开详情（再点收起）。 */
 function openEventRow(row) {
 	const target = row.dataset.derive;
 	if (target) {
 		selectSession(target, { id: state.selectedId, eid: row.dataset.eid });
 		return;
 	}
-	openDrawer(row.dataset.eid);
+	openPanel(row.dataset.eid);
 }
 
 mainInner.addEventListener("click", (e) => {
@@ -1968,7 +1899,9 @@ el("agent-rail").addEventListener("click", (e) => {
 	const btn = e.target.closest(".rail-btn");
 	if (btn) switchSource(btn.dataset.source);
 });
-el("drawer-close").addEventListener("click", closeDrawer);
+el("dv-close").addEventListener("click", closePanel);
+el("chat-btn").addEventListener("click", () => setChatOpen(!state.chatOpen));
+el("chat-close").addEventListener("click", () => setChatOpen(false));
 el("chat-input").addEventListener("input", () => {
 	autoGrowChatInput();
 	syncChatSend();
@@ -1981,34 +1914,19 @@ el("chat-input").addEventListener("keydown", (e) => {
 	}
 });
 el("chat-send").addEventListener("click", () => sendChat());
-el("dv-tab-detail").addEventListener("click", () => setDrawerTab("detail"));
-el("dv-tab-chat").addEventListener("click", () => setDrawerTab("chat"));
-el("dv-tabs").addEventListener("keydown", (e) => {
-	const index = DRAWER_TABS.indexOf(state.drawerTab);
-	let next;
-	if (e.key === "ArrowLeft") next = (index + DRAWER_TABS.length - 1) % DRAWER_TABS.length;
-	else if (e.key === "ArrowRight") next = (index + 1) % DRAWER_TABS.length;
-	else if (e.key === "Home") next = 0;
-	else if (e.key === "End") next = DRAWER_TABS.length - 1;
-	else return;
-	e.preventDefault();
-	setDrawerTab(DRAWER_TABS[next]);
-	el(`dv-tab-${DRAWER_TABS[next]}`).focus();
-});
-el("dv-side-toggle").addEventListener("click", () => setSideOpen(el("dv-side").dataset.open !== "true"));
-el("dv-translate").addEventListener("click", () => void translateDrawer());
+el("dv-translate").addEventListener("click", () => void translatePanel());
 el("dv-copy").addEventListener("click", (e) => {
 	e.stopPropagation();
 	// 已翻译时弹菜单选「仅译文/全部」，否则一键复制原文
 	if (state.translated) setCopyMenuOpen(!state.copyOpen);
-	else void copyDrawer("src");
+	else void copyPanel("src");
 });
 el("dv-copy-menu").addEventListener("click", (e) => {
 	e.stopPropagation();
 	const item = e.target.closest("button[data-copy]");
 	if (!item) return;
 	setCopyMenuOpen(false);
-	void copyDrawer(item.dataset.copy);
+	void copyPanel(item.dataset.copy);
 });
 el("dv-settings").addEventListener("click", (e) => {
 	e.stopPropagation();
@@ -2049,7 +1967,11 @@ document.addEventListener("keydown", (e) => {
 			setSettingsOpen(false);
 			return;
 		}
-		closeDrawer();
+		if (state.openId) {
+			closePanel();
+			return;
+		}
+		if (state.chatOpen) setChatOpen(false);
 	}
 });
 // 点击侧条菜单（设置/复制）外关闭（照过滤菜单的 composedPath 判断）
@@ -2088,16 +2010,14 @@ applyTheme();
 renderThemeButton();
 loadPrefs();
 loadTranslatePrefs();
+renderToolbar();
+renderChat();
+renderChatCtx(null);
 try {
-	if (localStorage.getItem(LS_SIDETOOL) === "0") setSideOpen(false);
+	if (localStorage.getItem(LS_CHAT) === "1") setChatOpen(true);
 } catch {
 	/* 无痕模式等场景忽略 */
 }
-renderToolbar();
-setDrawerTab(state.drawerTab);
-renderChat();
-loadDrawerWidth();
-bindDrawerResize();
 void ensureToolOrigins();
 void pollSources();
 pollSessions();

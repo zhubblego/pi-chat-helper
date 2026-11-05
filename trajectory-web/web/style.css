@@ -458,8 +458,8 @@ body {
 	outline-offset: 1px;
 }
 
-/* 主题开关：纯图标方钮，复用 tb-btn 形态 */
-.theme-btn {
+/* 纯图标方钮：主题 / 对话开关（复用 tb-btn 形态） */
+.icon-btn {
 	width: 24px;
 	justify-content: center;
 	padding: 0;
@@ -1010,179 +1010,47 @@ mark.ev-hit {
 	box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l2);
 }
 
-/* ---------------------------------------------------------------- 详情抽屉 */
+/* ------------------------------------------- 详情内联面板（轨迹行下方展开） */
 
-.drawer {
+/* 展开行：高亮底 + 品牌色左竖线，表明详情挂在它下面 */
+.ev.is-open {
+	background: var(--dsw-alias-interactive-bg-hover);
+	border-left-color: var(--dsw-alias-state-business-primary);
+}
+
+/* 面板本体：插在对应轨迹行下方的卡片；左边距对齐事件行预览列（行 padding 10 + 标签列 60 + 列间距 10） */
+.ev-panel {
 	--dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
-	position: fixed;
-	top: var(--tw-topbar-height);
-	right: 0;
-	bottom: 0;
-	width: min(var(--tw-drawer-w, 620px), 94vw);
-	background: var(--dsw-alias-bg-layer-1);
-	border-left: 1px solid var(--dsw-alias-border-l1);
-	box-shadow: var(--dsw-elevation-stroke);
-	display: flex;
-	flex-direction: column;
-	z-index: 10;
-}
-
-/* 左边界拖拽：跨在边框上的 9px 抓取区，hover/拖动时显示一条链接色竖线 */
-.drawer-resize {
-	position: absolute;
-	top: 0;
-	bottom: 0;
-	left: -4px;
-	width: 9px;
-	cursor: col-resize;
-	touch-action: none;
-	z-index: 6;
-}
-
-.drawer-resize::after {
-	content: "";
-	position: absolute;
-	top: 0;
-	bottom: 0;
-	left: 2px;
-	width: 3px;
-	border-radius: 2px;
-	background: transparent;
-	transition: background 0.12s var(--ds-ease-in-out);
-}
-
-/* 中性灰 + 上下渐隐：只是个看得见抓手的提示，不要用链接蓝抢注意力 */
-.drawer-resize:hover::after,
-.drawer-resize:focus-visible::after {
-	background: linear-gradient(to bottom, transparent, var(--dsw-alias-border-l2) 14%, var(--dsw-alias-border-l2) 86%, transparent);
-}
-
-.drawer-resize.dragging::after {
-	background: linear-gradient(to bottom, transparent, var(--dsw-alias-label-tertiary) 8%, var(--dsw-alias-label-tertiary) 92%, transparent);
-}
-
-.drawer-resize:focus-visible {
-	outline: none;
-}
-
-/* 侧边工具条：挂在抽屉左缘外（主页侧，Sider 式骑线悬挂），不占抽屉内部空间；收起后只剩贴边箭头 */
-.drawer-head {
-display: flex;
-align-items: center;
-gap: 10px;
-padding: 8px 10px 8px 14px;
-border-bottom: 1px solid var(--dsw-alias-border-l1);
-}
-
-/* 功能切换标签（复刻上游 ui-primitives SegmentedTabs 的 sm 形态：等宽分栏 + 滑动指示条，仅用 --dsw-* token） */
-.dv-tabs {
-	position: relative;
-	display: grid;
-	grid-template-columns: repeat(2, minmax(0, 1fr));
-	flex: 1;
-	min-width: 0;
-	padding: 2px;
-	border-radius: calc(var(--dsw-radius-md) + 2px);
-	background: var(--dsw-alias-bg-module-platform);
-}
-
-.dv-tab-indicator {
-	position: absolute;
-	top: 2px;
-	bottom: 2px;
-	left: 2px;
-	width: calc((100% - 4px) / 2);
-	box-sizing: border-box;
-	border: 0.5px solid var(--dsw-alias-border-l3);
-	border-radius: var(--dsw-radius-md);
-	background: var(--dsw-alias-bg-layer-3);
-	transition: transform 180ms ease;
-	pointer-events: none;
-}
-
-.dv-tabs[data-active="chat"] .dv-tab-indicator {
-	transform: translateX(100%);
-}
-
-.dv-tab {
-	position: relative;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	height: 30px;
-	padding: 0 12px;
-	border: 0;
-	border-radius: var(--dsw-radius-md);
-	font-family: inherit;
-	font-size: 14px;
-	line-height: 20px;
-	background: transparent;
-	color: var(--dsw-alias-label-secondary);
-	cursor: pointer;
-	transition: color 180ms ease;
-}
-
-@media (hover: hover) {
-	.dv-tab:hover {
-		color: var(--dsw-alias-label-primary);
-	}
-}
-
-.dv-tab[aria-selected="true"] {
-	color: var(--dsw-alias-label-primary);
-	font-weight: 500;
-}
-
-.dv-tab:focus-visible {
-	outline: none;
-	text-decoration: underline;
-	text-decoration-thickness: 1px;
-	text-underline-offset: 4px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.dv-tab-indicator,
-	.dv-tab {
-		transition: none;
-	}
-}
-
-.dv-side {
-	position: absolute;
-	top: 50%;
-	left: 0;
-	transform: translate(-100%, -50%);
-	z-index: 5;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 2px;
-	padding: 3px 2px;
+	margin: 2px 10px 10px 80px;
 	border: 1px solid var(--dsw-alias-border-l1);
-	border-right: none;
-	border-radius: var(--dsw-radius-md) 0 0 var(--dsw-radius-md);
+	border-radius: var(--dsw-radius-md);
 	background: var(--dsw-alias-bg-layer-1);
 	box-shadow: var(--dsw-elevation-stroke);
-	--dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
 }
 
-.dv-side-tools {
+/* 头部：类型徽章 + 标题 + 工具条（译/⧉/⚙/✕，随面板迁移，作用于当前展开行） */
+.ev-panel-head {
 	display: flex;
-	flex-direction: column;
+	align-items: center;
+	gap: 10px;
+	padding: 5px 8px 5px 12px;
+	border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.ev-panel-tools {
+	display: flex;
+	align-items: center;
 	gap: 2px;
+	flex: none;
 }
 
-.dv-side[data-open="false"] .dv-side-tools {
-	display: none;
-}
-
-.dv-side-btn,
-.dv-side-toggle {
+/* 工具按钮：面板头部的小方钮（译/⧉/⚙/✕） */
+.dv-tool-btn {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 26px;
-	height: 26px;
+	width: 24px;
+	height: 24px;
 	padding: 0;
 	border: none;
 	border-radius: var(--dsw-radius-sm);
@@ -1193,34 +1061,20 @@ border-bottom: 1px solid var(--dsw-alias-border-l1);
 	line-height: 1;
 }
 
-.dv-side-btn:hover,
-.dv-side-toggle:hover {
+.dv-tool-btn:hover {
 	background: var(--dsw-specific-sidebar-nav-item-hover);
 	color: var(--dsw-alias-label-primary);
 }
 
-.dv-side-btn[aria-pressed="true"] {
+.dv-tool-btn[aria-pressed="true"] {
 	color: var(--dsw-alias-label-primary);
 	background: var(--dsw-specific-sidebar-nav-item-active);
 }
 
-.dv-side-toggle {
-	height: 18px;
-	color: var(--dsw-alias-label-tertiary);
-	font-size: 11px;
-	border-top: 1px solid var(--dsw-alias-border-l2);
-	border-radius: 0 0 var(--dsw-radius-sm) var(--dsw-radius-sm);
-}
-
-/* 收起后只剩把手：不再需要与按钮组之间的分割线 */
-.dv-side[data-open="false"] .dv-side-toggle {
-	border-top: none;
-}
-
-/* 侧条菜单：向左弹到主页侧（覆 .menu 默认的向下弹，不遮抽屉正文） */
-.dv-side .menu {
-	top: 0;
-	right: calc(100% + 6px);
+/* 面板内菜单：靠右弹（工具按钮贴面板右缘，左锚点会溢出视口） */
+.ev-panel .menu {
+	left: auto;
+	right: 0;
 }
 
 /* 译文块：左侧竖线 + 「译」标，与原文区分 */
@@ -1306,38 +1160,38 @@ border-bottom: 1px solid var(--dsw-alias-border-l1);
 	font: var(--dsw-font-xs-13);
 }
 
-/* 标签行下的事件子行：类型徽章 + 标题（原抽屉头部内容，关闭按钮已移入标签行） */
-.drawer-sub {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	padding: 8px 14px;
-	border-bottom: 1px solid var(--dsw-alias-border-l1);
-}
-
-/* 「详情」标签面板：子行 + meta + 正文一起显隐 */
-.dv-detail {
-	flex: 1;
-	min-height: 0;
+/* 侧边对话栏（顶栏对话按钮开关）：上下文行 + 消息流 + 输入卡（后续接 AI 对话后端） */
+.chat-drawer {
+	--dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
+	position: fixed;
+	top: var(--tw-topbar-height);
+	right: 0;
+	bottom: 0;
+	width: min(440px, 96vw);
+	background: var(--dsw-alias-bg-layer-1);
+	border-left: 1px solid var(--dsw-alias-border-l1);
+	box-shadow: var(--dsw-elevation-stroke);
 	display: flex;
 	flex-direction: column;
+	z-index: 10;
 }
 
-/* 「对话」标签面板：上下文行 + 消息流 + 输入卡（后续接 AI 对话后端） */
-.dv-chat {
-	flex: 1;
-	min-height: 0;
-	display: flex;
-	flex-direction: column;
-}
-
-/* 上下文行：当前打开事件的类型徽章 + 标题，表明对话围绕哪条轨迹 */
-.chat-ctx {
+/* 上下文行外壳：动态内容（徽章＋标题）+ 行末关闭按钮 */
+.chat-ctx-row {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	padding: 8px 14px;
+	padding: 6px 8px 6px 14px;
 	border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+/* 上下文行：当前展开事件的类型徽章 + 标题，表明对话围绕哪条轨迹 */
+.chat-ctx {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: 8px;
 	color: var(--dsw-alias-label-tertiary);
 	font: var(--dsw-font-xs-13);
 	min-height: 20px;
@@ -1472,7 +1326,7 @@ border-bottom: 1px solid var(--dsw-alias-border-l1);
 	display: flex;
 	flex-wrap: wrap;
 	gap: 6px;
-	padding: 8px 14px;
+	padding: 6px 12px;
 	border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
@@ -1502,10 +1356,11 @@ border-bottom: 1px solid var(--dsw-alias-border-l1);
 	border-style: dashed;
 }
 
+/* 内联正文：限高内部滚动（大结果不撑爆页面，其余交给主区滚动） */
 .dv-body {
-	flex: 1;
+	max-height: min(560px, 70vh);
 	overflow-y: auto;
-	padding: 12px 16px 32px 16px;
+	padding: 10px 16px 28px;
 }
 
 .dv-body h4 {

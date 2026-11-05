@@ -257,32 +257,28 @@ const check = (label, cond, extra = "") => {
 	check("旧 ⊞/⊟ 折叠按钮与双击折叠已移除", !appSource.includes("q-fold") && !appSource.includes("双击收起本轮"));
 	check("隐藏轮占位行 + 选中/隐藏状态随会话与切源重置", appSource.includes("q-hidden") && appSource.includes("hiddenQs = new Set()") && appSource.includes("selectedQs = new Set()"));
 
-	// ---- 回归守卫：详情抽屉左边界拖拽调宽 ----
-	check("抽屉有左边界拖拽把手", indexSource.includes('id="drawer-resize"') && indexSource.includes('role="separator"'));
-	check("拖拽调宽已接线且宽度持久化", appSource.includes("function bindDrawerResize") && appSource.includes('"tw.drawerWidth"') && appSource.includes("commitDrawerWidth(DRAWER_DEFAULT_W)"));
-	check("抽屉宽度写 CSS 变量（CSS 里默认 620px）", appSource.includes('setProperty("--tw-drawer-w"'));
-
-	// ---- 回归守卫：抽屉功能切换标签（详情/对话 + 标签行末尾关闭按钮） ----
+	// ---- 回归守卫：详情内联面板（行下方展开，工具条随面板作用于当前行） ----
 	const styleSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "web", "style.css"), "utf8");
-	check("抽屉头是标签行（详情/对话 tablist）", indexSource.includes('id="dv-tabs"') && indexSource.includes('role="tablist"') && indexSource.includes('id="dv-tab-detail"') && indexSource.includes('id="dv-tab-chat"'));
-	const headMatch = indexSource.match(/<header class="drawer-head">([\s\S]*?)<\/header>/);
-	check(
-		"关闭按钮在标签行末尾，kind/标题已移到下方子行（旧位置关闭按钮去掉）",
-		!!headMatch &&
-			headMatch[1].includes('id="drawer-close"') &&
-			!headMatch[1].includes("dv-kind") &&
-			!headMatch[1].includes("dv-title") &&
-			indexSource.indexOf('class="drawer-sub"') !== -1 &&
-			indexSource.indexOf('class="drawer-sub"') < indexSource.indexOf('id="dv-kind"'),
-	);
-	check("对话标签接空白预留面板（dv-chat 默认隐藏）", indexSource.includes('id="dv-chat"') && /<div id="dv-chat"[^>]*\bhidden\b/.test(indexSource));
-	check("切标签接线：点选/键盘导航/点轨迹行重置回详情", appSource.includes("function setDrawerTab") && appSource.includes('el("dv-tab-chat").addEventListener("click"') && appSource.includes('"ArrowLeft"') && appSource.includes('setDrawerTab("detail")'));
-	check("标签样式复刻上游 SegmentedTabs（滑动指示条 + 等宽分栏）", styleSource.includes(".dv-tab-indicator") && styleSource.includes(".dv-tabs[data-active=\"chat\"] .dv-tab-indicator"));
+	check("详情在行下方内联展开：面板挂到对应行之后，行不在即收起", appSource.includes("function attachOpenPanel") && appSource.includes("row.after(panel)") && appSource.includes('mainInner.querySelector(`.ev[data-eid="${state.openId}"]`)'));
+	check("renderMain 末尾重挂面板（replaceChildren 摘出后重挂不重建）", appSource.includes("updateFoldAll();\n\t// 打开的详情面板重新挂到对应行下方（replaceChildren 会把它摘出文档，重挂不重建，滚动/展开态保留）\n\tattachOpenPanel();"));
+	check("再点同一行收起（toggle）", appSource.includes("state.openId === id") && appSource.includes("closePanel();"));
+	check("面板头部带工具条：译/⧉/⚙/✕，仍作用于当前展开行", /class="ev-panel-head"[\s\S]*?id="dv-translate"[\s\S]*?id="dv-copy"[\s\S]*?id="dv-settings"[\s\S]*?id="dv-close"/.test(indexSource));
+	check("翻译/复制仍以 dv-body 为正文源（工具条迁移后目标不变）", appSource.includes('el("dv-body").querySelectorAll(".md")') && appSource.includes("function panelCopyText") && appSource.includes("async function translatePanel"));
+	check("展开行高亮 + 面板样式就位", appSource.includes('classes.push("is-open")') && styleSource.includes(".ev.is-open") && styleSource.includes(".ev-panel"));
+	check("首点即高亮：attachOpenPanel 同步 is-open，closePanel 清除", appSource.includes('row.classList.add("is-open")') && appSource.includes('mainInner.querySelectorAll(".ev.is-open")'));
+	check("renderMain 先把面板停泊到 body（防 replaceChildren 摘出后 el(\"dv-*\") 空引用崩溃）", appSource.includes("if (panel.parentElement !== document.body) document.body.appendChild(panel);"));
+	check("抽屉遗迹已移除（resize 把手/标签行/悬挂侧条/宽度持久化/旧 id）", !indexSource.includes('id="drawer-resize"') && !indexSource.includes("dv-tabs") && !indexSource.includes("dv-side") && !appSource.includes("setDrawerTab") && !appSource.includes("bindDrawerResize") && !appSource.includes("tw.drawerWidth") && !appSource.includes("tw.sidetool"));
+
+	// ---- 回归守卫：侧边对话栏（顶栏按钮开关，主题按钮右侧） ----
+	check("顶栏对话按钮在主题按钮右侧", indexSource.includes('id="chat-btn"') && indexSource.indexOf('id="theme-btn"') < indexSource.indexOf('id="chat-btn"'));
+	check("对话栏独立成侧栏：上下文行外壳 + 行末关闭按钮", indexSource.includes('id="chat-drawer"') && indexSource.includes('class="chat-ctx-row"') && indexSource.includes('id="chat-close"') && indexSource.includes('id="chat-ctx"'));
+	check("对话栏开关接线：按钮切换 + 开态持久化 + Esc 兕底", appSource.includes("function setChatOpen") && appSource.includes('el("chat-btn").addEventListener("click"') && appSource.includes('"tw.chat"') && appSource.includes("if (state.chatOpen) setChatOpen(false)"));
+	check("对话栏样式就位（固定右侧栏 + 上下文行外壳）", styleSource.includes(".chat-drawer") && styleSource.includes(".chat-ctx-row"));
 
 	// ---- 回归守卫：对话页 UI（上下文行 + 消息流 + 输入卡，本地消息流未接模型） ----
 	check("对话页三段结构：上下文行 + 消息流(role=log) + 输入卡", indexSource.includes('id="chat-ctx"') && indexSource.includes('id="chat-list"') && indexSource.includes('role="log"') && indexSource.includes('id="chat-input"') && indexSource.includes('id="chat-send"'));
 	check("对话页交互接线：Enter 发送/Shift 换行/IME 防误发/自增高/本地消息流", appSource.includes("function sendChat") && appSource.includes("e.isComposing") && appSource.includes("function autoGrowChatInput") && appSource.includes("state.chat.push") && appSource.includes("CHAT_INPUT_MAX_H"));
-	check("上下文行随抽屉同步当前事件，AI 消息走 markdown 渲染", appSource.includes("function renderChatCtx") && appSource.includes("renderChatCtx(light)") && appSource.includes('m.role === "ai"') && appSource.includes("mdNode(m.text)"));
+	check("上下文行随面板同步当前事件，未选中时降级提示，AI 消息走 markdown 渲染", appSource.includes("function renderChatCtx") && appSource.includes("renderChatCtx(light)") && appSource.includes("renderChatCtx(null)") && appSource.includes('m.role === "ai"') && appSource.includes("mdNode(m.text)"));
 	check("对话页样式复刻上游：用户气泡 + 输入卡 + info 圆发送钮", styleSource.includes(".chat-msg.user") && styleSource.includes("var(--dsw-specific-bubble)") && styleSource.includes(".chat-card") && styleSource.includes("var(--dsw-specific-input-major)") && styleSource.includes(".chat-send") && styleSource.includes("var(--dsw-alias-button-info-fill)"));
 
 	console.log(failed === 0 ? "\nALL PASS" : `\n${failed} FAILED`);
