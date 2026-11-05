@@ -271,14 +271,14 @@ const check = (label, cond, extra = "") => {
 
 	// ---- 回归守卫：侧边对话栏（顶栏按钮开关，主题按钮右侧） ----
 	check("顶栏对话按钮在主题按钮右侧", indexSource.includes('id="chat-btn"') && indexSource.indexOf('id="theme-btn"') < indexSource.indexOf('id="chat-btn"'));
-	check("对话栏独立成侧栏：上下文行外壳 + 行末关闭按钮", indexSource.includes('id="chat-drawer"') && indexSource.includes('class="chat-ctx-row"') && indexSource.includes('id="chat-close"') && indexSource.includes('id="chat-ctx"'));
+	check("对话栏独立成侧栏，顶部上下文行与关闭按钮已移除（顶部直接是消息流）", indexSource.includes('id="chat-drawer"') && !indexSource.includes("chat-ctx") && !indexSource.includes('id="chat-close"'));
 	check("对话栏开关接线：按钮切换 + 开态持久化 + Esc 兕底", appSource.includes("function setChatOpen") && appSource.includes('el("chat-btn").addEventListener("click"') && appSource.includes('"tw.chat"') && appSource.includes("if (state.chatOpen) setChatOpen(false)"));
-	check("对话栏样式就位（固定右侧栏 + 上下文行外壳）", styleSource.includes(".chat-drawer") && styleSource.includes(".chat-ctx-row"));
+	check("对话栏样式就位（固定右侧栏）", styleSource.includes(".chat-drawer") && !styleSource.includes(".chat-ctx"));
 
-	// ---- 回归守卫：对话页 UI（上下文行 + 消息流 + 输入卡，本地消息流未接模型） ----
-	check("对话页三段结构：上下文行 + 消息流(role=log) + 输入卡", indexSource.includes('id="chat-ctx"') && indexSource.includes('id="chat-list"') && indexSource.includes('role="log"') && indexSource.includes('id="chat-input"') && indexSource.includes('id="chat-send"'));
+	// ---- 回归守卫：对话页 UI（消息流 + 输入卡，本地消息流未接模型） ----
+	check("对话页两段结构：消息流(role=log) + 输入卡", indexSource.includes('id="chat-list"') && indexSource.includes('role="log"') && indexSource.includes('id="chat-input"') && indexSource.includes('id="chat-send"'));
 	check("对话页交互接线：Enter 发送/Shift 换行/IME 防误发/自增高/本地消息流", appSource.includes("function sendChat") && appSource.includes("e.isComposing") && appSource.includes("function autoGrowChatInput") && appSource.includes("state.chat.push") && appSource.includes("CHAT_INPUT_MAX_H"));
-	check("上下文行随面板同步当前事件，未选中时降级提示，AI 消息走 markdown 渲染", appSource.includes("function renderChatCtx") && appSource.includes("renderChatCtx(light)") && appSource.includes("renderChatCtx(null)") && appSource.includes('m.role === "ai"') && appSource.includes("mdNode(m.text)"));
+	check("AI 消息走 markdown 渲染，上下文行同步函数已随标题移除", !appSource.includes("renderChatCtx") && appSource.includes('m.role === "ai"') && appSource.includes("mdNode(m.text)"));
 	check("对话页样式复刻上游：用户气泡 + 输入卡 + info 圆发送钮", styleSource.includes(".chat-msg.user") && styleSource.includes("var(--dsw-specific-bubble)") && styleSource.includes(".chat-card") && styleSource.includes("var(--dsw-specific-input-major)") && styleSource.includes(".chat-send") && styleSource.includes("var(--dsw-alias-button-info-fill)"));
 
 	console.log(failed === 0 ? "\nALL PASS" : `\n${failed} FAILED`);

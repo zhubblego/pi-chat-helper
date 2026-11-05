@@ -1064,7 +1064,6 @@ function renderPanel(keepState = false) {
 	el("dv-kind").textContent = eventTagLabel(light);
 	el("dv-kind").className = `dv-kind k-${kindGroup(light.kind)}`;
 	el("dv-title").textContent = light.preview;
-	renderChatCtx(light);
 	el("dv-meta").replaceChildren(...panelMetaNodes(view, light));
 	body.replaceChildren(...panelBodyNodes(view));
 	if (openKeys) for (const d of body.querySelectorAll("details")) if (openKeys.has(detailKey(d))) d.open = true;
@@ -1151,7 +1150,6 @@ function closePanel() {
 	transSeq++;
 	setSettingsOpen(false);
 	setCopyMenuOpen(false);
-	renderChatCtx(null);
 	writeViewHash();
 }
 
@@ -1162,19 +1160,6 @@ function closePanel() {
 // ---------------------------------------------------------------------------
 
 const CHAT_INPUT_MAX_H = 132; // 与 CSS .chat-input max-height 同步（约 6 行封顶后内部滚动）
-
-/** 上下文行：当前展开事件的类型徽章 + 标题（随 renderPanel 同步；未选中时提示）。 */
-function renderChatCtx(light) {
-	const ctx = el("chat-ctx");
-	if (!light) {
-		ctx.replaceChildren(h("span", { class: "chat-ctx-title", text: "未选中轨迹行（点击轨迹行展开详情后作为对话上下文）" }));
-		return;
-	}
-	ctx.replaceChildren(
-		h("span", { class: `dv-kind k-${kindGroup(light.kind)}`, text: eventTagLabel(light) }),
-		h("span", { class: "chat-ctx-title", text: light.preview }),
-	);
-}
 
 function chatMsgNode(m) {
 	if (m.role === "ai") return h("div", { class: "chat-msg ai" }, mdNode(m.text));
@@ -1901,7 +1886,6 @@ el("agent-rail").addEventListener("click", (e) => {
 });
 el("dv-close").addEventListener("click", closePanel);
 el("chat-btn").addEventListener("click", () => setChatOpen(!state.chatOpen));
-el("chat-close").addEventListener("click", () => setChatOpen(false));
 el("chat-input").addEventListener("input", () => {
 	autoGrowChatInput();
 	syncChatSend();
@@ -2012,7 +1996,6 @@ loadPrefs();
 loadTranslatePrefs();
 renderToolbar();
 renderChat();
-renderChatCtx(null);
 try {
 	if (localStorage.getItem(LS_CHAT) === "1") setChatOpen(true);
 } catch {

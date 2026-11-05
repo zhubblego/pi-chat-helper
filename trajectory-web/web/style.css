@@ -1160,7 +1160,7 @@ mark.ev-hit {
 	font: var(--dsw-font-xs-13);
 }
 
-/* 侧边对话栏（顶栏对话按钮开关）：上下文行 + 消息流 + 输入卡（后续接 AI 对话后端） */
+/* 侧边对话栏（顶栏对话按钮开关）：消息流 + 输入卡（后续接 AI 对话后端） */
 .chat-drawer {
 	--dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
 	position: fixed;
@@ -1174,35 +1174,6 @@ mark.ev-hit {
 	display: flex;
 	flex-direction: column;
 	z-index: 10;
-}
-
-/* 上下文行外壳：动态内容（徽章＋标题）+ 行末关闭按钮 */
-.chat-ctx-row {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	padding: 6px 8px 6px 14px;
-	border-bottom: 1px solid var(--dsw-alias-border-l1);
-}
-
-/* 上下文行：当前展开事件的类型徽章 + 标题，表明对话围绕哪条轨迹 */
-.chat-ctx {
-	flex: 1;
-	min-width: 0;
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	color: var(--dsw-alias-label-tertiary);
-	font: var(--dsw-font-xs-13);
-	min-height: 20px;
-}
-
-.chat-ctx .chat-ctx-title {
-	flex: 1;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
 }
 
 /* 消息流：用户右气泡 / AI 左全宽 markdown（复刻上游 MessageItem + AssistantMarkdown 布局） */
