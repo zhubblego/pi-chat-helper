@@ -464,6 +464,17 @@ body {
 	color: var(--dsw-alias-state-warn-label);
 }
 
+/* 蒸馏模式开关：用信息蓝区分于裁剪的警示色（两个模式可以同时开） */
+#distill-btn[aria-pressed="true"],
+#distill-btn[aria-pressed="true"]:hover {
+	color: var(--dsw-alias-label-primary-bluish);
+	background: var(--dsw-specific-bubble);
+}
+
+#distill-btn[aria-pressed="true"] .tb-icon {
+	color: var(--dsw-alias-label-primary-bluish);
+}
+
 .tb-btn:focus-visible {
 	outline: 1px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
 	outline-offset: 1px;
@@ -786,6 +797,15 @@ svg.tb-icon {
 /* 非裁剪模式不渲染行级剪刀：网格收一列，否则勾选/标签会错位 */
 .ev.no-crop {
 	grid-template-columns: 13px 60px 1fr auto;
+}
+
+/* 非蒸馏模式不渲染 checkbox：同样收一列；两者都关时只剩标签/预览/元信息 */
+.ev.no-distill {
+	grid-template-columns: 18px 60px 1fr auto;
+}
+
+.ev.no-crop.no-distill {
+	grid-template-columns: 60px 1fr auto;
 }
 
 .q-head {

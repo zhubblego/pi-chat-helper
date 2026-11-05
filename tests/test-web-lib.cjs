@@ -255,19 +255,23 @@ const check = (label, cond, extra = "") => {
 	const serverSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "server", "app.mjs"), "utf8");
 	check("服务端 context-edit 端点：无 handler 501、有 handler 转发", serverSource.includes('"/api/context-edit"') && serverSource.includes("501") && serverSource.includes("options.onContextEdit({ sessionFile: session.file, qIndex, hidden })"));
 	check("旧 ⊞/⊟ 折叠按钮与双击折叠已移除", !appSource.includes("q-fold") && !appSource.includes("双击收起本轮"));
-	check("整轮裁剪覆盖轮内所有条目（含被过滤掉的）", appSource.includes("function eventCropped") && /function eventCropped\(ev, q\) \{[\s\S]*?roundCroppedOf\(q\)\) return true/.test(appSource) && appSource.includes("hiddenQs = new Set()") && appSource.includes("selectedQs = new Set()"));
+	check("整轮裁剪覆盖轮内所有条目（含被过滤掉的）", appSource.includes("function eventCropped") && /function eventCropped\(ev, q\) \{[\s\S]*?roundCroppedOf\(q\)\) return true/.test(appSource) && appSource.includes("hiddenQs = new Set()") && appSource.includes("selectedEvs = new Set()"));
 
 	// ---- 回归守卫：裁剪模式（工具栏开关 + 列表内剪刀 + 删除线） ----
 	const styleSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "web", "style.css"), "utf8");
 	check("工具栏有裁剪按钮（过滤右侧）", indexSource.includes('id="crop-btn"') && indexSource.indexOf('id="filter-root"') < indexSource.indexOf('id="crop-btn"') && indexSource.indexOf('id="crop-btn"') < indexSource.indexOf('id="search"'));
-	check("裁剪模式开关接线：按钮变色（aria-pressed）+ Esc 退出 + 裁剪结果不随模式变化", appSource.includes("function setCropMode") && appSource.includes('el("crop-btn").addEventListener("click"') && appSource.includes('btn.setAttribute("aria-pressed", String(state.cropMode))') && appSource.includes("if (state.cropMode) setCropMode(false)"));
+	check("裁剪模式开关接线：按钮变色（aria-pressed）+ Esc 退出 + 裁剪结果不随模式变化", appSource.includes("function setCropMode") && appSource.includes('el("crop-btn").addEventListener("click"') && appSource.includes('btn.setAttribute("aria-pressed", String(state.cropMode))') && appSource.includes("if (state.cropMode) {") && appSource.includes("setCropMode(false)"));
 	check("裁剪模式有可见提示：按钮文字变「裁剪中」+ 开态警示配色", indexSource.includes('id="crop-label"') && appSource.includes('el("crop-label").textContent = state.cropMode ? "裁剪中" : "裁剪"') && !indexSource.includes("crop-hint") && !appSource.includes("crop-hint") && styleSource.includes('#crop-btn[aria-pressed="true"]'));
-	check("剪刀只在裁剪模式渲染（轮次头 + 行级共两处）", appSource.split('svgIcon("scissors")').length - 1 === 2 && /state\.cropMode\n\t+\? h\(/.test(appSource) && (appSource.match(/state\.cropMode\n\t+\? h\(/g) ?? []).length === 2);
+	check("剪刀只在裁剪模式渲染（行级 + 轮头两处；第三处是 Esc 退出）", appSource.split('svgIcon("scissors")').length - 1 === 2 && appSource.split("if (state.cropMode) {").length - 1 === 3);
 	check("裁剪只杠掉不隐藏：行仍可点击看详情", appSource.includes('classes.push("is-cropped")') && !appSource.includes("ev-row-hidden") && styleSource.includes(".ev.is-cropped .ev-preview") && styleSource.includes("text-decoration: line-through"));
 	check("非裁剪模式网格收一列（否则勾选/标签错位）", appSource.includes('if (!state.cropMode) classes.push("no-crop")') && styleSource.includes(".ev.no-crop"));
 
 	// ---- 回归守卫：行级控件（每条事件行前的剪刀 + checkbox） ----
 	check("事件行带行级剪刀与 checkbox", appSource.includes('class: "ev-eye"') && appSource.includes('class: "ev-check"') && appSource.includes("state.selectedEvs.has(ev.id)"));
+	check("checkbox 只在蒸馏模式渲染（行级 + 轮头）", appSource.includes("if (state.distillMode) {") && appSource.split("if (state.distillMode) {").length - 1 === 2 && appSource.includes('if (!state.distillMode) classes.push("no-distill")'));
+	check("蒸馏按钮：裁剪右侧 + 文字变「蒸馏中」+ 开态配色", indexSource.indexOf('id="crop-btn"') < indexSource.indexOf('id="distill-btn"') && indexSource.includes('id="distill-label"') && appSource.includes("function setDistillMode") && appSource.includes('el("distill-label").textContent = state.distillMode ? "蒸馏中" : "蒸馏"') && appSource.includes('el("distill-btn").addEventListener("click"') && styleSource.includes('#distill-btn[aria-pressed="true"]'));
+	check("轮头 checkbox = 全选本轮所有条目（含被过滤掉的）", appSource.includes("function toggleRoundSelected") && /function toggleRoundSelected\(index\)[\s\S]*?\(q\?\.events \?\? \[\]\)\.map\(\(ev\) => ev\.id\)/.test(appSource) && appSource.includes("toggleRoundSelected(Number(check.dataset.check))") && appSource.includes("function roundSelectedState"));
+	check("轮头勾选态由条目选中集派生（all/some/none，已删除 selectedQs）", appSource.includes('return on === ids.length ? "all" : "some"') && !appSource.includes("selectedQs") && !indexSource.includes("selectedQs"));
 	check("行级控件点击先于行展开（否则点剪刀会开面板）", appSource.indexOf('closest(".ev-eye")') < appSource.indexOf('closest(".ev")') && appSource.includes('closest(".ev-check")'));
 	check("单条裁剪真剔模型上下文：走 /api/crop-entry，按 entry id 存", appSource.includes("async function toggleEntryCrop") && appSource.includes('\"/api/crop-entry\"') && appSource.includes("function entryIdOf") && serverSource.includes('\"/api/crop-entry\"') && serverSource.includes("options.onCropEntry({ sessionFile: session.file, entryId, cropped })"));
 	check("裁剪与选中两套业务分开（croppedEntries / selectedEvs 互不影响）", appSource.includes("state.croppedEntries.has(entryIdOf(ev))") && appSource.includes("state.selectedEvs.has(ev.id)") && appSource.split("state.croppedEntries = new Set()").length - 1 === 2);
