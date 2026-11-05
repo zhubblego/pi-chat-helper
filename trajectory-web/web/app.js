@@ -1506,7 +1506,7 @@ function setSideOpen(open) {
 	const side = el("dv-side");
 	side.dataset.open = String(open);
 	const toggle = el("dv-side-toggle");
-	toggle.replaceChildren(h("span", { "aria-hidden": "true", text: open ? "«" : "»" }));
+	toggle.replaceChildren(h("span", { "aria-hidden": "true", text: open ? "»" : "«" }));
 	toggle.title = open ? "收起工具条" : "展开工具条";
 	if (!open) setCopyMenuOpen(false);
 	try {
