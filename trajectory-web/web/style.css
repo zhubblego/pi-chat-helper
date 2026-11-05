@@ -675,7 +675,7 @@ svg.tb-icon {
 	cursor: pointer;
 }
 
-/* 眼睛：隐藏/恢复本轮（行级 .ev-eye 共用同一形态） */
+/* 剪刀：隐藏/恢复本轮（行级 .ev-eye 共用同一形态） */
 .q-eye,
 .ev-eye {
 	flex: none;
@@ -754,7 +754,7 @@ svg.tb-icon {
 	display: none;
 }
 
-/* 手动隐藏的轮次：占位行只留眼睛按钮，低调虚线示意边界 */
+/* 手动隐藏的轮次：占位行只留剪刀按钮，低调虚线示意边界 */
 .question.q-hidden {
 	display: flex;
 	align-items: center;
@@ -794,7 +794,7 @@ svg.tb-icon {
 
 .ev {
 	display: grid;
-	/* 眼睛 / 勾选 / 标签 / 预览 / 元信息：前两列是行级控件（同轮次头） */
+	/* 剪刀 / 勾选 / 标签 / 预览 / 元信息：前两列是行级控件（同轮次头） */
 	grid-template-columns: 18px 13px 60px 1fr auto;
 	align-items: baseline;
 	gap: 10px;
@@ -810,7 +810,7 @@ svg.tb-icon {
 	align-self: center;
 }
 
-/* 行级隐藏：收成一条低调占位行（眼睛 + 标签 + 预览），与轮次占位行同一语义 */
+/* 行级隐藏：收成一条低调占位行（剪刀 + 标签 + 预览），与轮次占位行同一语义 */
 .ev-row-hidden {
 	display: flex;
 	align-items: center;
@@ -1050,7 +1050,7 @@ mark.ev-hit {
 }
 
 /* 面板本体：插在对应轨迹行下方的卡片；左边距对齐事件行预览列
-   （行 padding 10 + 眼睛 18 + 标签列 60 + 三处列间距 10×3 + 勾选 13） */
+   （行 padding 10 + 剪刀 18 + 标签列 60 + 三处列间距 10×3 + 勾选 13） */
 .ev-panel {
 	--dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
 	margin: 2px 10px 10px 131px;

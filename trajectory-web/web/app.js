@@ -233,9 +233,11 @@ const ICONS = {
 		["path", { d: "M1.8 7.1 6 9.5l4.2-2.4" }],
 	],
 	check: [["path", { d: "M2.6 6.3 4.9 8.7 9.4 3.6" }]],
-	eye: [
-		["path", { d: "M1.2 6S3 2.9 6 2.9 10.8 6 10.8 6 9 9.1 6 9.1 1.2 6 1.2 6z" }],
-		["circle", { cx: 6, cy: 6, r: 1.6 }],
+	// 剪刀：两个圆环把手 + 交叉刀刃（行/轮次的隐藏按钮）
+	scissors: [
+		["circle", { cx: 3, cy: 9.2, r: 1.7 }],
+		["circle", { cx: 9, cy: 9.2, r: 1.7 }],
+		["path", { d: "M4.15 8.05 9.3 2.2M7.85 8.05 2.7 2.2" }],
 	],
 	light: [
 		["circle", { cx: 6, cy: 6, r: 2.5 }],
@@ -679,7 +681,7 @@ function modelHiddenOf(q) {
 }
 
 /**
- * 眼睛：切换整轮隐藏。可写会话（模式 A 的当前 pi 会话）联动模型上下文：POST /api/context-edit
+ * 剪刀（.q-eye）：切换整轮隐藏。可写会话（模式 A 的当前 pi 会话）联动模型上下文：POST /api/context-edit
  * 成功后本地切换视觉并立即拉取（服务端已作废投影缓存）；只读场景退化为纯视觉隐藏。
  */
 async function toggleRoundHidden(index) {
@@ -711,7 +713,7 @@ async function toggleRoundHidden(index) {
 }
 
 /**
- * 行级眼睛：切换单条事件的视觉隐藏（收成占位行）。单条事件没有模型上下文编辑入口，
+ * 行级剪刀（.ev-eye）：切换单条事件的视觉隐藏（收成占位行）。单条事件没有模型上下文编辑入口，
  * 与整轮隐藏不同——这里只改显示，不动模型上下文。
  */
 function toggleEventHidden(id) {
@@ -746,12 +748,12 @@ function highlightNodes(text, terms) {
 
 function renderEvent(ev, terms = []) {
 	const label = eventTagLabel(ev);
-	// 行级隐藏：收成一条低调占位行（只剩眼睛，点它恢复），与轮次隐藏同一套语义
+	// 行级隐藏：收成一条低调占位行（只剩剪刀，点它恢复），与轮次隐藏同一套语义
 	if (state.hiddenEvs.has(ev.id)) {
 		return h(
 			"div",
 			{ class: `ev-row-hidden k-${kindGroup(ev.kind)} k-${ev.kind}`, dataset: { eid: ev.id } },
-			h("button", { class: "ev-eye", type: "button", dataset: { eev: ev.id }, title: `显示这条${label}`, "aria-label": `显示这条${label}` }, svgIcon("eye")),
+			h("button", { class: "ev-eye", type: "button", dataset: { eev: ev.id }, title: `显示这条${label}`, "aria-label": `显示这条${label}` }, svgIcon("scissors")),
 			h("span", { class: "ev-tag", text: label }),
 			h("span", { class: "ev-hidden-preview", text: ev.preview }),
 		);
@@ -793,8 +795,8 @@ function renderEvent(ev, terms = []) {
 			tabindex: "0",
 			title: deriveTarget ? `进入派生会话 ${taskShort(deriveName ?? "")}` : ev.preview,
 		},
-		// 行级控件（与轮次头同一套语义）：眼睛隐藏本条、checkbox 选中本条
-		h("button", { class: "ev-eye", type: "button", dataset: { eev: ev.id }, title: `隐藏这条${label}`, "aria-label": `隐藏这条${label}` }, svgIcon("eye")),
+		// 行级控件（与轮次头同一套语义）：剪刀隐藏本条、checkbox 选中本条
+		h("button", { class: "ev-eye", type: "button", dataset: { eev: ev.id }, title: `隐藏这条${label}`, "aria-label": `隐藏这条${label}` }, svgIcon("scissors")),
 		h("input", {
 			class: "ev-check",
 			type: "checkbox",
@@ -835,12 +837,12 @@ function renderMain() {
 			if (matches && shown.length === 0) return null;
 			const roundLabel = q.index < 0 ? "会话开始" : `第 ${q.index + 1} 轮`;
 			const mHidden = modelHiddenOf(q);
-			// 隐藏的轮次：只留占位行（一个眼睛按钮），点眼睛恢复显示；模型上下文剔除的轮附提示
+			// 隐藏的轮次：只留占位行（一个剪刀按钮），点它恢复显示；模型上下文剔除的轮附提示
 			if (state.hiddenQs.has(q.index) || mHidden) {
 				return h(
 					"section",
 					{ class: "question q-hidden", id: `q-${q.index}`, dataset: { q: String(q.index) } },
-					h("button", { class: "q-eye", type: "button", dataset: { eye: String(q.index) }, title: `显示${roundLabel}${mHidden ? "（模型上下文已剔除）" : ""}`, "aria-label": `显示${roundLabel}` }, svgIcon("eye")),
+					h("button", { class: "q-eye", type: "button", dataset: { eye: String(q.index) }, title: `显示${roundLabel}${mHidden ? "（模型上下文已剔除）" : ""}`, "aria-label": `显示${roundLabel}` }, svgIcon("scissors")),
 				);
 			}
 			const body = shown.length ? shown.map((ev) => renderEvent(ev, terms)) : h("div", { class: "ev-empty" });
@@ -852,7 +854,7 @@ function renderMain() {
 				h(
 					"header",
 					{ class: "q-head" },
-					h("button", { class: "q-eye", type: "button", dataset: { eye: String(q.index) }, title: `隐藏${roundLabel}`, "aria-label": `隐藏${roundLabel}` }, svgIcon("eye")),
+					h("button", { class: "q-eye", type: "button", dataset: { eye: String(q.index) }, title: `隐藏${roundLabel}`, "aria-label": `隐藏${roundLabel}` }, svgIcon("scissors")),
 					h("input", {
 						class: "q-check",
 					type: "checkbox",
@@ -1875,7 +1877,7 @@ function openEventRow(row) {
 }
 
 mainInner.addEventListener("click", (e) => {
-	// 行级控件先于轮次/行本身处理（否则点眼睛会被当成展开面板）
+	// 行级控件先于轮次/行本身处理（否则点剪刀会被当成展开面板）
 	const evEye = e.target.closest(".ev-eye");
 	if (evEye) {
 		toggleEventHidden(evEye.dataset.eev);
@@ -1921,7 +1923,7 @@ mainInner.addEventListener("click", (e) => {
 
 mainInner.addEventListener("keydown", (e) => {
 	if (e.key !== "Enter" && e.key !== " ") return;
-	// 行级眼睛/复选框是原生控件，键盘交互交给它们自己（不在此展开面板）
+	// 行级剪刀/复选框是原生控件，键盘交互交给它们自己（不在此展开面板）
 	if (e.target.closest?.(".ev-eye, .ev-check")) return;
 	const no = e.target.closest?.(".q-no");
 	if (no) {

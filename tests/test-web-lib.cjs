@@ -265,6 +265,7 @@ const check = (label, cond, extra = "") => {
 	check("行级隐藏收成占位行（纯视觉，不动模型上下文）", appSource.includes("ev-row-hidden") && appSource.includes("function toggleEventHidden") && /function toggleEventHidden\(id\)[\s\S]*?renderMain\(\);\n}/.test(appSource) && !/toggleEventHidden[\s\S]{0,400}context-edit/.test(appSource));
 	check("行级三态随会话与切源重置", appSource.split("state.hiddenEvs = new Set()").length - 1 === 2 && appSource.split("state.selectedEvs = new Set()").length - 1 === 2);
 	check("行级控件复用轮次控件样式 + 行内两列已开", /\.q-eye,\n\.ev-eye \{/.test(styleSource) && /\.q-check,\n\.ev-check \{/.test(styleSource) && /grid-template-columns: 18px 13px 60px 1fr auto/.test(styleSource));
+	check("隐藏按钮用剪刀图标（两个圆环把手 + 交叉刀刃），旧眼睛图标已移除", appSource.includes("scissors: [") && appSource.split('svgIcon("scissors")').length - 1 === 4 && !appSource.includes('svgIcon("eye")') && !appSource.includes("\teye: ["));
 
 	// ---- 回归守卫：详情内联面板（行下方展开，工具条随面板作用于当前行） ----
 	check("详情在行下方内联展开：面板挂到对应行之后，行不在即收起", appSource.includes("function attachOpenPanel") && appSource.includes("row.after(panel)") && appSource.includes('mainInner.querySelector(`.ev[data-eid="${state.openId}"]`)'));
