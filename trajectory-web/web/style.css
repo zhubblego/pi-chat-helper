@@ -675,8 +675,9 @@ svg.tb-icon {
 	cursor: pointer;
 }
 
-/* 眼睛：隐藏/恢复本轮（隐藏后整轮收成只剩它的占位行） */
-.q-eye {
+/* 眼睛：隐藏/恢复本轮（行级 .ev-eye 共用同一形态） */
+.q-eye,
+.ev-eye {
 	flex: none;
 	display: inline-flex;
 	align-items: center;
@@ -691,13 +692,15 @@ svg.tb-icon {
 	cursor: pointer;
 }
 
-.q-eye:hover {
+.q-eye:hover,
+.ev-eye:hover {
 	color: var(--dsw-alias-label-primary);
 	background: var(--dsw-alias-interactive-bg-hover);
 }
 
-/* 勾选：选中轮次（原生 checkbox，统一状态源在 state，渲染时回填 checked） */
-.q-check {
+/* 勾选：原生 checkbox，统一状态源在 state，渲染时回填 checked（行级 .ev-check 共用） */
+.q-check,
+.ev-check {
 	flex: none;
 	width: 13px;
 	height: 13px;
@@ -791,13 +794,41 @@ svg.tb-icon {
 
 .ev {
 	display: grid;
-	grid-template-columns: 60px 1fr auto;
+	/* 眼睛 / 勾选 / 标签 / 预览 / 元信息：前两列是行级控件（同轮次头） */
+	grid-template-columns: 18px 13px 60px 1fr auto;
 	align-items: baseline;
 	gap: 10px;
 	padding: 5px 10px;
 	border-radius: var(--dsw-radius-sm);
 	cursor: pointer;
 	border-left: 2px solid transparent;
+}
+
+/* 行级控件竖直居中（否则按钮的 baseline 会跟文字基线错位） */
+.ev .ev-eye,
+.ev .ev-check {
+	align-self: center;
+}
+
+/* 行级隐藏：收成一条低调占位行（眼睛 + 标签 + 预览），与轮次占位行同一语义 */
+.ev-row-hidden {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 3px 10px;
+	border-radius: var(--dsw-radius-sm);
+	border-left: 2px solid transparent;
+	border-bottom: 1px dashed var(--dsw-alias-border-l2);
+}
+
+.ev-row-hidden .ev-hidden-preview {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--dsw-alias-label-tertiary);
+	font: var(--dsw-font-xs-13);
 }
 
 .ev:hover,
@@ -1018,10 +1049,11 @@ mark.ev-hit {
 	border-left-color: var(--dsw-alias-state-business-primary);
 }
 
-/* 面板本体：插在对应轨迹行下方的卡片；左边距对齐事件行预览列（行 padding 10 + 标签列 60 + 列间距 10） */
+/* 面板本体：插在对应轨迹行下方的卡片；左边距对齐事件行预览列
+   （行 padding 10 + 眼睛 18 + 标签列 60 + 三处列间距 10×3 + 勾选 13） */
 .ev-panel {
 	--dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
-	margin: 2px 10px 10px 80px;
+	margin: 2px 10px 10px 131px;
 	border: 1px solid var(--dsw-alias-border-l1);
 	border-radius: var(--dsw-radius-md);
 	background: var(--dsw-alias-bg-layer-1);

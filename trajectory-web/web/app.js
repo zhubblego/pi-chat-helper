@@ -76,6 +76,9 @@ const state = {
 	folded: new Set(),
 	selectedQs: new Set(),
 	hiddenQs: new Set(),
+	// 行级（单条事件）两态：选中 / 视觉隐藏（纯 UI，不动模型上下文——单条事件没有上下文编辑入口）
+	selectedEvs: new Set(),
+	hiddenEvs: new Set(),
 	// 模型上下文编辑（模式 A）：是否可写 + 扩展当前会话已隐藏的轮（轮首 user entry id）
 	canContextEdit: false,
 	hiddenUserIds: new Set(),
@@ -707,6 +710,17 @@ async function toggleRoundHidden(index) {
 	renderMain();
 }
 
+/**
+ * 行级眼睛：切换单条事件的视觉隐藏（收成占位行）。单条事件没有模型上下文编辑入口，
+ * 与整轮隐藏不同——这里只改显示，不动模型上下文。
+ */
+function toggleEventHidden(id) {
+	if (!id) return;
+	if (state.hiddenEvs.has(id)) state.hiddenEvs.delete(id);
+	else state.hiddenEvs.add(id);
+	renderMain();
+}
+
 function qStats(q) {
 	const st = q.stats ?? {};
 	return [
@@ -731,6 +745,17 @@ function highlightNodes(text, terms) {
 }
 
 function renderEvent(ev, terms = []) {
+	const label = eventTagLabel(ev);
+	// 行级隐藏：收成一条低调占位行（只剩眼睛，点它恢复），与轮次隐藏同一套语义
+	if (state.hiddenEvs.has(ev.id)) {
+		return h(
+			"div",
+			{ class: `ev-row-hidden k-${kindGroup(ev.kind)} k-${ev.kind}`, dataset: { eid: ev.id } },
+			h("button", { class: "ev-eye", type: "button", dataset: { eev: ev.id }, title: `显示这条${label}`, "aria-label": `显示这条${label}` }, svgIcon("eye")),
+			h("span", { class: "ev-tag", text: label }),
+			h("span", { class: "ev-hidden-preview", text: ev.preview }),
+		);
+	}
 	const classes = ["ev", `k-${kindGroup(ev.kind)}`, `k-${ev.kind}`];
 	if (ev.id === state.openId) classes.push("is-open");
 	const deriveName = state.deriveNames.get(ev.id);
@@ -768,7 +793,17 @@ function renderEvent(ev, terms = []) {
 			tabindex: "0",
 			title: deriveTarget ? `进入派生会话 ${taskShort(deriveName ?? "")}` : ev.preview,
 		},
-		h("span", { class: "ev-tag", text: deriveName ? "派生" : eventTagLabel(ev) }),
+		// 行级控件（与轮次头同一套语义）：眼睛隐藏本条、checkbox 选中本条
+		h("button", { class: "ev-eye", type: "button", dataset: { eev: ev.id }, title: `隐藏这条${label}`, "aria-label": `隐藏这条${label}` }, svgIcon("eye")),
+		h("input", {
+			class: "ev-check",
+			type: "checkbox",
+			dataset: { echeck: ev.id },
+			title: `选中这条${label}`,
+			"aria-label": `选中这条${label}`,
+			checked: state.selectedEvs.has(ev.id),
+		}),
+		h("span", { class: "ev-tag", text: deriveName ? "派生" : label }),
 		h("span", { class: "ev-preview" }, preview),
 		h("span", { class: "ev-meta", text: meta }),
 	);
@@ -1294,6 +1329,8 @@ function switchSource(id) {
 	state.folded = new Set();
 	state.selectedQs = new Set();
 	state.hiddenQs = new Set();
+	state.selectedEvs = new Set();
+	state.hiddenEvs = new Set();
 	state.canContextEdit = false;
 	state.hiddenUserIds = new Set();
 	state.query = "";
@@ -1808,6 +1845,8 @@ function selectSession(id, from = null) {
 	state.folded = new Set();
 	state.selectedQs = new Set();
 	state.hiddenQs = new Set();
+	state.selectedEvs = new Set();
+	state.hiddenEvs = new Set();
 	state.canContextEdit = false;
 	state.hiddenUserIds = new Set();
 	state.query = "";
@@ -1827,6 +1866,7 @@ function selectSession(id, from = null) {
 }
 
 /** 点事件行：派生行跳到它派生出的子会话，其余在行下方展开详情（再点收起）。 */
+/** 点事件行：派生行跳到它派生出的子会话，其余在行下方展开详情（再点收起）。 */
 function openEventRow(row) {
 	const target = row.dataset.derive;
 	if (target) {
@@ -1837,6 +1877,22 @@ function openEventRow(row) {
 }
 
 mainInner.addEventListener("click", (e) => {
+	// 行级控件先于轮次/行本身处理（否则点眼睛会被当成展开面板）
+	const evEye = e.target.closest(".ev-eye");
+	if (evEye) {
+		toggleEventHidden(evEye.dataset.eev);
+		return;
+	}
+	const evCheck = e.target.closest(".ev-check");
+	if (evCheck) {
+		// 阻止原生勾选，统一从 state 渲染（同轮次头复选框）
+		e.preventDefault();
+		const id = evCheck.dataset.echeck;
+		if (state.selectedEvs.has(id)) state.selectedEvs.delete(id);
+		else state.selectedEvs.add(id);
+		renderMain();
+		return;
+	}
 	const eye = e.target.closest(".q-eye");
 	if (eye) {
 		void toggleRoundHidden(Number(eye.dataset.eye));
@@ -1867,6 +1923,8 @@ mainInner.addEventListener("click", (e) => {
 
 mainInner.addEventListener("keydown", (e) => {
 	if (e.key !== "Enter" && e.key !== " ") return;
+	// 行级眼睛/复选框是原生控件，键盘交互交给它们自己（不在此展开面板）
+	if (e.target.closest?.(".ev-eye, .ev-check")) return;
 	const no = e.target.closest?.(".q-no");
 	if (no) {
 		e.preventDefault();

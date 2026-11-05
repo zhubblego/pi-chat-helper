@@ -257,8 +257,16 @@ const check = (label, cond, extra = "") => {
 	check("旧 ⊞/⊟ 折叠按钮与双击折叠已移除", !appSource.includes("q-fold") && !appSource.includes("双击收起本轮"));
 	check("隐藏轮占位行 + 选中/隐藏状态随会话与切源重置", appSource.includes("q-hidden") && appSource.includes("hiddenQs = new Set()") && appSource.includes("selectedQs = new Set()"));
 
-	// ---- 回归守卫：详情内联面板（行下方展开，工具条随面板作用于当前行） ----
 	const styleSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "web", "style.css"), "utf8");
+
+	// ---- 回归守卫：行级控件（每条事件行前的眼睛隐藏 + checkbox 选中） ----
+	check("事件行带行级眼睛与 checkbox", appSource.includes('class: "ev-eye"') && appSource.includes('class: "ev-check"') && appSource.includes("state.selectedEvs.has(ev.id)"));
+	check("行级控件点击先于行展开（否则点眼睛会开面板）", appSource.indexOf('closest(".ev-eye")') < appSource.indexOf('closest(".ev")') && appSource.includes('closest(".ev-check")'));
+	check("行级隐藏收成占位行（纯视觉，不动模型上下文）", appSource.includes("ev-row-hidden") && appSource.includes("function toggleEventHidden") && /function toggleEventHidden\(id\)[\s\S]*?renderMain\(\);\n}/.test(appSource) && !/toggleEventHidden[\s\S]{0,400}context-edit/.test(appSource));
+	check("行级三态随会话与切源重置", appSource.split("state.hiddenEvs = new Set()").length - 1 === 2 && appSource.split("state.selectedEvs = new Set()").length - 1 === 2);
+	check("行级控件复用轮次控件样式 + 行内两列已开", /\.q-eye,\n\.ev-eye \{/.test(styleSource) && /\.q-check,\n\.ev-check \{/.test(styleSource) && /grid-template-columns: 18px 13px 60px 1fr auto/.test(styleSource));
+
+	// ---- 回归守卫：详情内联面板（行下方展开，工具条随面板作用于当前行） ----
 	check("详情在行下方内联展开：面板挂到对应行之后，行不在即收起", appSource.includes("function attachOpenPanel") && appSource.includes("row.after(panel)") && appSource.includes('mainInner.querySelector(`.ev[data-eid="${state.openId}"]`)'));
 	check("renderMain 末尾重挂面板（replaceChildren 摘出后重挂不重建）", appSource.includes("updateFoldAll();\n\t// 打开的详情面板重新挂到对应行下方（replaceChildren 会把它摘出文档，重挂不重建，滚动/展开态保留）\n\tattachOpenPanel();"));
 	check("再点同一行收起（toggle）", appSource.includes("state.openId === id") && appSource.includes("closePanel();"));
