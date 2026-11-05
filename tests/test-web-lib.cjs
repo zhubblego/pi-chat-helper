@@ -296,6 +296,7 @@ const check = (label, cond, extra = "") => {
 	check("对话栏独立成侧栏，顶部上下文行与关闭按钮已移除（顶部直接是消息流）", indexSource.includes('id="chat-drawer"') && !indexSource.includes("chat-ctx") && !indexSource.includes('id="chat-close"'));
 	check("对话栏开关接线：按钮切换 + 开态持久化 + Esc 兕底", appSource.includes("function setChatOpen") && appSource.includes('el("chat-btn").addEventListener("click"') && appSource.includes('"tw.chat"') && appSource.includes("if (state.chatOpen) {"));
 	check("对话栏样式就位（分屏 flex 列，非 fixed 覆盖）", styleSource.includes(".chat-drawer") && !styleSource.includes(".chat-ctx") && !/\.chat-drawer\s*\{[^}]*position:\s*fixed/s.test(styleSource));
+	check("对话栏支持左缘拖拽调宽：把手 + 拖拽接线 + 宽度持久化", indexSource.includes('id="chat-resize"') && indexSource.includes('role="separator"') && appSource.includes("function bindChatResize") && appSource.includes("previewChatWidth(start.width - (ev.clientX - start.x))") && appSource.includes('"tw.chatWidth"') && appSource.includes("commitChatWidth(CHAT_DEFAULT_W)") && styleSource.includes(".chat-resize") && /\.chat-drawer \{[^}]*width: min\(var\(--tw-chat-w, 440px\), 90vw\)/s.test(styleSource));
 	check("分屏结构：chat-drawer 在 #layout 内、#main 之后，layout 随其后闭合（主区收窄不遮盖）", indexSource.indexOf('id="main"') < indexSource.indexOf('id="chat-drawer"') && /<\/main>\s*<!--[\s\S]*?-->\s*<aside id="chat-drawer"/.test(indexSource) && /<\/aside>\s*<\/div>/.test(indexSource));
 
 	// ---- 回归守卫：对话页 UI（消息流 + 输入卡，本地消息流未接模型） ----

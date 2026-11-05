@@ -45,6 +45,7 @@ const LS_FILTERS = "tw.filters";
 const LS_THEME = "tw.theme";
 const LS_TRANSLATE = "tw.translate";
 const LS_CHAT = "tw.chat";
+const LS_CHAT_W = "tw.chatWidth";
 const POLL_MS = 2000;
 const SESSION_LIST_EVERY = 3; // 每 3 个 tick 刷一次会话列表（约 6s）
 
@@ -1384,6 +1385,87 @@ function setChatOpen(open) {
 }
 
 // ---------------------------------------------------------------------------
+// 对话栏宽度：左缘拖拽（260px ~ 90vw），双击恢复默认，宽度存 localStorage
+// ---------------------------------------------------------------------------
+
+const CHAT_DEFAULT_W = 440;
+const CHAT_MIN_W = 260;
+
+function chatMaxWidth() {
+	return Math.min(Math.round(window.innerWidth * 0.9), 1100);
+}
+
+function clampChatWidth(width) {
+	return Math.min(Math.max(Math.round(width), CHAT_MIN_W), chatMaxWidth());
+}
+
+/** 只改当前宽度（拖动过程用，不写存储）。 */
+function previewChatWidth(width) {
+	el("chat-drawer").style.setProperty("--tw-chat-w", `${clampChatWidth(width)}px`);
+}
+
+/** 落定宽度并持久化到 localStorage。 */
+function commitChatWidth(width) {
+	previewChatWidth(width);
+	try {
+		localStorage.setItem(LS_CHAT_W, String(clampChatWidth(width)));
+	} catch {
+		/* 无痕模式忽略 */
+	}
+}
+
+function loadChatWidth() {
+	let saved = 0;
+	try {
+		saved = Number(localStorage.getItem(LS_CHAT_W)) || 0;
+	} catch {
+		saved = 0;
+	}
+	if (saved > 0) previewChatWidth(saved);
+}
+
+function bindChatResize() {
+	const handle = el("chat-resize");
+	if (!handle) return;
+	handle.addEventListener("pointerdown", (e) => {
+		if (e.button !== 0) return;
+		e.preventDefault();
+		const drawerEl = el("chat-drawer");
+		const start = { x: e.clientX, width: drawerEl.getBoundingClientRect().width };
+		handle.classList.add("dragging");
+		try {
+			handle.setPointerCapture(e.pointerId);
+		} catch {
+			/* 合成事件/环境不支持捕获时靠 window 监听兑底 */
+		}
+		// 左缘：指针往左拉 = 变宽
+		const onMove = (ev) => previewChatWidth(start.width - (ev.clientX - start.x));
+		const onEnd = () => {
+			window.removeEventListener("pointermove", onMove);
+			window.removeEventListener("pointerup", onEnd);
+			window.removeEventListener("pointercancel", onEnd);
+			handle.classList.remove("dragging");
+			commitChatWidth(drawerEl.getBoundingClientRect().width);
+		};
+		window.addEventListener("pointermove", onMove);
+		window.addEventListener("pointerup", onEnd);
+		window.addEventListener("pointercancel", onEnd);
+	});
+	handle.addEventListener("dblclick", () => commitChatWidth(CHAT_DEFAULT_W));
+	handle.addEventListener("keydown", (e) => {
+		if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+		e.preventDefault();
+		const step = e.shiftKey ? 64 : 16;
+		commitChatWidth(el("chat-drawer").getBoundingClientRect().width + (e.key === "ArrowLeft" ? step : -step));
+	});
+	// 窗口变窄时把超宽的对话栏收回可视范围（不写回存储，复原窗口后保留原偏好）
+	window.addEventListener("resize", () => {
+		const drawerEl = el("chat-drawer");
+		if (drawerEl.getBoundingClientRect().width > chatMaxWidth()) previewChatWidth(chatMaxWidth());
+	});
+}
+
+// ---------------------------------------------------------------------------
 // 视图位置（URL hash）：#s=<会话id>&e=<事件id> —— 刷新不丢展开的详情。
 // 事件 id 仅会话内唯一，必须连同会话一起记录；用 replaceState 不产生历史记录。
 // ---------------------------------------------------------------------------
@@ -2194,6 +2276,8 @@ loadPrefs();
 loadTranslatePrefs();
 renderToolbar();
 renderChat();
+loadChatWidth();
+bindChatResize();
 try {
 	if (localStorage.getItem(LS_CHAT) === "1") setChatOpen(true);
 } catch {
