@@ -305,6 +305,7 @@ const check = (label, cond, extra = "") => {
 	check("对话页两段结构：消息流(role=log) + 输入卡", indexSource.includes('id="chat-list"') && indexSource.includes('role="log"') && indexSource.includes('id="chat-input"') && indexSource.includes('id="chat-send"'));
 	check("对话页交互接线：Enter 发送/Shift 换行/IME 防误发/自增高/本地消息流", appSource.includes("function sendChat") && appSource.includes("e.isComposing") && appSource.includes("function autoGrowChatInput") && appSource.includes("state.chat.push") && appSource.includes("CHAT_INPUT_MAX_H"));
 	check("AI 消息走 markdown 渲染，上下文行同步函数已随标题移除", !appSource.includes("renderChatCtx") && appSource.includes('m.role === "ai"') && appSource.includes("mdNode(m.text)"));
+	check("输入卡与输入框圆角收敛（16px，不用 28px 的 panel 圆角）", /\.chat-card \{[^}]*border-radius: var\(--dsw-radius-lg\)/s.test(styleSource) && /\.chat-input \{[^}]*border-radius: var\(--dsw-radius-lg\)/s.test(styleSource) && !/\.chat-card \{[^}]*radius-panel/s.test(styleSource));
 	check("对话页样式复刻上游：用户气泡 + 输入卡 + info 圆发送钮", styleSource.includes(".chat-msg.user") && styleSource.includes("var(--dsw-specific-bubble)") && styleSource.includes(".chat-card") && styleSource.includes("var(--dsw-specific-input-major)") && styleSource.includes(".chat-send") && styleSource.includes("var(--dsw-alias-button-info-fill)"));
 
 	console.log(failed === 0 ? "\nALL PASS" : `\n${failed} FAILED`);

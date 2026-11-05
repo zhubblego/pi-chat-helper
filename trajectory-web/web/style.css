@@ -1353,7 +1353,8 @@ mark.ev-hit {
 	display: flex;
 	flex-direction: column;
 	gap: 2px;
-	border-radius: var(--dsw-radius-panel);
+	/* 输入卡用 16px：28px 的 panel 圆角在小尺寸输入框上显得过圆 */
+	border-radius: var(--dsw-radius-lg);
 	background: var(--dsw-specific-input-major);
 	--dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
 	box-shadow: var(--dsw-elevation-soft);
@@ -1367,7 +1368,8 @@ mark.ev-hit {
 	max-height: 132px; /* 约 6 行封顶后内部滚动 */
 	padding: 7px 12px 0 14px;
 	border: 0;
-	border-radius: var(--dsw-radius-panel);
+	/* 与输入卡同圆角，否则四角会露出卡片底色 */
+	border-radius: var(--dsw-radius-lg);
 	background: transparent;
 	resize: none;
 	outline: none;
