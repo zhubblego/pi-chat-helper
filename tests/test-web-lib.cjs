@@ -279,6 +279,12 @@ const check = (label, cond, extra = "") => {
 	check("切标签接线：点选/键盘导航/点轨迹行重置回详情", appSource.includes("function setDrawerTab") && appSource.includes('el("dv-tab-chat").addEventListener("click"') && appSource.includes('"ArrowLeft"') && appSource.includes('setDrawerTab("detail")'));
 	check("标签样式复刻上游 SegmentedTabs（滑动指示条 + 等宽分栏）", styleSource.includes(".dv-tab-indicator") && styleSource.includes(".dv-tabs[data-active=\"chat\"] .dv-tab-indicator"));
 
+	// ---- 回归守卫：对话页 UI（上下文行 + 消息流 + 输入卡，本地消息流未接模型） ----
+	check("对话页三段结构：上下文行 + 消息流(role=log) + 输入卡", indexSource.includes('id="chat-ctx"') && indexSource.includes('id="chat-list"') && indexSource.includes('role="log"') && indexSource.includes('id="chat-input"') && indexSource.includes('id="chat-send"'));
+	check("对话页交互接线：Enter 发送/Shift 换行/IME 防误发/自增高/本地消息流", appSource.includes("function sendChat") && appSource.includes("e.isComposing") && appSource.includes("function autoGrowChatInput") && appSource.includes("state.chat.push") && appSource.includes("CHAT_INPUT_MAX_H"));
+	check("上下文行随抽屉同步当前事件，AI 消息走 markdown 渲染", appSource.includes("function renderChatCtx") && appSource.includes("renderChatCtx(light)") && appSource.includes('m.role === "ai"') && appSource.includes("mdNode(m.text)"));
+	check("对话页样式复刻上游：用户气泡 + 输入卡 + info 圆发送钮", styleSource.includes(".chat-msg.user") && styleSource.includes("var(--dsw-specific-bubble)") && styleSource.includes(".chat-card") && styleSource.includes("var(--dsw-specific-input-major)") && styleSource.includes(".chat-send") && styleSource.includes("var(--dsw-alias-button-info-fill)"));
+
 	console.log(failed === 0 ? "\nALL PASS" : `\n${failed} FAILED`);
 	process.exit(failed === 0 ? 0 : 1);
 })();

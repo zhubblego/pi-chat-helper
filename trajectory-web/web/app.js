@@ -89,6 +89,8 @@ const state = {
 	openFull: null,
 	openLightJson: "",
 	drawerTab: "detail",
+	// 「对话」标签的本地消息流（未接模型）：{ role: "user" | "ai", text }
+	chat: [],
 	translated: false,
 	translating: false,
 	settingsOpen: false,
@@ -1057,6 +1059,7 @@ function renderDrawer(keepState = false) {
 	el("dv-kind").textContent = eventTagLabel(light);
 	el("dv-kind").className = `dv-kind k-${kindGroup(light.kind)}`;
 	el("dv-title").textContent = light.preview;
+	renderChatCtx(light);
 	el("dv-meta").replaceChildren(...drawerMetaNodes(view, light));
 	body.replaceChildren(...drawerBodyNodes(view));
 	if (openKeys) for (const d of body.querySelectorAll("details")) if (openKeys.has(detailKey(d))) d.open = true;
@@ -1145,6 +1148,58 @@ function setDrawerTab(tab) {
 	el("dv-tab-chat").tabIndex = detail ? -1 : 0;
 	el("dv-detail").hidden = !detail;
 	el("dv-chat").hidden = detail;
+}
+
+// ---------------------------------------------------------------------------
+// 「对话」标签：围绕当前事件的 AI 对话窗口（本轮仅 UI + 本地消息流，模型后端后续接入）
+// 视觉复刻上游：用户右气泡（specific-bubble/radius-xl）、AI 左全宽 markdown、
+// 底部输入卡（input-major/radius-panel）+ info 色圆发送钮
+// ---------------------------------------------------------------------------
+
+const CHAT_INPUT_MAX_H = 132; // 与 CSS .chat-input max-height 同步（约 6 行封顶后内部滚动）
+
+/** 上下文行：当前打开事件的类型徽章 + 标题（随 renderDrawer 同步）。 */
+function renderChatCtx(light) {
+	el("chat-ctx").replaceChildren(
+		h("span", { class: `dv-kind k-${kindGroup(light.kind)}`, text: eventTagLabel(light) }),
+		h("span", { class: "chat-ctx-title", text: light.preview }),
+	);
+}
+
+function chatMsgNode(m) {
+	if (m.role === "ai") return h("div", { class: "chat-msg ai" }, mdNode(m.text));
+	return h("div", { class: "chat-msg user", text: m.text });
+}
+
+function renderChat(scrollBottom = false) {
+	const list = el("chat-list");
+	if (state.chat.length === 0) {
+		list.replaceChildren(h("div", { class: "chat-empty", text: "对话功能预览：未接入模型，消息仅本地展示" }));
+		return;
+	}
+	list.replaceChildren(...state.chat.map(chatMsgNode));
+	if (scrollBottom) list.scrollTop = list.scrollHeight;
+}
+
+function syncChatSend() {
+	el("chat-send").disabled = el("chat-input").value.trim().length === 0;
+}
+
+function autoGrowChatInput() {
+	const input = el("chat-input");
+	input.style.height = "auto";
+	input.style.height = `${Math.min(input.scrollHeight, CHAT_INPUT_MAX_H)}px`;
+}
+
+function sendChat() {
+	const input = el("chat-input");
+	const text = input.value.trim();
+	if (!text) return;
+	state.chat.push({ role: "user", text });
+	input.value = "";
+	autoGrowChatInput();
+	syncChatSend();
+	renderChat(true);
 }
 
 // ---------------------------------------------------------------------------
@@ -1914,6 +1969,18 @@ el("agent-rail").addEventListener("click", (e) => {
 	if (btn) switchSource(btn.dataset.source);
 });
 el("drawer-close").addEventListener("click", closeDrawer);
+el("chat-input").addEventListener("input", () => {
+	autoGrowChatInput();
+	syncChatSend();
+});
+el("chat-input").addEventListener("keydown", (e) => {
+	// Enter 发送、Shift+Enter 换行；输入法组合中不误发
+	if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+		e.preventDefault();
+		sendChat();
+	}
+});
+el("chat-send").addEventListener("click", () => sendChat());
 el("dv-tab-detail").addEventListener("click", () => setDrawerTab("detail"));
 el("dv-tab-chat").addEventListener("click", () => setDrawerTab("chat"));
 el("dv-tabs").addEventListener("keydown", (e) => {
@@ -2028,6 +2095,7 @@ try {
 }
 renderToolbar();
 setDrawerTab(state.drawerTab);
+renderChat();
 loadDrawerWidth();
 bindDrawerResize();
 void ensureToolOrigins();

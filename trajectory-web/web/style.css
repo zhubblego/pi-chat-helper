@@ -1323,10 +1323,149 @@ border-bottom: 1px solid var(--dsw-alias-border-l1);
 	flex-direction: column;
 }
 
-/* 「对话」标签面板：预留空白页，后续放 AI 对话窗口 */
+/* 「对话」标签面板：上下文行 + 消息流 + 输入卡（后续接 AI 对话后端） */
 .dv-chat {
 	flex: 1;
 	min-height: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+/* 上下文行：当前打开事件的类型徽章 + 标题，表明对话围绕哪条轨迹 */
+.chat-ctx {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 14px;
+	border-bottom: 1px solid var(--dsw-alias-border-l1);
+	color: var(--dsw-alias-label-tertiary);
+	font: var(--dsw-font-xs-13);
+	min-height: 20px;
+}
+
+.chat-ctx .chat-ctx-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* 消息流：用户右气泡 / AI 左全宽 markdown（复刻上游 MessageItem + AssistantMarkdown 布局） */
+.chat-list {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	padding: 14px;
+}
+
+.chat-empty {
+	margin: auto;
+	max-width: 320px;
+	text-align: center;
+	color: var(--dsw-alias-label-caption);
+	font: var(--dsw-font-xs-13);
+	line-height: 20px;
+}
+
+.chat-msg.user {
+	align-self: flex-end;
+	max-width: 82%;
+	background: var(--dsw-specific-bubble);
+	border-radius: var(--dsw-radius-xl);
+	padding: 10px 16px;
+	font-size: 14px;
+	line-height: 22px;
+	color: var(--dsw-alias-label-primary);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.chat-msg.ai {
+	align-self: stretch;
+	min-width: 0;
+	font-size: 14px;
+	line-height: 24px;
+	color: var(--dsw-alias-label-primary);
+}
+
+/* 输入卡（复刻上游 InputBar：输入面 token 填充 + 面板圆角 + l2 发丝线/软阴影；textarea 透明无边框） */
+.chat-composer {
+	flex: none;
+	padding: 10px 12px 12px;
+	border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.chat-card {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	border-radius: var(--dsw-radius-panel);
+	background: var(--dsw-specific-input-major);
+	--dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
+	box-shadow: var(--dsw-elevation-soft);
+}
+
+.chat-input {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	min-height: 36px;
+	max-height: 132px; /* 约 6 行封顶后内部滚动 */
+	padding: 7px 12px 0 14px;
+	border: 0;
+	border-radius: var(--dsw-radius-panel);
+	background: transparent;
+	resize: none;
+	outline: none;
+	font-family: inherit;
+	font-size: 14px;
+	line-height: 22px;
+	color: var(--dsw-alias-label-primary);
+	caret-color: var(--dsw-alias-state-business-primary);
+}
+
+.chat-input::placeholder {
+	color: var(--dsw-alias-label-caption);
+}
+
+.chat-row {
+	display: flex;
+	justify-content: flex-end;
+	padding: 2px 6px 6px 0;
+}
+
+/* 发送圆钮（复刻上游 IconButton：34px 圆、info 填充、白色箭头、空文案 0.4 透明度） */
+.chat-send {
+	display: grid;
+	place-items: center;
+	width: 34px;
+	height: 34px;
+	border: none;
+	border-radius: 999px;
+	background: var(--dsw-alias-button-info-fill);
+	color: #fff;
+	cursor: pointer;
+	transition: background-color 100ms ease;
+}
+
+.chat-send svg {
+	width: 16px;
+	height: 16px;
+}
+
+@media (hover: hover) {
+	.chat-send:hover:not(:disabled) {
+		background: var(--dsw-alias-button-info-hover);
+	}
+}
+
+.chat-send:disabled {
+	opacity: 0.4;
+	cursor: default;
 }
 
 .dv-meta {
