@@ -660,6 +660,9 @@ function updateCropButton() {
 	const btn = el("crop-btn");
 	btn.setAttribute("aria-pressed", String(state.cropMode));
 	btn.title = state.cropMode ? "退出裁剪模式（已裁剪的保持裁剪）" : "裁剪模式：把对话从模型上下文剪掉";
+	// 模式态要看得出来：按钮文字变成「裁剪中」，工具栏右侧常驻一条说明
+	el("crop-label").textContent = state.cropMode ? "裁剪中" : "裁剪";
+	el("crop-hint").hidden = !state.cropMode;
 }
 
 function setMenuOpen(open) {

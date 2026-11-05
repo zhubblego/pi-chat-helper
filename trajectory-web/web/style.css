@@ -453,6 +453,31 @@ body {
 	background: var(--dsw-alias-interactive-bg-hover);
 }
 
+/* 裁剪模式开关：开态用警示色强调（普通 aria-pressed 底色太淡，看不出已进模式） */
+#crop-btn[aria-pressed="true"],
+#crop-btn[aria-pressed="true"]:hover {
+	color: var(--dsw-alias-state-warn-label);
+	background: var(--dsw-alias-state-warn-tertiary);
+}
+
+#crop-btn[aria-pressed="true"] .tb-icon {
+	color: var(--dsw-alias-state-warn-label);
+}
+
+/* 裁剪模式说明：工具栏里的常驻提示（搜索框有 margin-left:auto，自然靠右） */
+.crop-hint {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	padding: 1px 8px;
+	border-radius: var(--dsw-radius-xs);
+	background: var(--dsw-alias-state-warn-tertiary);
+	color: var(--dsw-alias-state-warn-label);
+	font: var(--dsw-font-xxxs-11);
+}
+
 .tb-btn:focus-visible {
 	outline: 1px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
 	outline-offset: 1px;
