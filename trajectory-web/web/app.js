@@ -1096,8 +1096,6 @@ function renderPanel(keepState = false) {
 	const body = el("dv-body");
 	const prevScroll = keepState ? body.scrollTop : 0;
 	const openKeys = keepState ? new Set([...body.querySelectorAll("details[open]")].map(detailKey)) : null;
-	el("dv-kind").textContent = eventTagLabel(light);
-	el("dv-kind").className = `dv-kind k-${kindGroup(light.kind)}`;
 	el("dv-meta").replaceChildren(...panelMetaNodes(view, light));
 	body.replaceChildren(...panelBodyNodes(view));
 	if (openKeys) for (const d of body.querySelectorAll("details")) if (openKeys.has(detailKey(d))) d.open = true;

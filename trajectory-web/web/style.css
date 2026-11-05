@@ -1131,58 +1131,6 @@ mark.ev-hit {
 	min-width: 0;
 }
 
-.dv-kind {
-	font: var(--dsw-font-xxxs-strong-11);
-	padding: 2px 8px;
-	border-radius: var(--dsw-radius-xs);
-	background: var(--dsw-alias-markdown-tag);
-	color: var(--dsw-alias-label-secondary);
-	white-space: nowrap;
-}
-
-.dv-kind.k-user {
-	background: var(--dsw-specific-bubble);
-	color: var(--dsw-alias-label-primary-bluish);
-}
-
-.dv-kind.k-thinking {
-	background: var(--dsw-alias-markdown-code-block);
-	color: var(--dsw-alias-label-tertiary);
-}
-
-.dv-kind.k-tools {
-	background: var(--dsw-alias-state-warn-tertiary);
-	color: var(--dsw-alias-state-warn-label);
-}
-
-.dv-kind.k-text {
-	background: var(--dsw-alias-markdown-tag);
-	color: var(--dsw-alias-label-tertiary);
-}
-
-.dv-kind.k-answer {
-	background: var(--dsw-alias-state-success-tertiary);
-	color: var(--dsw-alias-state-success-primary);
-}
-
-/* 上下文类（同事件行配色） */
-.dv-kind.k-system,
-.dv-kind.k-compaction,
-.dv-kind.k-branch,
-.dv-kind.k-model,
-.dv-kind.k-thinking-level,
-.dv-kind.k-usage,
-.dv-kind.k-context-edit,
-.dv-kind.k-custom {
-	background: var(--dsw-alias-markdown-tag);
-	color: var(--dsw-alias-label-tertiary);
-}
-
-.dv-kind.k-approval {
-	background: var(--dsw-specific-bubble);
-	color: var(--dsw-alias-label-primary-bluish);
-}
-
 /* 侧边对话栏（分屏）：#layout 的最后一列，打开时主区自动收窄不覆盖；顶栏对话按钮开关 */
 .chat-drawer {
 	--dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
