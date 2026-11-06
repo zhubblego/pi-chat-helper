@@ -16,6 +16,9 @@
  *   --web <dir>            静态资源目录，默认 ../web
  *   --agent-dir <dir>      pi agent 目录（工具归属静态扫描），默认 ~/.pi/agent
  *   --pi-dir <dir>         pi 安装目录（扫描内置工具名）
+ *   --chat-dir <dir>       对话目录，默认 <agentDir>/pi-chat-helper/chats
+ *   --no-chat              禁用对话（不创建 chat host）
+ *   --pi-bin <path>        指定 pi 可执行文件（默认自动解析）
  */
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,6 +39,9 @@ function parseArgs(argv) {
 		web: join(HERE, "..", "web"),
 		agentDir: undefined,
 		piDir: undefined,
+		chatDir: undefined,
+		noChat: false,
+		piBin: undefined,
 	};
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
@@ -74,6 +80,15 @@ function parseArgs(argv) {
 			case "--pi-dir":
 				out.piDir = next();
 				break;
+			case "--chat-dir":
+				out.chatDir = next();
+				break;
+			case "--no-chat":
+				out.noChat = true;
+				break;
+			case "--pi-bin":
+				out.piBin = next();
+				break;
 			default:
 				break;
 		}
@@ -109,6 +124,10 @@ createTrajectoryServer({
 	port: options.port,
 	agentDir: options.agentDir,
 	piDir: options.piDir,
+	chat: options.noChat ? false : true,
+	chatDir: options.chatDir,
+	piBin: options.piBin,
+	hostExecPath: process.execPath,
 	log: (message) => process.stderr.write(`${message}\n`),
 })
 	.then((handle) => {

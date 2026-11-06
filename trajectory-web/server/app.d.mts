@@ -7,6 +7,14 @@ export interface ToolOriginEntry {
 }
 
 /** createTrajectoryServer 的参数（server/app.mjs 的 TypeScript 声明）。 */
+export interface PiBinSpec {
+	cmd: string;
+	argsPrefix?: string[];
+	mode?: boolean;
+	display?: string;
+	kind?: string;
+}
+
 export interface TrajectoryServerOptions {
 	scope?: "project" | "all";
 	sessionFile?: string;
@@ -21,6 +29,12 @@ export interface TrajectoryServerOptions {
 	/** 静态扫描用的 pi 安装目录与 agent 目录（模式 B / 测试）。 */
 	piDir?: string;
 	agentDir?: string;
+	/** 对话控制面。chat=false 强制禁用；chatDir/piBin/hostEntry 任一存在则启用。 */
+	chat?: boolean;
+	chatDir?: string;
+	piBin?: PiBinSpec | string;
+	hostEntry?: string;
+	hostExecPath?: string;
 }
 
 export interface TrajectoryServerHandle {

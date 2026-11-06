@@ -24,11 +24,16 @@
  *   pi -e ./trajectory-web/index.ts
  */
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { homedir } from "node:os";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = join(HERE, "web");
+/** pi agent 目录：尊重 PI_CODING_AGENT_DIR（与 pi 自身一致）。 */
+const AGENT_DIR = process.env.PI_CODING_AGENT_DIR ? resolvePath(process.env.PI_CODING_AGENT_DIR) : join(homedir(), ".pi", "agent");
+/** 对话目录（pi session 文件 + sidecar）。 */
+const CHAT_DIR = join(AGENT_DIR, "pi-chat-helper", "chats");
 
 const COMMAND_NAME = "deepseek-trail";
 const DEFAULT_PORT = 7717;
@@ -324,6 +329,11 @@ async function startInProcess(
 		webDir: WEB_DIR,
 		host: "127.0.0.1",
 		toolOrigins,
+		// 对话：子进程 pi；默认目录在 agentDir 下，避免落入 sessions
+		chat: true,
+		chatDir: CHAT_DIR,
+		hostEntry: process.argv[1],
+		hostExecPath: process.execPath,
 		onContextEdit: hooks.onContextEdit,
 		getContextHidden: hooks.getContextHidden,
 		onCropEntry: hooks.onCropEntry,

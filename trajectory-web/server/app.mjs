@@ -26,6 +26,7 @@ import { execFile } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { buildProjection, buildProjectionFrom, toLight, findEvent } from "./session.mjs";
+import { createChatHost, resolveAgentDir } from "./chat-host.mjs";
 import { listSessions, DEFAULT_SESSIONS_ROOT, LIVE_WINDOW_MS } from "./sessions.mjs";
 import { listCodexSessions, readCodexSession, readGuardianApproval, DEFAULT_CODEX_ROOT } from "./codex.mjs";
 import { scanToolOrigins } from "./tool-origins.mjs";
@@ -133,6 +134,11 @@ const MAX_CACHED_PROJECTIONS = 4;
  *   agentDir?: string,
  *   sources?: string[],
  *   projectPath?: string,
+ *   chat?: boolean,
+ *   chatDir?: string,
+ *   piBin?: { cmd: string, argsPrefix?: string[], mode?: boolean, display?: string },
+ *   hostEntry?: string,
+ *   hostExecPath?: string,
  * }} options
  * @returns {Promise<{port:number, host:string, url:string, server:import("node:http").Server, close:() => Promise<void>}>}
  */
@@ -293,18 +299,76 @@ export function createTrajectoryServer(options) {
 		res.end(text);
 	}
 
+	// ---- 对话控制面（T1 起：capabilities；后续加线程/SSE） ----
+	const chatEnabled =
+		options.chat === false ? false : options.chat === true || Boolean(options.chatDir || options.piBin || options.hostEntry);
+	const piBin =
+		typeof options.piBin === "string"
+			? { cmd: options.piBin, argsPrefix: [], mode: true, display: options.piBin }
+			: options.piBin;
+	const chat = chatEnabled
+		? createChatHost({
+				chatDir: options.chatDir ?? join(options.agentDir ?? resolveAgentDir(), "pi-chat-helper", "chats"),
+				pi: piBin,
+				hostEntry: options.hostEntry,
+				hostExecPath: options.hostExecPath,
+				sessionRoots: [sessionsRoot, codexRoot],
+				log,
+			})
+		: null;
+
+	const CHAT_POSTS = new Set([
+		"/api/chat/model",
+		"/api/chat/thread",
+		"/api/chat/settings",
+		"/api/chat/send",
+		"/api/chat/stop",
+		"/api/chat/approval",
+	]);
+
 	const server = createServer(async (req, res) => {
 		try {
 			const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 			const pathname = url.pathname;
 			if (req.method === "POST") {
-				// 只开放翻译转发与裁剪（整轮 / 单条）；其余 POST 一律 405
-				if (pathname !== "/api/translate" && pathname !== "/api/context-edit" && pathname !== "/api/crop-entry") {
+				// 只开放翻译、裁剪与对话；其余 POST 一律 405
+				if (pathname !== "/api/translate" && pathname !== "/api/context-edit" && pathname !== "/api/crop-entry" && !CHAT_POSTS.has(pathname)) {
 					sendJson(res, 405, { error: "method not allowed" });
-				return;
+					return;
 				}
 			} else if (req.method !== "GET" && req.method !== "HEAD") {
 				sendJson(res, 405, { error: "method not allowed" });
+				return;
+			}
+
+			if (pathname.startsWith("/api/chat/")) {
+				if (chat) {
+					let chatBody = null;
+					if (req.method === "POST") {
+						try {
+							chatBody = await readBody(req);
+						} catch (err) {
+							sendJson(res, 400, { error: err.message });
+							return;
+						}
+					}
+					if (await chat.handle(req, res, url, chatBody, sendJson)) return;
+				}
+				if (pathname === "/api/chat/capabilities") {
+					sendJson(res, 200, {
+						enabled: false,
+						backend: "pi-rpc",
+						piVersion: null,
+						piBin: null,
+						chatDir: null,
+						profiles: [],
+						defaultProfile: null,
+						features: {},
+						reason: "对话服务未启用（未注入 chatDir/piBin，或 --no-chat）",
+					});
+					return;
+				}
+				sendJson(res, 501, { error: "对话服务未启用" });
 				return;
 			}
 
@@ -657,8 +721,13 @@ export function createTrajectoryServer(options) {
 				server,
 				close: () =>
 					new Promise((done) => {
-						server.closeAllConnections?.();
-						server.close(() => done());
+						// 先杀 chat 子进程，再关 HTTP，避免写入悬挂
+						Promise.resolve(chat?.close())
+							.catch((err) => log(`对话服务关闭失败：${err.message}`))
+							.finally(() => {
+								server.closeAllConnections?.();
+								server.close(() => done());
+							});
 					}),
 			});
 		});
