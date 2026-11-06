@@ -33,7 +33,6 @@ import {
 	latestThreadFile,
 	parseThreadProjection,
 	promoteContext,
-	readContext,
 	readSessionId,
 	readSessionModel,
 	readTurns,
@@ -1117,8 +1116,11 @@ export function createChatHost(deps = {}) {
 
 			// 上下文：解析当前选中集，与上一次 active 比出 added/removed。
 			const context = resolveContextItems(target, contextIds);
-			const previous = readContext(record.metaDir);
-			const previousItems = Array.isArray(previous.items) ? previous.items : [];
+			// delta 基线是「当前线程上一轮的 contextRefs」，不是按轨迹会话共享的 active；
+			// active 只作为 read_trajectory 的本轮快照。
+			const threadTurns = record.piSessionId ? readTurns(record.metaDir, record.piSessionId) : [];
+			const lastThreadTurn = threadTurns.length ? threadTurns[threadTurns.length - 1] : null;
+			const previousItems = Array.isArray(lastThreadTurn?.contextRefs) ? lastThreadTurn.contextRefs : [];
 			const delta = selectionDelta(previousItems, context.items);
 			const changed = delta.added.length > 0 || delta.removed.length > 0;
 			const firstIndex = previousItems.length === 0 && context.items.length > 0;

@@ -286,6 +286,7 @@ async function stopServer(child) {
 		writeSession(path.join(chatSessions, "--c1--"), { id: "cs-2", cwd: chatProject, first: "对话二" });
 		writeSession(path.join(chatSessions, "--c2--"), { id: "cs-3", cwd: otherProject, first: "对话三" });
 		writeSession(path.join(chatSessions, "--c2--"), { id: "cs-4", cwd: otherProject, first: "对话四" });
+		writeSession(path.join(chatSessions, "--c2--"), { id: "cs-5", cwd: otherProject, first: "对话五" });
 
 		// 技能夹具：demo（仅手动）/ big（33k）/ huge（200001）
 		const skillRoot = path.join(tmp, "chat-skill-fixtures");
@@ -704,6 +705,51 @@ async function stopServer(child) {
 				prompt: "x",
 				contextIds: Array.from({ length: 51 }, (_, i) => `id-${i}`),
 			})).status === 400,
+		);
+
+		// ---- P1 回归：delta 基线按当前线程上一轮 contextRefs，不按共享 active ----
+		const lightCs5 = await (await fetch(`${chatBase}api/session?source=pi&id=cs-5`)).json();
+		const cs5Ids = lightCs5.questions.flatMap((q) => (q.events ?? []).map((e) => e.id));
+		const [ctxC, ctxD] = cs5Ids;
+		const traceBeforeA1 = traceLen();
+		const firstA = await readSse(await send("cs-5", "A 首轮", { contextIds: [ctxC, ctxD] }));
+		const threadA = firstA.events.find((event) => event.event === "meta")?.data?.threadId;
+		check(
+			"context P1：A 首轮发完整清单",
+			promptOf(traceSince(traceBeforeA1)).includes(`<trajectory_index source="pi" session="cs-5" count="2">`),
+		);
+		const postB = await postJson(`${chatBase}api/chat/thread`, { source: "pi", session: "cs-5" });
+		const threadB = (await postB.json()).thread?.id;
+		check("context P1：新建线程 B", typeof threadA === "string" && typeof threadB === "string" && threadA !== threadB, JSON.stringify({ threadA, threadB }));
+		const traceBeforeB1 = traceLen();
+		const b1 = await readSse(await send("cs-5", "B 首轮", { threadId: threadB, contextIds: [ctxC, ctxD] }));
+		const b1Meta = b1.events.find((event) => event.event === "meta")?.data ?? {};
+		const b1Prompt = promptOf(traceSince(traceBeforeB1));
+		check(
+			"context P1：B 首轮即使 active 相同也发完整清单、无 delta",
+			b1Prompt.includes(`<trajectory_index source="pi" session="cs-5" count="2">`) && !b1Prompt.includes("<trajectory_index_delta>"),
+			b1Prompt.slice(0, 400),
+		);
+		check("context P1：B 首轮 meta added 全部", b1Meta.context?.added?.length === 2 && b1Meta.context?.removed?.length === 0, JSON.stringify(b1Meta.context));
+
+		const traceBeforeA2 = traceLen();
+		await readSse(await send("cs-5", "A 二轮", { threadId: threadA, contextIds: [ctxC, ctxD] }));
+		const a2Prompt = promptOf(traceSince(traceBeforeA2));
+		check("context P1：A 不改选择再发不带 index", !a2Prompt.includes("<trajectory_index"), a2Prompt.slice(0, 300));
+		const traceBeforeB2 = traceLen();
+		await readSse(await send("cs-5", "B 二轮", { threadId: threadB, contextIds: [ctxC, ctxD] }));
+		const b2Prompt = promptOf(traceSince(traceBeforeB2));
+		check("context P1：B 第二次不带 index", !b2Prompt.includes("<trajectory_index"), b2Prompt.slice(0, 300));
+		const traceBeforeB3 = traceLen();
+		const b3 = await readSse(await send("cs-5", "B 改选", { threadId: threadB, contextIds: [ctxD] }));
+		const b3Meta = b3.events.find((event) => event.event === "meta")?.data ?? {};
+		const b3Prompt = promptOf(traceSince(traceBeforeB3));
+		check(
+			"context P1：B 改选择后带 delta + index",
+			b3Prompt.includes(`<trajectory_index source="pi" session="cs-5" count="1">`) &&
+				b3Prompt.includes(`<trajectory_index_delta>{"added":[],"removed":["${ctxC}"]}</trajectory_index_delta>`) &&
+				b3Meta.context?.removed?.join(",") === ctxC,
+			b3Prompt.slice(0, 500),
 		);
 
 		const toolStream = await readSse(await send("cs-1", "think tool"));
