@@ -47,6 +47,7 @@ import {
 	writeContextNext,
 } from "./chat-session.mjs";
 import { MIN_PI_VERSION_TEXT, parsePiVersion, piRpcArgs, probeFirstPi, probePi, versionAtLeast } from "./pi-binary.mjs";
+import { IDLE_TTL_MS, MAX_CHILDREN, SWEEP_MS, isIdleExpired, selectLruIdle } from "./chat-pool.mjs";
 
 const CAP_TTL_MS = 30_000;
 const STDERR_LIMIT = 8 * 1024;
@@ -61,6 +62,7 @@ const TRAJECTORY_TOOL_PATH = fileURLToPath(new URL("../chat-trajectory-tool.ts",
 const APPROVAL_TOOL_PATH = fileURLToPath(new URL("../chat-approval.ts", import.meta.url));
 
 export { CHAT_PROFILES, DEFAULT_PROFILE };
+export { IDLE_TTL_MS, MAX_CHILDREN, SWEEP_MS };
 
 const SSE_HEADERS = {
 	"content-type": "text/event-stream; charset=utf-8",
@@ -455,6 +457,9 @@ function disabledCapabilities(chatDir, reason) {
  *   findEvent?: (projection: object, id: string) => object | null,
  *   availableSources?: () => Array<{id: string, label: string}>,
  *   ssePingMs?: number,
+ *   chatMaxChildren?: number,
+ *   chatIdleTtlMs?: number,
+ *   chatSweepMs?: number,
  *   log?: (message:string)=>void,
  * }} [deps]
  */
@@ -473,6 +478,13 @@ export function createChatHost(deps = {}) {
 	/** 本会话允许的工具：`${source}:${projectPath}` -> Set<toolName>（内存，重启清空）。 */
 	const approvalAllow = new Map();
 	const ssePingMs = deps.ssePingMs ?? SSE_PING_MS;
+	const maxChildren = Number.isInteger(deps.chatMaxChildren) && deps.chatMaxChildren > 0 ? deps.chatMaxChildren : MAX_CHILDREN;
+	const idleTtlMs = Number.isFinite(deps.chatIdleTtlMs) && deps.chatIdleTtlMs >= 0 ? deps.chatIdleTtlMs : IDLE_TTL_MS;
+	const sweepMs = Number.isFinite(deps.chatSweepMs) && deps.chatSweepMs > 0 ? deps.chatSweepMs : SWEEP_MS;
+	let sweepTimer = null;
+	let closed = false;
+	/** 串行化「容量检查 + spawn」，避免并发 ensureChild 同时看到空位。 */
+	let poolChain = Promise.resolve();
 	let resolvedPi = deps.pi ?? null;
 	let capCache = null;
 	// 模型列表缓存（host 级）：pi 的可用模型由全局 auth/models 配置决定，与轨迹会话无关；
@@ -621,9 +633,27 @@ export function createChatHost(deps = {}) {
 		return { provider: model.provider ?? null, id: model.id ?? null, name: model.name ?? model.id ?? null };
 	}
 
-	/** 设置键使用的项目路径：优先会话自带的 projectPath/cwd，其次是 child 的 cwd 兑底。 */
+	/** 设置键使用的项目路径：优先会话自带的 projectPath/cwd，其次是 child 的 projectPath 兜底。 */
 	function targetProjectPath(target, record) {
-		return target?.session?.projectPath ?? target?.session?.cwd ?? record?.projectPath ?? null;
+		const raw = target?.session?.projectPath ?? target?.session?.cwd ?? record?.projectPath ?? null;
+		return raw ? resolve(raw) : null;
+	}
+
+	/** 发送前占位用的项目 key；没有会话路径时用服务进程 cwd，与 spawn 兜底一致。 */
+	function projectKeyForTarget(target) {
+		return targetProjectPath(target, null) ?? resolve(process.cwd());
+	}
+
+	function projectKeyOf(source, target, record) {
+		return `${source}:${targetProjectPath(target, record) ?? resolve(process.cwd())}`;
+	}
+
+	function settingsKeyOf(settings) {
+		return `${settings.profile}:${settings.projectSkills ? "on" : "off"}`;
+	}
+
+	function touch(record) {
+		if (record && record.state !== "dead") record.lastUsedAt = Date.now();
 	}
 
 	function projectOf(target, record) {
@@ -786,35 +816,100 @@ export function createChatHost(deps = {}) {
 		};
 	}
 
+	function withPoolGate(fn) {
+		const run = poolChain.then(fn, fn);
+		poolChain = run.then(
+			() => undefined,
+			() => undefined,
+		);
+		return run;
+	}
+
+	/** 在 pool gate 内执行：容量满时先淘汰最久未用的 idle child，否则 409。 */
+	async function ensureCapacity(currentKey) {
+		const live = [...children.values()].filter((record) => record.state !== "dead");
+		if (live.length < maxChildren) return;
+		const victim = selectLruIdle(live, currentKey);
+		if (!victim) throw httpError(409, "对话进程已达上限");
+		children.delete(victim.key);
+		victim.state = "dead";
+		log(`[chat] 进程池回收：${victim.key}（空闲最久）`);
+		try {
+			await victim.child.close({ graceMs: 800 });
+		} catch (err) {
+			log(`[chat] 回收 ${victim.key} 失败：${err.message}`);
+		}
+	}
+
+	/** ensureChild 命中后检查设置；设置变了才重启，busy 的留到下一次 ensure。 */
+	async function applySettingsOnHit(record, target) {
+		if (!record || record.state === "dead") return record;
+		let resolvedTarget = target;
+		if (!resolvedTarget) {
+			try {
+				resolvedTarget = resolveTarget(record.source, record.sessionId);
+			} catch {
+				return record;
+			}
+		}
+		const settingsKey = settingsKeyOf(projectOf(resolvedTarget, record));
+		if (record.settingsKey === settingsKey) {
+			record.settingsStale = false;
+			return record;
+		}
+		record.settingsStale = true;
+		if (record.currentTurn || record.state !== "idle") return record;
+		return await restartChildKeepThread(record);
+	}
+
 	async function ensureChild(source, sessionId, options = {}) {
+		if (closed) throw httpError(503, "对话服务已关闭");
 		const key = `${source}:${sessionId}`;
 		// 先看启动中的 promise：否则并发请求会拿到 state="starting"、piSessionId 为 null 的半成品
 		const inflight = starting.get(key);
-		if (inflight) return inflight;
+		if (inflight) {
+			const record = await inflight;
+			touch(record);
+			return record;
+		}
 		const existing = children.get(key);
-		if (existing && existing.state !== "dead") return existing;
-		const promise = spawnChild(key, source, sessionId, options);
+		if (existing && existing.state !== "dead") {
+			touch(existing);
+			return await applySettingsOnHit(existing, options.target);
+		}
+		const promise = withPoolGate(async () => {
+			if (closed) throw httpError(503, "对话服务已关闭");
+			const duplicate = children.get(key);
+			if (duplicate && duplicate.state !== "dead") {
+				touch(duplicate);
+				return duplicate;
+			}
+			await ensureCapacity(key);
+			return await spawnChild(key, source, sessionId, options);
+		});
 		starting.set(key, promise);
 		try {
 			return await promise;
 		} finally {
-			starting.delete(key);
+			if (starting.get(key) === promise) starting.delete(key);
 		}
 	}
 
 	async function spawnChild(key, source, sessionId, options = {}) {
 		const target = options.target ?? resolveTarget(source, sessionId);
 		const pi = await requirePi();
+		if (closed) throw httpError(503, "对话服务已关闭");
 		const dirs = chatSessionDirs(chatDir, source, sessionId);
 		mkdirSync(dirs.sessionsDir, { recursive: true, mode: 0o700 });
 		mkdirSync(dirs.metaDir, { recursive: true, mode: 0o700 });
 
 		const project = projectOf(target, null);
 		const profile = project.profile;
-		const projectPath = targetProjectPath(target, null);
+		// projectPath 是设置/allow-set/项目锁的统一键；cwd 只负责实际 spawn 目录，二者不能混用。
+		const projectPath = projectKeyForTarget(target);
 		const sessionCwd = target.session.projectPath ?? target.session.cwd ?? null;
 		// 历史会话的项目目录可能已被删除；不存在时退回服务进程 cwd，避免 spawn 报误导性的 ENOENT。
-		const cwd = sessionCwd && existsSync(sessionCwd) ? sessionCwd : process.cwd();
+		const cwd = sessionCwd && existsSync(resolve(sessionCwd)) ? resolve(sessionCwd) : resolve(process.cwd());
 		let threadFile = null;
 		if (options.threadId) {
 			if (!isSafeThreadId(options.threadId)) throw httpError(400, "非法线程 id");
@@ -832,11 +927,14 @@ export function createChatHost(deps = {}) {
 			key,
 			source,
 			sessionId,
-			projectPath: cwd,
+			projectPath,
+			cwd,
 			sessionsDir: dirs.sessionsDir,
 			metaDir: dirs.metaDir,
 			profile,
 			projectSkills: project.projectSkills,
+			settingsKey: settingsKeyOf(project),
+			settingsStale: false,
 			trajectoryFile: target.session.file ?? null,
 			child: null,
 			state: "starting",
@@ -848,7 +946,7 @@ export function createChatHost(deps = {}) {
 		const child = new RpcChild({
 			pi,
 			args,
-			cwd: record.projectPath,
+			cwd: record.cwd,
 			env: {
 				...env,
 				PI_CHAT_CONTEXT_FILE: join(dirs.metaDir, "context.active.json"),
@@ -890,7 +988,20 @@ export function createChatHost(deps = {}) {
 	/** 关掉现有 child，下次 ensureChild 用新的 spawn 参数（--session-id）重建。 */
 	async function restartChild(record) {
 		if (record.currentTurn) throw httpError(409, "回复中，先停止再切换线程");
-		if (children.get(record.key) === record) children.delete(record.key);
+		// 同 key 的首次 spawn 还没完成：等它落定，避免把 starting 记录和它的 promise 撕开。
+		if (record.state === "starting") {
+			const inflight = starting.get(record.key);
+			if (inflight) {
+				try {
+					await inflight;
+				} catch {
+					/* spawn 失败时下面会按不在池中处理 */
+				}
+			}
+		}
+		if (record.currentTurn) throw httpError(409, "回复中，先停止再切换线程");
+		if (children.get(record.key) !== record) return;
+		children.delete(record.key);
 		record.state = "dead";
 		await record.child.close({ graceMs: 800 });
 	}
@@ -913,8 +1024,26 @@ export function createChatHost(deps = {}) {
 		const state = await record.child.send({ type: "get_state" }, { timeoutMs: 15_000 });
 		record.piSessionId = state.data?.sessionId ?? record.piSessionId;
 		record.sessionFile = state.data?.sessionFile ?? null;
-		record.lastUsedAt = Date.now();
+		touch(record);
 		return state;
+	}
+
+	/** 回收超过空闲 TTL 的 child；定时器与服务关闭都会调用。 */
+	async function sweepIdle() {
+		if (closed) return;
+		const now = Date.now();
+		const expired = [...children.values()].filter((record) => isIdleExpired(record, now, idleTtlMs));
+		for (const record of expired) {
+			if (children.get(record.key) !== record) continue;
+			children.delete(record.key);
+			record.state = "dead";
+			log(`[chat] 进程池空闲回收：${record.key}`);
+			try {
+				await record.child.close({ graceMs: 500 });
+			} catch (err) {
+				log(`[chat] 空闲回收 ${record.key} 失败：${err.message}`);
+			}
+		}
 	}
 
 	async function handleGetSettings(url, res, sendJson) {
@@ -922,8 +1051,9 @@ export function createChatHost(deps = {}) {
 		if (!cap.enabled) throw httpError(501, cap.reason ?? "对话未启用");
 		const target = resolveTarget(url.searchParams.get("source"), url.searchParams.get("session"));
 		const record = children.get(`${target.source}:${target.sessionId}`) ?? null;
+		touch(record);
 		const project = projectOf(target, record);
-		const allowPath = record?.projectPath ?? targetProjectPath(target, record);
+		const allowPath = targetProjectPath(target, record) ?? resolve(process.cwd());
 		sendJson(res, 200, {
 			profile: project.profile,
 			projectSkills: project.projectSkills,
@@ -956,13 +1086,30 @@ export function createChatHost(deps = {}) {
 		const key = `${target.source}:${target.sessionId}`;
 		const record = children.get(key) ?? null;
 		if (record?.currentTurn) throw httpError(409, "回复中，先停止再修改设置");
+		const projectPath = targetProjectPath(target, record) ?? resolve(process.cwd());
 		const next = updateProjectSettings(settingsPath, {
 			source: target.source,
-			projectPath: targetProjectPath(target, record),
+			projectPath,
 			patch,
 		});
+		// 同项目所有 idle child 立即按新参数重启；busy/starting 的标记 stale，
+		// 等当前 turn 结束后的下一次 ensureChild 再重启，避免杀掉正在生成的内容。
+		const sameProject = [...children.values()].filter(
+			(item) => item.source === target.source && item.projectPath === projectPath && item.state !== "dead",
+		);
 		skillsCache.delete(key);
-		if (record) await restartChild(record);
+		for (const item of sameProject) {
+			skillsCache.delete(item.key);
+			if (item.currentTurn || item.state !== "idle") {
+				item.settingsStale = true;
+				continue;
+			}
+			try {
+				await restartChildKeepThread(item);
+			} catch (err) {
+				log(`[chat] 设置变更重启 ${item.key} 失败：${err.message}`);
+			}
+		}
 		sendJson(res, 200, { ok: true, profile: next.profile, projectSkills: next.projectSkills, restart: true });
 	}
 
@@ -982,6 +1129,7 @@ export function createChatHost(deps = {}) {
 		if (!record || record.state === "dead") {
 			record = await ensureChild(target.source, target.sessionId, { target });
 		}
+		touch(record);
 		let project = projectOf(target, record);
 
 		if (!refresh && record.projectSkills !== project.projectSkills && !record.currentTurn) {
@@ -989,6 +1137,7 @@ export function createChatHost(deps = {}) {
 			record = await restartChildKeepThread(record);
 			project = projectOf(target, record);
 			skillsCache.delete(key);
+			touch(record);
 		}
 
 		const cached = skillsCache.get(key);
@@ -1181,22 +1330,13 @@ export function createChatHost(deps = {}) {
 		const desiredThreadId =
 			requestedThread ?? readSessionId(latestThreadFile(dirs.sessionsDir)?.file ?? "") ?? null;
 
-		let record = await ensureChild(target.source, target.sessionId, { target, threadId: desiredThreadId ?? undefined });
-
-		// 指定线程但文件不存在：已有 child 停在其他 session 时无法 switch，重启后用 --session-id 新建。
-		if (desiredThreadId && record.piSessionId !== desiredThreadId && !findThreadFile(dirs.sessionsDir, desiredThreadId)) {
-			await restartChild(record);
-			record = await ensureChild(target.source, target.sessionId, { target, threadId: desiredThreadId });
-		}
-
-		const projectKey = `${target.source}:${record.projectPath ?? ""}`;
-		// 同步占锁：检查与占位之间不能有 await，否则并发请求会同时通过。
-		if (record.currentTurn) throw httpError(409, "该对话正在生成回复，先停止再发送");
+		// 先占项目锁，再 ensureChild：否则容量淘汰/spawn 可能先发生，第二个同项目请求才拿到 409。
+		// 检查与占位之间不能有 await，否则并发请求会同时通过。
+		const projectKey = projectKeyOf(target.source, target, null);
 		if (projectTurns.has(projectKey)) throw httpError(409, "本项目还有对话在生成，请稍后再试");
-
-		/** @type {{record:object, projectKey:string, aborted:boolean, finished:boolean, ping:any}} */
+		/** @type {{record:object|null, projectKey:string, res:any, approvals:Map<string, object>, aborted:boolean, finished:boolean, ping:any}} */
 		const turn = {
-			record,
+			record: null,
 			projectKey,
 			res,
 			approvals: new Map(),
@@ -1204,13 +1344,25 @@ export function createChatHost(deps = {}) {
 			finished: false,
 			ping: null,
 		};
-		record.currentTurn = turn;
 		projectTurns.set(projectKey, turn);
 
+		let record = null;
 		let headersSent = false;
 		let offEvent = () => {};
 		let onClose = () => {};
 		try {
+			record = await ensureChild(target.source, target.sessionId, { target, threadId: desiredThreadId ?? undefined });
+			turn.record = record;
+
+			// 指定线程但文件不存在：已有 child 停在其他 session 时无法 switch，重启后用 --session-id 新建。
+			if (desiredThreadId && record.piSessionId !== desiredThreadId && !findThreadFile(dirs.sessionsDir, desiredThreadId)) {
+				await restartChild(record);
+				record = await ensureChild(target.source, target.sessionId, { target, threadId: desiredThreadId });
+				turn.record = record;
+			}
+			if (record.currentTurn) throw httpError(409, "该对话正在生成回复，先停止再发送");
+			record.currentTurn = turn;
+			touch(record);
 			// 线程已存在但与 child 当前 session 不同：先切会话（此时已占锁，不会与别的 turn 交叉）。
 			if (desiredThreadId && record.piSessionId !== desiredThreadId) {
 				const file = findThreadFile(dirs.sessionsDir, desiredThreadId);
@@ -1390,7 +1542,8 @@ export function createChatHost(deps = {}) {
 			if (turn.ping) clearInterval(turn.ping);
 			offEvent();
 			res.off("close", onClose);
-			if (record.currentTurn === turn) record.currentTurn = null;
+			if (record?.currentTurn === turn) record.currentTurn = null;
+			touch(record);
 			if (projectTurns.get(projectKey) === turn) projectTurns.delete(projectKey);
 			// meta 之前失败走 JSON（外层 sendJson），这里不能提前 end 响应
 			if (headersSent && !res.writableEnded) {
@@ -1412,6 +1565,7 @@ export function createChatHost(deps = {}) {
 		}
 		const target = resolveTarget(payload.source, payload.session);
 		const record = children.get(`${target.source}:${target.sessionId}`) ?? null;
+		touch(record);
 		const turn = record?.currentTurn ?? null;
 		if (!turn) {
 			sendJson(res, 200, { ok: true, stopped: false });
@@ -1445,6 +1599,7 @@ export function createChatHost(deps = {}) {
 
 		const record = children.get(`${target.source}:${target.sessionId}`) ?? null;
 		const turn = record?.currentTurn ?? null;
+		touch(record);
 		if (!record || !turn) {
 			sendJson(res, 200, { ok: false });
 			return;
@@ -1477,6 +1632,7 @@ export function createChatHost(deps = {}) {
 
 		const key = `${target.source}:${target.sessionId}`;
 		const record = children.get(key) ?? null;
+		touch(record);
 		const fileRecord = requested ? findThreadFile(dirs.sessionsDir, requested) : latestThreadFile(dirs.sessionsDir);
 		let threadId = requested ?? null;
 		if (!requested && fileRecord) threadId = readSessionId(fileRecord.file) ?? null;
@@ -1511,12 +1667,13 @@ export function createChatHost(deps = {}) {
 		const target = resolveTarget(payload.source, payload.session);
 		const record = await ensureChild(target.source, target.sessionId, { target });
 		if (record.currentTurn) throw httpError(409, "回复中，先停止再新建对话");
+		touch(record);
 		const created = await record.child.send({ type: "new_session" }, { timeoutMs: 15_000 });
 		if (created.data?.cancelled) throw httpError(409, "新建会话被取消");
 		const state = await record.child.send({ type: "get_state" }, { timeoutMs: 15_000 });
 		record.piSessionId = state.data?.sessionId ?? record.piSessionId;
 		record.sessionFile = state.data?.sessionFile ?? null;
-		record.lastUsedAt = Date.now();
+		touch(record);
 		sendJson(res, 200, {
 			thread: {
 				id: record.piSessionId,
@@ -1556,6 +1713,7 @@ export function createChatHost(deps = {}) {
 
 		const dirs = chatSessionDirs(chatDir, target.source, target.sessionId);
 		const record = await ensureChild(target.source, target.sessionId, { target });
+		touch(record);
 		const refresh = url.searchParams.get("refresh") === "1";
 		let error = null;
 
@@ -1625,6 +1783,7 @@ export function createChatHost(deps = {}) {
 			target,
 			threadId: threadFile ? requestedThread : undefined,
 		});
+		touch(record);
 		if (record.currentTurn) throw httpError(409, "回复中，先停止再切换模型");
 		if (requestedThread !== null && record.piSessionId !== requestedThread) {
 			await switchThread(record, threadFile);
@@ -1636,7 +1795,7 @@ export function createChatHost(deps = {}) {
 		if (!matched) throw httpError(400, `模型不存在：${provider}/${id}`);
 
 		const response = await record.child.send({ type: "set_model", provider, modelId: id }, { timeoutMs: 20_000 });
-		record.lastUsedAt = Date.now();
+		touch(record);
 		sendJson(res, 200, {
 			ok: true,
 			threadId: record.piSessionId,
@@ -1743,6 +1902,12 @@ export function createChatHost(deps = {}) {
 	}
 
 	async function close() {
+		if (closed) return;
+		closed = true;
+		if (sweepTimer) {
+			clearInterval(sweepTimer);
+			sweepTimer = null;
+		}
 		// 先拒绝待审批，再 abort 活动 turn，最后杀进程。
 		for (const record of children.values()) {
 			if (record.currentTurn) rejectApprovals(record.currentTurn);
@@ -1755,8 +1920,14 @@ export function createChatHost(deps = {}) {
 		await Promise.allSettled([...children.values()].map((record) => record.child?.close()));
 		children.clear();
 		projectTurns.clear();
+		starting.clear();
 		approvalAllow.clear();
 	}
+
+	sweepTimer = setInterval(() => {
+		sweepIdle().catch((err) => log(`[chat] 空闲扫描失败：${err.message}`));
+	}, sweepMs);
+	sweepTimer.unref?.();
 
 	return {
 		chatDir,
@@ -1766,5 +1937,7 @@ export function createChatHost(deps = {}) {
 		// 供后续阶段与测试使用
 		children,
 		RpcChild,
+		sweepIdle,
+		getSweepTimer: () => sweepTimer,
 	};
 }

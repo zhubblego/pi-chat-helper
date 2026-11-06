@@ -897,8 +897,8 @@ async function stopServer(child) {
 		check("approval：自动确认写 child true", traceNow().slice(traceBeforeAuto).includes(":true"));
 
 		const profileSet = (profile) => postJson(`${chatBase}api/chat/settings`, { source: "pi", session: "cs-3", profile });
-		check("profile：切 full 返回 full", (await (await profileSet("full")).json()).profile === "full");
 		let lenProfile = traceNow().length;
+		check("profile：切 full 返回 full", (await (await profileSet("full")).json()).profile === "full");
 		await readSse(await send("cs-3", "hi"));
 		const fullTrace = traceNow().slice(lenProfile);
 		check(
@@ -908,8 +908,8 @@ async function stopServer(child) {
 		);
 		check("profile：GET settings full", (await (await fetch(`${chatBase}api/chat/settings?source=pi&session=cs-3`)).json()).profile === "full");
 
-		await profileSet("read-only");
 		lenProfile = traceNow().length;
+		await profileSet("read-only");
 		await readSse(await send("cs-3", "hi"));
 		const readOnlyTrace = traceNow().slice(lenProfile);
 		check(
@@ -918,8 +918,8 @@ async function stopServer(child) {
 			readOnlyTrace.slice(-700),
 		);
 
-		await profileSet("no-tools");
 		lenProfile = traceNow().length;
+		await profileSet("no-tools");
 		await readSse(await send("cs-3", "hi"));
 		const noToolsTrace = traceNow().slice(lenProfile);
 		check(
@@ -940,6 +940,221 @@ async function stopServer(child) {
 		await closeStreamPromise;
 		await sleep(200);
 		check("approval：close 拒绝待审批", Boolean(closeApproval) && traceNow().includes(`ui:${closeApproval.id}:false`), traceNow().slice(-600));
+
+		// ---- T8：进程池 / LRU / TTL / 项目串行 / 跨会话设置 ----
+		const t8Sessions = path.join(tmp, "t8-sessions");
+		const t8ProjectA = path.join(tmp, "t8-project-a");
+		const t8ProjectB = path.join(tmp, "t8-project-b");
+		fs.mkdirSync(t8ProjectA, { recursive: true });
+		fs.mkdirSync(t8ProjectB, { recursive: true });
+		for (const dir of [path.join(t8Sessions, "--a--"), path.join(t8Sessions, "--b--")]) fs.mkdirSync(dir, { recursive: true });
+		writeSession(path.join(t8Sessions, "--a--"), { id: "t8-a", cwd: t8ProjectA, first: "T8 A" });
+		writeSession(path.join(t8Sessions, "--a--"), { id: "t8-b", cwd: t8ProjectA, first: "T8 B" });
+		writeSession(path.join(t8Sessions, "--a--"), { id: "t8-d", cwd: t8ProjectA, first: "T8 D" });
+		writeSession(path.join(t8Sessions, "--b--"), { id: "t8-c", cwd: t8ProjectB, first: "T8 C" });
+		const t8ChatDir = path.join(tmp, "t8-chat-dir");
+		const t8Server = await createTrajectoryServer({
+			scope: "all",
+			webDir: WEB,
+			sessionsRoot: t8Sessions,
+			codexRoot: path.join(tmp, "no-codex"),
+			port: 0,
+			chat: true,
+			chatDir: t8ChatDir,
+			piBin: { cmd: process.execPath, argsPrefix: [FAKE], mode: false, display: "fake-pi" },
+			chatPingMs: 25,
+			chatMaxChildren: 2,
+			chatIdleTtlMs: 1000,
+			chatSweepMs: 20,
+		});
+		const t8Base = t8Server.url;
+		const t8Models = (session) => fetch(`${t8Base}api/chat/models?source=pi&session=${session}`);
+		const t8Send = (session, prompt) =>
+			fetch(`${t8Base}api/chat/send`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ source: "pi", session, prompt }),
+			});
+		const t8Post = (url, body) =>
+			fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+		const t8SettingsPost = (session, body) => t8Post(`${t8Base}api/chat/settings`, { source: "pi", session, ...body });
+		const t8SpawnLines = (id) => {
+			const lines = traceNow().split("\n");
+			const out = [];
+			for (let i = 0; i < lines.length; i++) {
+				if (lines[i].startsWith(`env:pi|${id}|`)) out.push(lines[i - 1] ?? "");
+			}
+			return out;
+		};
+		const t8SpawnCount = (id) => t8SpawnLines(id).length;
+		const t8StartSlow = async (session) => {
+			let release = () => {};
+			const metaSeen = new Promise((resolve) => {
+				release = resolve;
+			});
+			const response = await t8Send(session, "slow");
+			if (response.status !== 200) throw new Error(`slow ${session} HTTP ${response.status}`);
+			const read = readSse(response, (event) => {
+				if (event.event === "meta") release();
+			});
+			await metaSeen;
+			return { read };
+		};
+		const t8Stop = async (session) => {
+			await t8Post(`${t8Base}api/chat/stop`, { source: "pi", session });
+		};
+
+		// LRU：A、B idle；touch A 后建 C，应淘汰 B。
+		check("pool：A 启动", (await t8Models("t8-a")).status === 200 && t8SpawnCount("t8-a") === 1);
+		check("pool：B 启动", (await t8Models("t8-b")).status === 200 && t8SpawnCount("t8-b") === 1);
+		await t8Models("t8-a");
+		check("pool：C 启动（容量 2 时淘汰 idle）", (await t8Models("t8-c")).status === 200 && t8SpawnCount("t8-c") === 1);
+		const bBeforeLru = t8SpawnCount("t8-b");
+		await t8Models("t8-b");
+		check("pool：touch A 后 C 淘汰 B（再访问 B 会重新 spawn）", t8SpawnCount("t8-b") === bBeforeLru + 1, `b=${bBeforeLru}->${t8SpawnCount("t8-b")}`);
+
+		// 两个 busy（不同项目）时，第三个 child 409。
+		const t8SlowA = (await t8StartSlow("t8-a")).read;
+		const t8SlowC = (await t8StartSlow("t8-c")).read;
+		const busyThird = await t8Models("t8-d");
+		check("pool：两个 busy 时第三个 409", busyThird.status === 409, String(busyThird.status));
+		await t8Stop("t8-a");
+		await t8SlowA;
+		await t8Stop("t8-c");
+		await t8SlowC;
+
+		// 同项目串行：A 的 turn 占用项目锁，D 在 ensureChild 之前就被拒绝，不能先 spawn/淘汰。
+		const t8SlowA2 = (await t8StartSlow("t8-a")).read;
+		const dBefore = t8SpawnCount("t8-d");
+		const dConflict = await t8Send("t8-d", "hi");
+		await dConflict.text();
+		check(
+			"pool：同项目串行 409 且未 spawn D",
+			dConflict.status === 409 && t8SpawnCount("t8-d") === dBefore,
+			`${dConflict.status} d=${dBefore}->${t8SpawnCount("t8-d")}`,
+		);
+		await t8Stop("t8-a");
+		await t8SlowA2;
+
+		// TTL 到期后 sweep，再次访问 B 必须重新 spawn。
+		await t8Models("t8-b");
+		const bBeforeSweep = t8SpawnCount("t8-b");
+		await sleep(1200);
+		await t8Models("t8-b");
+		check("pool：TTL 到期 sweep 后 child 消失", t8SpawnCount("t8-b") === bBeforeSweep + 1, `b=${bBeforeSweep}->${t8SpawnCount("t8-b")}`);
+
+		// 跨会话设置：同项目 idle child 立即按新参数重启。
+		await t8Models("t8-a");
+		await t8Models("t8-b");
+		const aBeforeFull = t8SpawnCount("t8-a");
+		const bBeforeFull = t8SpawnCount("t8-b");
+		const fullSet = await t8SettingsPost("t8-a", { profile: "full" });
+		const fullBody = await fullSet.json();
+		const aFullSpawn = t8SpawnLines("t8-a").at(-1) ?? "";
+		const bFullSpawn = t8SpawnLines("t8-b").at(-1) ?? "";
+		check(
+			"pool：settings 改 full 后同项目 idle A/B 都重启且带 approval",
+			fullSet.status === 200 &&
+				fullBody.profile === "full" &&
+				t8SpawnCount("t8-a") === aBeforeFull + 1 &&
+				t8SpawnCount("t8-b") === bBeforeFull + 1 &&
+				aFullSpawn.includes("chat-approval.ts") &&
+				bFullSpawn.includes("chat-approval.ts") &&
+				aFullSpawn.includes("--tools read,write,edit,bash,read_trajectory"),
+			JSON.stringify({ fullBody, aFullSpawn: aFullSpawn.slice(-300), bFullSpawn: bFullSpawn.slice(-300) }),
+		);
+
+		// busy 的同项目 child 不杀，标记 stale；下一次 ensureChild 用 read-only 重启。
+		const aBeforeBusy = t8SpawnCount("t8-a");
+		const bBeforeBusy = t8SpawnCount("t8-b");
+		const t8SlowFull = (await t8StartSlow("t8-a")).read;
+		const readOnlySet = await t8SettingsPost("t8-b", { profile: "read-only" });
+		const readOnlyBody = await readOnlySet.json();
+		const bReadSpawn = t8SpawnLines("t8-b").at(-1) ?? "";
+		check(
+			"pool：busy child 设置变更不杀，idle B 先重启",
+			readOnlySet.status === 200 &&
+				readOnlyBody.profile === "read-only" &&
+				t8SpawnCount("t8-a") === aBeforeBusy &&
+				t8SpawnCount("t8-b") === bBeforeBusy + 1 &&
+				bReadSpawn.includes("--tools read,grep,ls,read_trajectory") &&
+				!bReadSpawn.includes("chat-approval.ts"),
+			JSON.stringify({ readOnlyBody, bReadSpawn: bReadSpawn.slice(-300), a: t8SpawnCount("t8-a") }),
+		);
+		await t8Stop("t8-a");
+		await t8SlowFull;
+		const aBeforeStale = t8SpawnCount("t8-a");
+		await t8Models("t8-a");
+		const aStaleSpawn = t8SpawnLines("t8-a").at(-1) ?? "";
+		check(
+			"pool：busy stale 在下次 ensureChild 用 read-only 重启",
+			t8SpawnCount("t8-a") === aBeforeStale + 1 &&
+				aStaleSpawn.includes("--tools read,grep,ls,read_trajectory") &&
+				!aStaleSpawn.includes("chat-approval.ts"),
+			JSON.stringify({ a: `${aBeforeStale}->${t8SpawnCount("t8-a")}`, aStaleSpawn: aStaleSpawn.slice(-300) }),
+		);
+		await t8Server.close();
+
+		// 并发 ensure：fake child 延迟 get_state，确认 gate 下峰值也不超过 2。
+		process.env.FAKE_PI_STATE_DELAY_MS = "80";
+		const t8bSessions = path.join(tmp, "t8b-sessions");
+		const t8bProject = path.join(tmp, "t8b-project");
+		const t8bChatDir = path.join(tmp, "t8b-chat-dir");
+		fs.mkdirSync(t8bProject, { recursive: true });
+		fs.mkdirSync(path.join(t8bSessions, "--x--"), { recursive: true });
+		for (const id of ["t8x-a", "t8x-b", "t8x-c"]) {
+			writeSession(path.join(t8bSessions, "--x--"), { id, cwd: t8bProject, first: `T8X ${id}` });
+		}
+		const t8bServer = await createTrajectoryServer({
+			scope: "all",
+			webDir: WEB,
+			sessionsRoot: t8bSessions,
+			codexRoot: path.join(tmp, "no-codex"),
+			port: 0,
+			chat: true,
+			chatDir: t8bChatDir,
+			piBin: { cmd: process.execPath, argsPrefix: [FAKE], mode: false, display: "fake-pi" },
+			chatMaxChildren: 2,
+			chatIdleTtlMs: 60_000,
+			chatSweepMs: 1000,
+		});
+		const t8bBase = t8bServer.url;
+		const t8bCount = () => {
+			try {
+				return execFileSync("pgrep", ["-f", t8bChatDir], { encoding: "utf8" })
+					.split("\n")
+					.filter(Boolean).length;
+			} catch {
+				return 0;
+			}
+		};
+		let t8bSettled = false;
+		const t8bAll = Promise.all(
+			["t8x-a", "t8x-b", "t8x-c"].map((session) =>
+				fetch(`${t8bBase}api/chat/models?source=pi&session=${session}`).then(async (response) => ({
+					status: response.status,
+					body: await response.text(),
+				})),
+			),
+		).finally(() => {
+			t8bSettled = true;
+		});
+		let t8bPeak = 0;
+		while (!t8bSettled) {
+			t8bPeak = Math.max(t8bPeak, t8bCount());
+			await sleep(10);
+		}
+		const t8bResults = await t8bAll;
+		check(
+			"pool：并发 ensure 峰值不超过 2",
+			t8bPeak <= 2 && t8bResults.every((result) => result.status === 200),
+			JSON.stringify({ peak: t8bPeak, statuses: t8bResults.map((result) => result.status), bodies: t8bResults.map((result) => result.body.slice(0, 300)) }),
+		);
+		await t8bServer.close();
+		delete process.env.FAKE_PI_STATE_DELAY_MS;
+		await sleep(100);
+		check("pool：并发测试 close 后无 child", t8bCount() === 0, String(t8bCount()));
+
 		delete process.env.FAKE_PI_TRACE;
 		delete process.env.FAKE_PI_MODELS_FAIL;
 		delete process.env.FAKE_PI_COMMANDS_FAIL;

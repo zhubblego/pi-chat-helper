@@ -142,6 +142,9 @@ const MAX_CACHED_PROJECTIONS = 4;
  *   hostEntry?: string,
  *   hostExecPath?: string,
  *   chatPingMs?: number,
+ *   chatMaxChildren?: number,
+ *   chatIdleTtlMs?: number,
+ *   chatSweepMs?: number,
  * }} options
  * @returns {Promise<{port:number, host:string, url:string, server:import("node:http").Server, close:() => Promise<void>}>}
  */
@@ -322,6 +325,9 @@ export function createTrajectoryServer(options) {
 				getProjection: (session, sourceId) => getProjection(session, sourceId),
 				findEvent,
 				ssePingMs: options.chatPingMs,
+				chatMaxChildren: options.chatMaxChildren,
+				chatIdleTtlMs: options.chatIdleTtlMs,
+				chatSweepMs: options.chatSweepMs,
 				log,
 			})
 		: null;

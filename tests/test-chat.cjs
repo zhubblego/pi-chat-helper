@@ -148,6 +148,7 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 	const chatSession = await import(urlOf("trajectory-web/server/chat-session.mjs"));
 	const contextRender = await import(urlOf("trajectory-web/server/context-render.mjs"));
 	const approval = await import(urlOf("trajectory-web/server/approval.mjs"));
+	const chatPool = await import(urlOf("trajectory-web/server/chat-pool.mjs"));
 	const chatSettings = await import(urlOf("trajectory-web/server/chat-settings.mjs"));
 	const { buildProjection } = await import(urlOf("trajectory-web/server/session.mjs"));
 
@@ -440,6 +441,25 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 			approval.approvalTimeoutSeconds(120) === 1,
 	);
 
+	// ---- 进程池纯函数 ----
+	check("pool：默认上限 2 / TTL 15min / 扫描 60s", chatPool.MAX_CHILDREN === 2 && chatPool.IDLE_TTL_MS === 900000 && chatPool.SWEEP_MS === 60000);
+	const poolRecords = [
+		{ key: "a", state: "idle", currentTurn: null, lastUsedAt: 100 },
+		{ key: "b", state: "idle", currentTurn: null, lastUsedAt: 300 },
+		{ key: "busy", state: "idle", currentTurn: {}, lastUsedAt: 1 },
+		{ key: "starting", state: "starting", currentTurn: null, lastUsedAt: 0 },
+	];
+	check("pool：LRU 选最久未用的 idle", chatPool.selectLruIdle(poolRecords, "new")?.key === "a");
+	check("pool：LRU 排除当前 key", chatPool.selectLruIdle(poolRecords, "a")?.key === "b");
+	check("pool：LRU 排除 busy/starting", chatPool.selectLruIdle([poolRecords[2], poolRecords[3]], "new") === null);
+	check(
+		"pool：TTL 严格大于且排除 busy",
+		chatPool.isIdleExpired({ state: "idle", currentTurn: null, lastUsedAt: 0 }, 100, 100) === false &&
+			chatPool.isIdleExpired({ state: "idle", currentTurn: null, lastUsedAt: 0 }, 101, 100) === true &&
+			chatPool.isIdleExpired({ state: "idle", currentTurn: {}, lastUsedAt: 0 }, 999, 100) === false &&
+			chatPool.isIdleExpired({ state: "starting", currentTurn: null, lastUsedAt: 0 }, 999, 100) === false,
+	);
+
 	const projFile = path.join(tmp, "proj-chat", "2026-01-01T00-00-00-000Z_thread-a.jsonl");
 	writePiSessionFile(projFile, {
 		id: "thread-a",
@@ -517,7 +537,9 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 	const calls = [];
 	await host.handle({ method: "GET" }, {}, new URL("http://x/api/chat/capabilities"), null, (_res, status, body) => calls.push({ status, body }));
 	check("capabilities：handle 返回 200", calls[0]?.status === 200 && calls[0].body.enabled === true);
+	check("pool：定时器已启动", Boolean(host.getSweepTimer()));
 	await host.close();
+	check("pool：close 清定时器", host.getSweepTimer() === null);
 
 	// ---- 与 HTTP 服务集成 ----
 	const { createTrajectoryServer } = await import(urlOf("trajectory-web/server/app.mjs"));

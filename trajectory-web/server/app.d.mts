@@ -37,6 +37,12 @@ export interface TrajectoryServerOptions {
 	hostExecPath?: string;
 	/** SSE 保活间隔（毫秒）；默认 15000，仅测试注入小值。 */
 	chatPingMs?: number;
+	/** 对话 child 全局上限；默认 2。 */
+	chatMaxChildren?: number;
+	/** 空闲 child 回收阈值（毫秒）；默认 900000（15 分钟）。 */
+	chatIdleTtlMs?: number;
+	/** 空闲扫描间隔（毫秒）；默认 60000（60 秒）。 */
+	chatSweepMs?: number;
 }
 
 export interface TrajectoryServerHandle {

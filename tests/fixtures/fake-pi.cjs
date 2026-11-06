@@ -267,9 +267,12 @@ rl.on("line", (line) => {
 		return;
 	}
 	switch (command.type) {
-		case "get_state":
-			reply(command, state());
+		case "get_state": {
+			const delay = Number(process.env.FAKE_PI_STATE_DELAY_MS ?? 0);
+			if (delay > 0) setTimeout(() => reply(command, state()), delay);
+			else reply(command, state());
 			break;
+		}
 		case "get_available_models":
 			trace("get_available_models");
 			if (process.env.FAKE_PI_MODELS_FAIL && fs.existsSync(process.env.FAKE_PI_MODELS_FAIL)) {

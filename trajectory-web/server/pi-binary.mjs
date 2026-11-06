@@ -179,7 +179,7 @@ export function probePi(candidate, options = {}) {
 		child.once("error", (err) => {
 			finish({ ok: false, error: err.message });
 		});
-		child.once("exit", (code, signal) => {
+		child.once("close", (code, signal) => {
 			const version = parsePiVersion(stdout) ?? parsePiVersion(stderr);
 			if (code === 0 && version) {
 				finish({ ok: true, version, raw: stdout.trim() || version.raw, stderr: stderr.trim() });
