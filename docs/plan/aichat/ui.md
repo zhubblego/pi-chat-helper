@@ -35,7 +35,7 @@
 ├── .chat-composer
 │   ├── #composer-resize
 │   ├── #chat-context          上下文 chips + 计数 + 清空 + 「以此新开」
-│   ├── #chat-palette          斜杠面板（绝对定位在输入卡上方）
+│   ├── #chat-palette          斜杠面板（顶部独立搜索框 + 列表，绝对定位在输入卡上方）
 │   └── .chat-card
 │       ├── #chat-skill        技能 chip
 │       ├── #chat-input
@@ -106,29 +106,34 @@
 ```mermaid
 stateDiagram-v2
     [*] --> Closed
-    Closed --> Command: 输入 "/" 且无空格
-    Command --> Model: 选择「模型」或输入 /model + Enter
-    Command --> Skill: 选择「技能」或输入 /skill + Enter
-    Model --> Closed: 选中模型 / Esc
-    Skill --> Closed: 选中技能 / Esc
+    Closed --> Command: textarea 输入 "/"（无空格）
+    Command --> Model: 选择「模型」或在搜索框输入 model + Enter
+    Command --> Skill: 选择「技能」或在搜索框输入 skill + Enter
+    Model --> Closed: 选中模型
+    Skill --> Closed: 选中技能
     Model --> Command: Esc（回到命令层）
     Skill --> Command: Esc（回到命令层）
-    Command --> Closed: Esc / 发送 / 失焦
+    Command --> Closed: Esc / 点击面板外 / 搜索框失焦
 ```
 
-- 触发条件：输入框 trim 后匹配 `^/[A-Za-z]*$`（`/` 开头、没有空格）。
+- 触发条件：textarea 输入值 trim 后匹配 `^/[A-Za-z]*$`（`/` 开头、没有空格）。这只是**触发器**：textarea 的草稿不被读取为搜索词，也不被清空；`/model`、`/skill` 等文本也不会自动过滤，过滤词在搜索框里输入。
 - `/skill:foo args` 有冒号/空格，不触发面板，直接按普通输入发送，由 pi 原生展开。
-- 面板打开时 textarea 同时充当搜索框：
-  - Command 层：过滤 `model`、`skill`；
-  - Model/Skill 层：过滤对应列表。
-- 切层清空输入并保持 textarea 焦点；Esc 回上一层时恢复进入面板前的草稿。
-- 定位：`.chat-composer` 内 `position:absolute; left:10px; right:10px; bottom:calc(100% + 6px)`；`max-height:min(280px,50vh)`，内部滚动。
+- 面板顶部是独立的搜索输入 `#chat-palette-search`（`.chat-palette-head` 内的 `type=search`），列表项在下方 `#chat-palette-list`。
+  - 打开面板时搜索框清空并立即 focus；不再从 textarea 读取查询，也不需要剥前导 `/`。
+  - Command 层过滤 `model`、`skill`；Model/Skill 层过滤对应列表。
+  - 切层清空搜索框并保持搜索框焦点。
+  - 选择项后关闭面板，焦点回 textarea；model/skill 选择清空触发用的 `/` 草稿。
+  - Esc：子层回到 Command 层并清空搜索；Command 层关闭面板，焦点回 textarea 并恢复进入面板前的草稿。
+  - 点击面板外或点击 textarea（搜索框失焦）关闭面板，不抢回焦点；textarea 保留/恢复草稿。
+- 定位：`.chat-composer` 内 `position:absolute; left:10px; right:10px; bottom:calc(100% + 6px)`；`max-height:min(280px,50vh)`，搜索行固定，列表内部滚动。
 - 层级：高于消息流，低于对话头；点击面板外关闭。
 
 ### 3.2 外观
 
 ```text
 ┌─────────────────────────────────────┐
+│ 搜索模型…                          │  ← #chat-palette-search（独立输入，顶部固定）
+├─────────────────────────────────────┤
 │ 模型                                │  ← 分组标题（按 provider 分组）
 │  ✓ GLM-5.3        litellm           │
 │    DeepSeek V4    litellm  推理 1M  │
@@ -140,22 +145,24 @@ stateDiagram-v2
 └─────────────────────────────────────┘
 ```
 
+- 顶部搜索行固定：`.chat-palette-head` 包 `#chat-palette-search`；下方 `#chat-palette-list` 单独滚动。
 - 每行：主文本 + 次文本；当前项左侧 `✓`。
 - 键盘高亮用 `--dsw-alias-interactive-bg-hover`，不用选中蓝。
 - 空结果：`没有匹配的模型` / `没有匹配的技能`；模型列表为空时给配置指引。
 
 ### 3.3 键盘
 
-| 键 | Command 层 | Model/Skill 层 | 面板关闭时 |
+| 键 | 搜索框（Command 层） | 搜索框（Model/Skill 层） | 面板关闭时（textarea） |
 |---|---|---|---|
 | `↑` / `↓` | 移动高亮 | 移动高亮 | 无 |
 | `Enter` | 进入子层 / 选择命令 | 选中并关闭 | 发送消息 |
 | `Tab` | 同 Enter（可选） | 同 Enter（可选） | 切换焦点 |
-| `Esc` | 关闭面板，恢复草稿 | 回 Command 层 | 走现有 Esc 链 |
-| `Shift+Enter` | 换行 | 换行 | 换行 |
+| `Esc` | 关闭面板，焦点回 textarea，恢复草稿 | 回 Command 层，清空搜索 | 走现有 Esc 链 |
+| `Shift+Enter` | 无 | 无 | 换行 |
 
-- IME 组合中（`e.isComposing`）不处理 Enter。
-- 面板打开时 Enter 不发送消息；先在 `chat-input` 的 keydown 里判断面板状态。
+- 搜索框打开即 focus；textarea 在面板打开时不接收搜索输入。
+- IME 组合中（`e.isComposing`）不处理 Enter；搜索框与 textarea 的 keydown 都要判断。
+- 面板打开时 Enter 不发送消息；先在搜索框/textarea 的 keydown 里判断面板状态。
 
 ## 4. 模型选择
 
