@@ -90,6 +90,30 @@ export function readSessionId(file) {
 	}
 }
 
+/** 读 pi session 文件里最新的 model_change；没有/坏行返回 null。 */
+export function readSessionModel(file) {
+	let text;
+	try {
+		text = readFileSync(file, "utf8");
+	} catch {
+		return null;
+	}
+	const lines = text.split("\n");
+	for (let i = lines.length - 1; i >= 0; i--) {
+		const line = lines[i];
+		if (!line.includes('"model_change"')) continue;
+		try {
+			const entry = JSON.parse(line);
+			if (entry?.type === "model_change" && typeof entry.provider === "string" && typeof entry.modelId === "string") {
+				return { provider: entry.provider, id: entry.modelId };
+			}
+		} catch {
+			/* 忽略坏行 */
+		}
+	}
+	return null;
+}
+
 /** 按 id 找 session 文件：先按文件名后缀，再扫描前 50 个文件的 header。 */
 export function findThreadFile(sessionsDir, id) {
 	if (!isSafeThreadId(id)) return null;

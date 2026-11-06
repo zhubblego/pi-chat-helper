@@ -286,6 +286,28 @@ async function stopServer(child) {
 		writeSession(path.join(chatSessions, "--c1--"), { id: "cs-2", cwd: chatProject, first: "对话二" });
 		writeSession(path.join(chatSessions, "--c2--"), { id: "cs-3", cwd: otherProject, first: "对话三" });
 
+		// 线程文件（模型 current 从文件读；不依赖 fake child 写盘）
+		const chatDir = path.join(tmp, "chat-srv-dir");
+		const writeModelThread = (session, id, provider, modelId) => {
+			const file = path.join(chatDir, "pi", session, "sessions", `2026-01-01T00-00-00-000Z_${id}.jsonl`);
+			fs.mkdirSync(path.dirname(file), { recursive: true });
+			fs.writeFileSync(
+				file,
+				[
+					JSON.stringify({ type: "session", version: 3, id, timestamp: H, cwd: chatProject }),
+					JSON.stringify({ type: "model_change", id: "m1", parentId: null, timestamp: H, provider, modelId }),
+				].join("\n") + "\n",
+			);
+		};
+		writeModelThread("cs-2", "thread-c2", "other", "fake-2");
+		writeModelThread("cs-3", "thread-c3", "fake", "fake-1");
+
+		const chatTrace = path.join(tmp, "chat-pi-trace.log");
+		const modelsFailFile = path.join(tmp, "models-fail.flag");
+		process.env.FAKE_PI_TRACE = chatTrace;
+		process.env.FAKE_PI_MODELS_FAIL = modelsFailFile;
+		fs.rmSync(modelsFailFile, { force: true });
+
 		const chatServer = await createTrajectoryServer({
 			scope: "all",
 			webDir: WEB,
@@ -293,7 +315,7 @@ async function stopServer(child) {
 			codexRoot: path.join(tmp, "no-codex"),
 			port: 0,
 			chat: true,
-			chatDir: path.join(tmp, "chat-srv-dir"),
+			chatDir,
 			piBin: { cmd: process.execPath, argsPrefix: [FAKE], mode: false, display: "fake-pi" },
 			chatPingMs: 25,
 		});
@@ -304,9 +326,73 @@ async function stopServer(child) {
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ source: "pi", session, prompt, ...extra }),
 			});
+		const postJson = (url, body) =>
+			fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
 		check("chat：静态 /chat.js 200", (await fetch(`${chatBase}chat.js`)).status === 200);
 		check("chat：静态 /chat-lib.js 200", (await fetch(`${chatBase}chat-lib.js`)).status === 200);
+
+		// ---- T4：模型列表 ----
+		const modelsUrl = (session, extra = "") => `${chatBase}api/chat/models?source=pi&session=${session}${extra}`;
+		const modelsPlain = await (await fetch(modelsUrl("cs-2"))).json();
+		check(
+			"models：列表 2 个且 current=child 模型",
+			Array.isArray(modelsPlain.models) && modelsPlain.models.length === 2 && modelsPlain.current?.id === "fake-1",
+			JSON.stringify(modelsPlain).slice(0, 300),
+		);
+		check(
+			"models：字段白名单 + 无敏感字段",
+			modelsPlain.models.every((m) => Object.keys(m).sort().join(",") === "contextWindow,id,maxTokens,name,provider,providerName,reasoning") &&
+				!/sk-fake-secret|fake-header|fake-one\.invalid|apiKey|baseUrl|headers|oauth/.test(JSON.stringify(modelsPlain)),
+			JSON.stringify(modelsPlain).slice(0, 500),
+		);
+		const modelsThread = await (await fetch(modelsUrl("cs-2", "&thread=thread-c2"))).json();
+		check("models：带 thread 读文件模型", modelsThread.current?.provider === "other" && modelsThread.current?.id === "fake-2", JSON.stringify(modelsThread.current));
+		const traceBeforeModels = fs.existsSync(chatTrace) ? fs.readFileSync(chatTrace, "utf8") : "";
+		check("models：带 thread 不切 child", !traceBeforeModels.includes("switch_session:"), traceBeforeModels);
+
+		// refresh=1 失败：保留 last-good + error
+		fs.writeFileSync(modelsFailFile, "1");
+		const refreshFail = await (await fetch(modelsUrl("cs-2", "&refresh=1"))).json();
+		check(
+			"models：refresh 失败保留 last-good",
+			typeof refreshFail.error === "string" && refreshFail.error.length > 0 && refreshFail.models?.length === 2 && refreshFail.refreshedAt === modelsPlain.refreshedAt,
+			JSON.stringify(refreshFail).slice(0, 300),
+		);
+		fs.rmSync(modelsFailFile, { force: true });
+		const refreshOk = await (await fetch(modelsUrl("cs-2", "&refresh=1"))).json();
+		check("models：refresh 恢复后 error=null", refreshOk.error === null && refreshOk.models?.length === 2, JSON.stringify(refreshOk).slice(0, 200));
+
+		// ---- T4：切换模型 ----
+		const postModel = (body) =>
+			fetch(`${chatBase}api/chat/model`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ source: "pi", ...body }),
+			});
+		const okModelRes = await postModel({ session: "cs-3", provider: "other", id: "fake-2" });
+		const okModel = await okModelRes.json();
+		check("POST model：成功且脱敏", okModelRes.ok && okModel.ok === true && okModel.model?.id === "fake-2" && !/sk-fake-secret|apiKey|baseUrl|headers|oauth/.test(JSON.stringify(okModel)), JSON.stringify(okModel).slice(0, 300));
+		const currentCs3 = await (await fetch(modelsUrl("cs-3"))).json();
+		check("POST model：GET current 反映新模型", currentCs3.current?.provider === "other" && currentCs3.current?.id === "fake-2", JSON.stringify(currentCs3.current));
+		check("POST model：未知模型 400", (await postModel({ session: "cs-3", provider: "fake", id: "nope" })).status === 400);
+		check("POST model：缺 provider 400", (await postModel({ session: "cs-3", id: "fake-1" })).status === 400);
+		check("POST model：缺 id 400", (await postModel({ session: "cs-3", provider: "fake" })).status === 400);
+		check("POST model：非法 threadId 400", (await postModel({ session: "cs-3", threadId: "../x", provider: "fake", id: "fake-1" })).status === 400);
+		check("POST model：线程不存在 404", (await postModel({ session: "cs-3", threadId: "no-such", provider: "fake", id: "fake-1" })).status === 404);
+		const traceBeforeSwitch = fs.existsSync(chatTrace) ? fs.readFileSync(chatTrace, "utf8") : "";
+		const switchModelRes = await postModel({ session: "cs-3", threadId: "thread-c3", provider: "fake", id: "fake-1" });
+		check("POST model：切线程成功", switchModelRes.ok, String(switchModelRes.status));
+		const traceAfterSwitch = fs.readFileSync(chatTrace, "utf8").slice(traceBeforeSwitch.length);
+		const switchIdx = traceAfterSwitch.indexOf("switch_session:");
+		const setIdx = traceAfterSwitch.indexOf("set_model:");
+		check(
+			"POST model：先 switch_session 再 set_model",
+			switchIdx >= 0 && setIdx > switchIdx && /thread-c3\.jsonl/.test(traceAfterSwitch.slice(switchIdx, setIdx)),
+			traceAfterSwitch,
+		);
+		check("POST model：GET /api/chat/model 405", (await fetch(`${chatBase}api/chat/model`)).status === 405);
+		check("POST model：POST /api/chat/models 405", (await postJson(`${chatBase}api/chat/models`, { source: "pi", session: "cs-3" })).status === 405);
 
 		const toolStream = await readSse(await send("cs-1", "think tool"));
 		const order = toolStream.events.map((e) => e.event);
@@ -329,6 +415,8 @@ async function stopServer(child) {
 		check("chat：同 child 已有 turn 409", sameChild.status === 409, String(sameChild.status));
 		const sameProject = await send("cs-2", "second");
 		check("chat：同项目另一个 child 409", sameProject.status === 409, String(sameProject.status));
+		const modelConflict = await postJson(`${chatBase}api/chat/model`, { source: "pi", session: "cs-1", provider: "fake", id: "fake-1" });
+		check("POST model：活动 turn 409", modelConflict.status === 409, String(modelConflict.status));
 		await fetch(`${chatBase}api/chat/stop`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
@@ -365,6 +453,8 @@ async function stopServer(child) {
 		);
 
 		await chatServer.close();
+		delete process.env.FAKE_PI_TRACE;
+		delete process.env.FAKE_PI_MODELS_FAIL;
 		let residual = "";
 		try {
 			residual = execFileSync("pgrep", ["-f", FAKE], { encoding: "utf8" }).trim();

@@ -39,16 +39,48 @@ const sessionIdArg = args.indexOf("--session-id");
 const sessionFileArg = args.indexOf("--session");
 if (sessionIdArg >= 0 && args[sessionIdArg + 1]) sessionId = args[sessionIdArg + 1];
 else if (sessionFileArg >= 0 && args[sessionFileArg + 1]) sessionId = sessionIdFromFile(args[sessionFileArg + 1]);
+
+/** 测试用 trace：switch_session / set_model / get_available_models 写入指定文件。 */
+function trace(line) {
+	const file = process.env.FAKE_PI_TRACE;
+	if (!file) return;
+	try {
+		fs.appendFileSync(file, `${line}\n`);
+	} catch {
+		/* trace 失败不影响 RPC */
+	}
+}
+
+/** 两个模型 + 故意混入敏感字段，用于验证服务端 allowlist 裁剪。 */
+const models = [
+	{
+		provider: "fake",
+		id: "fake-1",
+		name: "Fake One",
+		api: "openai-completions",
+		reasoning: true,
+		contextWindow: 128000,
+		maxTokens: 4096,
+		apiKey: "sk-fake-secret-one",
+		baseUrl: "https://fake-one.invalid",
+		headers: { authorization: "Bearer fake-header-one" },
+		oauth: { token: "fake-oauth-one" },
+	},
+	{
+		provider: "other",
+		id: "fake-2",
+		name: "Fake Two",
+		api: "openai-completions",
+		reasoning: false,
+		contextWindow: 32000,
+		maxTokens: 2048,
+		apiKey: "sk-fake-secret-two",
+		baseUrl: "https://fake-two.invalid",
+		headers: { authorization: "Bearer fake-header-two" },
+	},
+];
 let isStreaming = false;
-let model = {
-	provider: "fake",
-	id: "fake-1",
-	name: "Fake One",
-	api: "openai-completions",
-	reasoning: true,
-	contextWindow: 128000,
-	maxTokens: 4096,
-};
+let model = models[0];
 
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
 
@@ -181,7 +213,12 @@ rl.on("line", (line) => {
 			reply(command, state());
 			break;
 		case "get_available_models":
-			reply(command, { models: [model] });
+			trace("get_available_models");
+			if (process.env.FAKE_PI_MODELS_FAIL && fs.existsSync(process.env.FAKE_PI_MODELS_FAIL)) {
+				fail(command, "models refresh failed");
+				break;
+			}
+			reply(command, { models });
 			break;
 		case "get_commands":
 			reply(command, {
@@ -201,16 +238,20 @@ rl.on("line", (line) => {
 				],
 			});
 			break;
-		case "set_model":
-			model = { ...model, provider: command.provider, id: command.modelId, name: command.modelId };
+		case "set_model": {
+			const next = models.find((item) => item.provider === command.provider && item.id === command.modelId);
+			model = next ? { ...next } : { ...model, provider: command.provider, id: command.modelId, name: command.modelId };
+			trace(`set_model:${command.provider}/${command.modelId}`);
 			reply(command, model);
 			break;
+		}
 		case "new_session":
 			sessionId = `fake-session-${++sessionSeq + 1}`;
 			reply(command, { cancelled: false });
 			break;
 		case "switch_session":
 			sessionId = sessionIdFromFile(String(command.sessionPath ?? "")) || sessionId;
+			trace(`switch_session:${command.sessionPath}`);
 			reply(command, {});
 			break;
 		case "prompt":

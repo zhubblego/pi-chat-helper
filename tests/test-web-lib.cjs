@@ -14,7 +14,7 @@ const check = (label, cond, extra = "") => {
 	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, buildAgentTree, deriveInfo, deriveTargets, deriveTaskName, DERIVE_TOOL, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments, hitSnippet } = lib;
 
 	// ---- SSE 解析（chat-lib.js） ----
-	const { parseSseChunk, parseSseData, chatSessionRef, isCurrentTurn } = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "chat-lib.js")).href);
+	const { parseSseChunk, parseSseData, chatSessionRef, isCurrentTurn, modelLabel, formatContextWindow, filterPaletteItems } = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "chat-lib.js")).href);
 	const sseOne = parseSseChunk('event: meta\ndata: {"a":1}\n\n');
 	check("SSE：单事件", sseOne.events.length === 1 && sseOne.events[0].event === "meta" && sseOne.rest === "", JSON.stringify(sseOne));
 	check("SSE：data 可 JSON 解析", parseSseData(sseOne.events[0])?.a === 1);
@@ -54,6 +54,41 @@ const check = (label, cond, extra = "") => {
 			isCurrentTurn({ key: "pi:s-1" }, "") === false &&
 			isCurrentTurn(null, "pi:s-1") === false,
 	);
+
+	// ---- 模型展示与斜杠面板过滤 ----
+	check(
+		"modelLabel：name 优先 / id 兜底 / 过长截断",
+		modelLabel({ name: "GLM-5.3", id: "glm" }) === "GLM-5.3" &&
+			modelLabel({ id: "glm-5" }) === "glm-5" &&
+			modelLabel({ name: "abcdefghij", id: "x" }, 6) === "abcde…" &&
+			modelLabel(null) === "",
+	);
+	check(
+		"formatContextWindow：1M/200K/128K/32000",
+		formatContextWindow(1000000) === "1M" &&
+			formatContextWindow(200000) === "200K" &&
+			formatContextWindow(128000) === "128K" &&
+			formatContextWindow(32000) === "32000" &&
+			formatContextWindow(0) === "" &&
+			formatContextWindow(NaN) === "",
+	);
+	const paletteItems = [
+		{ label: "GLM-5.3", hint: "LiteLLM · 推理 · 1M", group: "LiteLLM", search: "glm-5.3 litellm" },
+		{ label: "DeepSeek V4", hint: "LiteLLM", group: "LiteLLM", search: "deepseek-v4-pro litellm" },
+		{ label: "Claude Sonnet", hint: "Anthropic", group: "Anthropic", search: "claude-sonnet anthropic" },
+	];
+	check("filterPaletteItems：空查询返回全部", filterPaletteItems(paletteItems, "").length === 3);
+	check(
+		"filterPaletteItems：多词 AND + 大小写不敏感",
+		filterPaletteItems(paletteItems, "LITELLM 推理").length === 1 && filterPaletteItems(paletteItems, "litellm deepseek").length === 1,
+	);
+	check(
+		"filterPaletteItems：匹配 label/hint/group/search",
+		filterPaletteItems(paletteItems, "glm").length === 1 &&
+			filterPaletteItems(paletteItems, "anthropic").length === 1 &&
+			filterPaletteItems(paletteItems, "claude-sonnet").length === 1,
+	);
+	check("filterPaletteItems：无匹配空数组", filterPaletteItems(paletteItems, "zzz").length === 0);
 
 	// ---- 搜索高亮切分 ----
 	check("高亮：单词命中切分", JSON.stringify(highlightSegments("hello world npm", ["npm"])) === JSON.stringify([{ text: "hello world ", hit: false }, { text: "npm", hit: true }]));
@@ -370,6 +405,41 @@ const check = (label, cond, extra = "") => {
 			indexSource.includes('id="chat-announcer"') &&
 			indexSource.includes('aria-live="polite"') &&
 			styleSource.includes(".chat-sr-only"),
+	);
+	check(
+		"模型接口接线：models/model + 脱敏展示",
+		chatSource.includes("/api/chat/models?") &&
+			chatSource.includes('/api/chat/model"') &&
+			chatSource.includes("filterPaletteItems") &&
+			chatSource.includes("formatContextWindow") &&
+			chatSource.includes("modelLabel"),
+	);
+	const modelTag = /<button id="chat-model"[^>]*>/.exec(indexSource)?.[0] ?? "";
+	check("模型 chip 可点击（无 disabled）", modelTag.includes('id="chat-model"') && !modelTag.includes("disabled"), modelTag);
+	check(
+		"模型 chip 点击 = 打开模型面板，流式中不切",
+		chatSource.includes('el("chat-model")?.addEventListener("click"') &&
+			chatSource.includes("function openModelPicker()") &&
+			chatSource.includes('pushNotice("回复中，先停止"'),
+	);
+	check(
+		"palette 键盘：↑↓/Enter/Tab/Esc + 面板打开时 Enter 不发送",
+		chatSource.includes('e.key === "ArrowDown" || e.key === "ArrowUp"') &&
+			chatSource.includes('(e.key === "Enter" || e.key === "Tab")') &&
+			chatSource.includes('e.key === "Escape"') &&
+			chatSource.includes("paletteEscape()") &&
+			chatSource.includes("if (state.streaming || state.palette) return;"),
+	);
+	check(
+		"palette 渲染：分组/当前项勾/空态/选中态样式",
+		chatSource.includes("chat-palette-group") &&
+			chatSource.includes("chat-palette-item") &&
+			chatSource.includes('text: current ? "✓" : ""') &&
+			chatSource.includes("没有匹配的模型") &&
+			chatSource.includes("pi 没有可用模型，先在 models.json / 登录里配置") &&
+			styleSource.includes(".chat-palette-item.is-active") &&
+			styleSource.includes(".chat-model::before") &&
+			styleSource.includes(".chat-model.is-reasoning::before"),
 	);
 	check("对话头/上下文/面板/技能占位就位", ["chat-head", "chat-model", "chat-profile", "chat-context", "chat-palette", "chat-skill"].every((id) => indexSource.includes(`id="${id}"`)));
 	check("对话栏消息仍走 markdown 渲染", chatSource.includes("mdNode(String(message.text))"));

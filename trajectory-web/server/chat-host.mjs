@@ -22,6 +22,7 @@ import {
 	latestThreadFile,
 	parseThreadProjection,
 	readSessionId,
+	readSessionModel,
 	readTurns,
 } from "./chat-session.mjs";
 import { MIN_PI_VERSION_TEXT, parsePiVersion, piRpcArgs, probeFirstPi, probePi, versionAtLeast } from "./pi-binary.mjs";
@@ -309,6 +310,73 @@ function errorText(err) {
 	return clip(err?.message ?? String(err), 500);
 }
 
+const PROVIDER_NAMES = Object.freeze({
+	anthropic: "Anthropic",
+	openai: "OpenAI",
+	google: "Google",
+	"google-vertex": "Google Vertex",
+	"google-gemini-cli": "Google Gemini",
+	deepseek: "DeepSeek",
+	litellm: "LiteLLM",
+	openrouter: "OpenRouter",
+	groq: "Groq",
+	mistral: "Mistral",
+	xai: "xAI",
+	ollama: "Ollama",
+	azure: "Azure OpenAI",
+	"github-copilot": "GitHub Copilot",
+	zai: "Z.AI",
+	moonshot: "Moonshot",
+	alibaba: "Alibaba",
+});
+
+/** provider 展示名：未收录的自定义 provider 原样返回。 */
+export function providerNameOf(provider) {
+	if (!provider) return null;
+	return PROVIDER_NAMES[provider] ?? provider;
+}
+
+function modelNumber(value) {
+	const number = Number(value);
+	return Number.isFinite(number) && number > 0 ? number : null;
+}
+
+/**
+ * 模型白名单：只输出展示字段。apiKey/baseUrl/headers/oauth 等一律不落地。
+ * @param {object} model pi 返回的完整 Model 对象
+ */
+export function sanitizeModel(model) {
+	if (!model || typeof model !== "object") return null;
+	const provider = typeof model.provider === "string" && model.provider ? model.provider : null;
+	const id = typeof model.id === "string" && model.id ? model.id : null;
+	if (!provider || !id) return null;
+	return {
+		provider,
+		providerName: providerNameOf(provider),
+		id,
+		name: typeof model.name === "string" && model.name ? model.name : id,
+		reasoning: model.reasoning === true,
+		contextWindow: modelNumber(model.contextWindow),
+		maxTokens: modelNumber(model.maxTokens),
+	};
+}
+
+/** current 响应体：不带 providerName，字段与 api.md §3.1 一致；缺失字段用列表补全。 */
+function currentModelOf(model, models = []) {
+	const safe = sanitizeModel(model);
+	if (!safe) return null;
+	const listed = models.find((item) => item.provider === safe.provider && item.id === safe.id);
+	const current = {
+		provider: safe.provider,
+		id: safe.id,
+		name: listed?.name ?? safe.name,
+		reasoning: safe.reasoning || listed?.reasoning === true,
+		contextWindow: safe.contextWindow ?? listed?.contextWindow ?? null,
+		maxTokens: safe.maxTokens ?? listed?.maxTokens ?? null,
+	};
+	return current;
+}
+
 function disabledCapabilities(chatDir, reason) {
 	return {
 		enabled: false,
@@ -364,6 +432,9 @@ export function createChatHost(deps = {}) {
 	const ssePingMs = deps.ssePingMs ?? SSE_PING_MS;
 	let resolvedPi = deps.pi ?? null;
 	let capCache = null;
+	// 模型列表缓存（host 级）：pi 的可用模型由全局 auth/models 配置决定，与轨迹会话无关；
+	// refresh=1 失败时回退到这里保留的 last-good。
+	let modelsCache = null;
 
 	function remember(value) {
 		capCache = { at: Date.now(), value };
@@ -930,6 +1001,114 @@ export function createChatHost(deps = {}) {
 		});
 	}
 
+	async function fetchModelList(record) {
+		const response = await record.child.send({ type: "get_available_models" }, { timeoutMs: 20_000 });
+		const raw = Array.isArray(response.data?.models) ? response.data.models : [];
+		const models = [];
+		for (const item of raw) {
+			const safe = sanitizeModel(item);
+			if (safe) models.push(safe);
+		}
+		return models;
+	}
+
+	async function handleGetModels(url, res, sendJson) {
+		const cap = await capabilities();
+		if (!cap.enabled) throw httpError(501, cap.reason ?? "对话未启用");
+		const target = resolveTarget(url.searchParams.get("source"), url.searchParams.get("session"));
+		const requestedThread = url.searchParams.get("thread");
+		if (requestedThread !== null && !isSafeThreadId(requestedThread)) throw httpError(400, "非法线程 id");
+
+		const dirs = chatSessionDirs(chatDir, target.source, target.sessionId);
+		const record = await ensureChild(target.source, target.sessionId, { target });
+		const refresh = url.searchParams.get("refresh") === "1";
+		let error = null;
+
+		if (refresh || !modelsCache) {
+			try {
+				const models = await fetchModelList(record);
+				modelsCache = { models, refreshedAt: new Date().toISOString() };
+			} catch (err) {
+				error = errorText(err);
+			}
+		}
+		const models = modelsCache?.models ?? [];
+
+		// current：带 thread 读该线程文件的最新 model 条目，不切 child；否则用 child 当前模型，
+		// child 没有模型时回退到最新 session 文件。
+		let current = null;
+		if (requestedThread !== null) {
+			const file = findThreadFile(dirs.sessionsDir, requestedThread);
+			if (!file) throw httpError(404, `线程 ${requestedThread} 不存在`);
+			const stored = readSessionModel(file.file);
+			current = stored ? currentModelOf({ provider: stored.provider, id: stored.id }, models) : null;
+		} else {
+			let state = null;
+			try {
+				state = await readChildState(record);
+			} catch {
+				state = null;
+			}
+			if (state?.data?.model) {
+				current = currentModelOf(state.data.model, models);
+			} else {
+				const latest = latestThreadFile(dirs.sessionsDir);
+				const stored = latest ? readSessionModel(latest.file) : null;
+				current = stored ? currentModelOf({ provider: stored.provider, id: stored.id }, models) : null;
+			}
+		}
+
+		sendJson(res, 200, { current, models, refreshedAt: modelsCache?.refreshedAt ?? null, error });
+	}
+
+	async function handlePostModel(rawBody, res, sendJson) {
+		let payload;
+		try {
+			payload = JSON.parse(rawBody || "{}");
+		} catch {
+			throw httpError(400, "请求体不是合法 JSON");
+		}
+		const target = resolveTarget(payload.source, payload.session);
+		const requestedThread = payload.threadId ?? null;
+		if (requestedThread !== null && !isSafeThreadId(requestedThread)) throw httpError(400, "非法线程 id");
+		const provider = typeof payload.provider === "string" ? payload.provider : "";
+		const id = typeof payload.id === "string" ? payload.id : "";
+		if (!provider) throw httpError(400, "缺少 provider");
+		if (!id) throw httpError(400, "缺少 id");
+
+		const cap = await capabilities();
+		if (!cap.enabled) throw httpError(501, cap.reason ?? "对话未启用");
+
+		const dirs = chatSessionDirs(chatDir, target.source, target.sessionId);
+		let threadFile = null;
+		if (requestedThread !== null) {
+			threadFile = findThreadFile(dirs.sessionsDir, requestedThread);
+			if (!threadFile) throw httpError(404, `线程 ${requestedThread} 不存在`);
+		}
+
+		const record = await ensureChild(target.source, target.sessionId, {
+			target,
+			threadId: threadFile ? requestedThread : undefined,
+		});
+		if (record.currentTurn) throw httpError(409, "回复中，先停止再切换模型");
+		if (requestedThread !== null && record.piSessionId !== requestedThread) {
+			await switchThread(record, threadFile);
+		}
+
+		// 只接受 get_available_models 里真实存在的模型（provider + id 精确匹配）
+		const models = await fetchModelList(record);
+		const matched = models.find((item) => item.provider === provider && item.id === id);
+		if (!matched) throw httpError(400, `模型不存在：${provider}/${id}`);
+
+		const response = await record.child.send({ type: "set_model", provider, modelId: id }, { timeoutMs: 20_000 });
+		record.lastUsedAt = Date.now();
+		sendJson(res, 200, {
+			ok: true,
+			threadId: record.piSessionId,
+			model: sanitizeModel(response.data) ?? matched,
+		});
+	}
+
 	/**
 	 * 路由分发；返回 true 表示已处理。
 	 * @param {import("node:http").IncomingMessage} req
@@ -959,6 +1138,22 @@ export function createChatHost(deps = {}) {
 					return true;
 				}
 				sendJson(res, 405, { error: "method not allowed" });
+				return true;
+			}
+			if (url.pathname === "/api/chat/models") {
+				if (req.method !== "GET") {
+					sendJson(res, 405, { error: "method not allowed" });
+					return true;
+				}
+				await handleGetModels(url, res, sendJson);
+				return true;
+			}
+			if (url.pathname === "/api/chat/model") {
+				if (req.method !== "POST") {
+					sendJson(res, 405, { error: "method not allowed" });
+					return true;
+				}
+				await handlePostModel(body, res, sendJson);
 				return true;
 			}
 			if (url.pathname === "/api/chat/send") {

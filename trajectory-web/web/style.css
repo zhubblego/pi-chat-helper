@@ -1311,9 +1311,37 @@ mark.ev-hit {
 
 .chat-model {
 	flex: 1 1 auto;
+	display: inline-block;
 	text-align: left;
 	color: var(--dsw-alias-label-primary);
 	font: var(--dsw-font-xs-strong-13);
+	cursor: pointer;
+}
+
+/* 模型 chip 左侧小圆点：reasoning=info 色，普通=中性灰，error=警示色 */
+.chat-model::before {
+	content: "";
+	display: inline-block;
+	width: 6px;
+	height: 6px;
+	margin-right: 6px;
+	border-radius: 50%;
+	vertical-align: middle;
+	background: var(--dsw-alias-label-tertiary);
+}
+
+.chat-model.is-reasoning::before {
+	background: var(--dsw-alias-state-business-primary);
+}
+
+.chat-model.is-warn::before {
+	background: var(--dsw-alias-state-warn-primary);
+}
+
+@media (hover: hover) {
+	.chat-model:hover {
+		background: var(--dsw-alias-interactive-bg-hover);
+	}
 }
 
 .chat-profile {
@@ -1572,13 +1600,78 @@ mark.ev-hit {
 	left: 12px;
 	right: 12px;
 	bottom: calc(100% - 2px);
-	max-height: 260px;
+	max-height: min(280px, 50vh);
 	overflow-y: auto;
+	padding: 4px 0;
 	border: 1px solid var(--dsw-alias-border-l2);
 	border-radius: var(--dsw-radius-lg);
 	background: var(--dsw-alias-bg-layer-1);
 	box-shadow: var(--dsw-elevation-soft);
 	z-index: 4;
+}
+
+.chat-palette-group {
+	position: sticky;
+	top: 0;
+	padding: 6px 10px 4px;
+	background: var(--dsw-alias-bg-layer-1);
+	color: var(--dsw-alias-label-caption);
+	font: var(--dsw-font-xxs-strong-12);
+}
+
+.chat-palette-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 6px 10px;
+	border: 0;
+	background: transparent;
+	color: var(--dsw-alias-label-primary);
+	font: var(--dsw-font-s-14);
+	text-align: left;
+	cursor: pointer;
+}
+
+.chat-palette-item.is-active {
+	background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.chat-palette-check {
+	width: 14px;
+	flex: none;
+	text-align: center;
+	color: var(--dsw-alias-state-business-primary);
+}
+
+.chat-palette-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.chat-palette-hint {
+	margin-left: auto;
+	flex: none;
+	max-width: 55%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--dsw-alias-label-caption);
+	font: var(--dsw-font-xxs-12);
+}
+
+.chat-palette-loading,
+.chat-palette-empty,
+.chat-palette-error {
+	padding: 8px 10px;
+	color: var(--dsw-alias-label-caption);
+	font: var(--dsw-font-xs-13);
+}
+
+.chat-palette-error {
+	color: var(--dsw-alias-state-error-primary);
 }
 
 .chat-skill {

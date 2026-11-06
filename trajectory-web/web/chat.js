@@ -5,12 +5,16 @@
  *       GET /api/chat/thread、GET /api/chat/capabilities。
  * 本阶段（T3）只做流式与消息渲染；模型/技能/上下文/审批在后续阶段接入。
  */
-import { isCurrentTurn, parseSseChunk, parseSseData } from "./chat-lib.js";
+import { filterPaletteItems, formatContextWindow, isCurrentTurn, modelLabel, parseSseChunk, parseSseData } from "./chat-lib.js";
 import { fmtTokens } from "./lib.js";
 
 const PROMPT_MAX = 32000;
 const RENDER_MIN_MS = 80;
+const MODELS_TTL_MS = 5000;
 const PROFILE_LABEL = { "no-tools": "仅轨迹工具", "read-only": "只读", full: "全量工具" };
+const COMMAND_ITEMS = Object.freeze([
+	{ id: "model", label: "模型", hint: "选择当前线程的模型", group: "命令", search: "model 模型" },
+]);
 
 /** 对话栏。deps: {el,h,mdNode,getSession,autoGrowInput}（后续阶段再扩）。 */
 export function initChatPanel(deps) {
@@ -21,6 +25,7 @@ export function initChatPanel(deps) {
 	const input = el("chat-input");
 	const sendBtn = el("chat-send");
 	const announcer = el("chat-announcer");
+	const paletteEl = el("chat-palette");
 	const sendIcon = sendBtn?.firstElementChild?.cloneNode(true) ?? null;
 	let localSeq = 0;
 	let renderTimer = 0;
@@ -46,6 +51,11 @@ export function initChatPanel(deps) {
 		lastRenderAt: 0,
 		// 收尾/整表替换期间短暂关闭 aria-live，避免屏幕阅读器把整张表重读一遍
 		a11yHold: false,
+		// 模型列表与斜杠面板
+		models: [],
+		modelsAt: 0,
+		modelsError: null,
+		palette: null,
 	};
 
 	const localId = (kind) => `local-${kind}-${++localSeq}`;
@@ -62,6 +72,10 @@ export function initChatPanel(deps) {
 
 	function sessionKeyOf(session) {
 		return session ? `${session.source}:${session.id}` : "";
+	}
+
+	function currentKey() {
+		return sessionKeyOf(currentSession());
 	}
 
 	/** SSE 回调只允许写当前会话、且属于当前 turn。state.turn 防止已收尾的旧流回写。 */
@@ -149,6 +163,58 @@ export function initChatPanel(deps) {
 		if (state.enabled === null) await loadCapabilities();
 		if (state.enabled === false) return;
 		await loadThread();
+	}
+
+	/** 模型列表：5 秒缓存；打开面板时传 refresh=1（服务端走 pi 的可用性检查，失败保留 last-good）。 */
+	async function loadModels({ refresh = false } = {}) {
+		const session = currentSession();
+		if (!session || state.enabled !== true) return;
+		if (state.modelsAt && Date.now() - state.modelsAt < MODELS_TTL_MS) return;
+		const key = currentKey();
+		const palette = state.palette;
+		if (palette) {
+			if (palette.loading) return;
+			palette.loading = true;
+			palette.error = null;
+			renderPalette();
+		}
+		try {
+			const params = new URLSearchParams({ source: session.source, session: session.id });
+			if (state.threadId) params.set("thread", state.threadId);
+			if (refresh) params.set("refresh", "1");
+			const res = await fetch(`/api/chat/models?${params}`);
+			if (!res.ok) {
+				let message = `HTTP ${res.status}`;
+				try {
+					message = (await res.json())?.error ?? message;
+				} catch {
+					/* 非 JSON 错误体 */
+				}
+				throw new Error(message);
+			}
+			const data = await res.json();
+			if (currentKey() !== key) return;
+			state.models = Array.isArray(data.models) ? data.models : [];
+			state.modelsError = typeof data.error === "string" && data.error ? data.error : null;
+			state.model = data.current ?? null;
+			state.modelsAt = Date.now();
+			if (palette) {
+				palette.loading = false;
+				palette.error = null;
+			}
+			renderHead();
+			renderPalette();
+		} catch (err) {
+			if (currentKey() !== key) return;
+			state.modelsError = err.message;
+			state.modelsAt = 0;
+			if (palette) {
+				palette.loading = false;
+				palette.error = `读取模型失败：${err.message}`;
+			}
+			renderHead();
+			renderPalette();
+		}
 	}
 
 	// ------------------------------------------------------------------
@@ -258,14 +324,22 @@ export function initChatPanel(deps) {
 
 	function renderHead() {
 		const modelEl = el("chat-model");
-		if (modelEl) modelEl.textContent = state.model?.name || state.model?.id || "模型未加载";
+		if (modelEl) {
+			modelEl.textContent = state.model ? modelLabel(state.model) : "模型未加载";
+			const provider = state.model?.provider ?? "";
+			const id = state.model?.id ?? "";
+			modelEl.title = id ? `${provider}/${id}` : "选择模型";
+			modelEl.classList.toggle("is-reasoning", state.model?.reasoning === true);
+			modelEl.classList.toggle("is-warn", Boolean(state.modelsError));
+			if (state.modelsError) modelEl.title = `${modelEl.title} · ${state.modelsError}`;
+		}
 		const profileEl = el("chat-profile");
 		if (profileEl) profileEl.textContent = PROFILE_LABEL[state.profile] ?? state.profile;
 	}
 
 	function updateSendButton() {
 		if (!sendBtn) return;
-		const canSend = state.enabled === true && !!currentSession() && input?.value.trim().length > 0;
+		const canSend = state.enabled === true && !!currentSession() && !state.palette && input?.value.trim().length > 0;
 		sendBtn.disabled = state.streaming ? false : !canSend;
 		sendBtn.classList.toggle("is-stop", state.streaming);
 		const label = state.streaming ? "停止生成" : "发送（Enter）";
@@ -291,6 +365,7 @@ export function initChatPanel(deps) {
 		renderComposer();
 		updateSendButton();
 		updateA11y();
+		renderPalette();
 	}
 
 	/** 流式中 aria-live=off（避免逐字朗读）；收尾时短暂 hold，只让 #chat-announcer 播报最后一条。 */
@@ -340,6 +415,225 @@ export function initChatPanel(deps) {
 		if (!text) return;
 		state.messages.push({ id: localId("n"), role: "notice", kind, text });
 		scheduleRender();
+	}
+
+	// ------------------------------------------------------------------
+	// 斜杠面板：command 层（模型）→ model 层
+	// ------------------------------------------------------------------
+
+	function commandQuery() {
+		return String(input?.value ?? "").replace(/^\//, "");
+	}
+
+	function paletteModelItems() {
+		return state.models
+			.map((model) => ({
+				kind: "model",
+				provider: model.provider,
+				providerName: model.providerName || model.provider,
+				id: model.id,
+				label: model.name || model.id,
+				hint: [model.providerName || model.provider, model.reasoning ? "推理" : "", model.contextWindow ? formatContextWindow(model.contextWindow) : ""]
+					.filter(Boolean)
+					.join(" · "),
+				group: model.providerName || model.provider || "模型",
+				search: [model.name, model.id, model.provider, model.providerName].filter(Boolean).join(" "),
+				model,
+			}))
+			.sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label));
+	}
+
+	function paletteItems() {
+		if (!state.palette) return [];
+		if (state.palette.layer === "command") return filterPaletteItems(COMMAND_ITEMS, commandQuery());
+		return filterPaletteItems(paletteModelItems(), input?.value ?? "");
+	}
+
+	function renderPalette() {
+		if (!paletteEl) return;
+		if (!state.palette) {
+			paletteEl.hidden = true;
+			paletteEl.replaceChildren();
+			return;
+		}
+		paletteEl.hidden = false;
+		const layer = state.palette.layer;
+		paletteEl.setAttribute("aria-label", layer === "model" ? "选择模型" : "斜杠命令");
+		const items = paletteItems();
+		if (state.palette.index >= items.length) state.palette.index = Math.max(0, items.length - 1);
+		const nodes = [];
+		if (layer === "model" && state.palette.loading) nodes.push(h("div", { class: "chat-palette-loading", text: "正在加载模型…" }));
+		if (layer === "model" && state.palette.error) nodes.push(h("div", { class: "chat-palette-error", text: state.palette.error }));
+		if (layer === "model" && state.modelsError) nodes.push(h("div", { class: "chat-palette-error", text: `模型刷新失败：${state.modelsError}` }));
+		if (!items.length && !(layer === "model" && state.palette.loading)) {
+			const text =
+				layer === "model"
+					? state.models.length || state.modelsError
+						? "没有匹配的模型"
+						: "pi 没有可用模型，先在 models.json / 登录里配置"
+					: "没有匹配的命令";
+			nodes.push(h("div", { class: "chat-palette-empty", text }));
+		}
+		let group = null;
+		let index = 0;
+		for (const item of items) {
+			if (item.group !== group) {
+				nodes.push(h("div", { class: "chat-palette-group", text: item.group }));
+				group = item.group;
+			}
+			const current = layer === "model" && state.model && item.provider === state.model.provider && item.id === state.model.id;
+			nodes.push(
+				h(
+					"button",
+					{
+						class: `chat-palette-item${index === state.palette.index ? " is-active" : ""}`,
+						type: "button",
+						role: "option",
+						"aria-selected": String(index === state.palette.index),
+						dataset: { paletteIndex: String(index) },
+					},
+					h("span", { class: "chat-palette-check", "aria-hidden": "true", text: current ? "✓" : "" }),
+					h("span", { class: "chat-palette-label", text: item.label }),
+					item.hint ? h("span", { class: "chat-palette-hint", text: item.hint }) : null,
+				),
+			);
+			index++;
+		}
+		paletteEl.replaceChildren(...nodes);
+	}
+
+	function openPalette(layer, { draft = null } = {}) {
+		if (!currentSession() || state.enabled !== true) return;
+		const previousDraft = draft ?? state.palette?.draft ?? input?.value ?? "";
+		state.palette = { layer, index: 0, draft: previousDraft, loading: false, error: null, busy: false };
+		if (layer === "model" && input) {
+			input.value = "";
+			deps.autoGrowInput?.();
+			void loadModels({ refresh: true });
+		}
+		renderPalette();
+		updateSendButton();
+		input?.focus();
+	}
+
+	function closePalette({ restore = true, clearInput = false, focus = true } = {}) {
+		const draft = state.palette?.draft ?? "";
+		state.palette = null;
+		renderPalette();
+		if (input) {
+			if (clearInput) input.value = "";
+			else if (restore) input.value = draft;
+			deps.autoGrowInput?.();
+			if (focus) input.focus?.();
+		}
+		updateSendButton();
+	}
+
+	function backToCommandLayer() {
+		if (!state.palette) return;
+		state.palette.layer = "command";
+		state.palette.index = 0;
+		state.palette.error = null;
+		state.palette.loading = false;
+		if (input) {
+			input.value = "/";
+			deps.autoGrowInput?.();
+		}
+		renderPalette();
+	}
+
+	function paletteEscape() {
+		if (!state.palette) return;
+		if (state.palette.layer === "model") backToCommandLayer();
+		else closePalette({ restore: true });
+	}
+
+	function movePalette(delta) {
+		const items = paletteItems();
+		if (!state.palette || !items.length) return;
+		state.palette.index = (state.palette.index + delta + items.length) % items.length;
+		renderPalette();
+	}
+
+	async function activatePalette() {
+		if (!state.palette || state.palette.busy) return;
+		const items = paletteItems();
+		if (!items.length) return;
+		const item = items[state.palette.index] ?? items[0];
+		if (state.palette.layer === "command") {
+			if (item.id === "model") openPalette("model", { draft: state.palette.draft });
+			return;
+		}
+		await selectModel(item.model);
+	}
+
+	async function selectModel(model) {
+		if (!model || !state.palette || state.palette.busy) return;
+		const session = currentSession();
+		if (!session) return;
+		if (state.streaming) {
+			state.palette.error = "回复中，先停止";
+			renderPalette();
+			return;
+		}
+		if (state.model?.provider === model.provider && state.model?.id === model.id) {
+			closePalette({ clearInput: true });
+			return;
+		}
+		const key = currentKey();
+		state.palette.busy = true;
+		state.palette.error = null;
+		renderPalette();
+		try {
+			const res = await fetch("/api/chat/model", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					source: session.source,
+					session: session.id,
+					threadId: state.threadId ?? null,
+					provider: model.provider,
+					id: model.id,
+				}),
+			});
+			if (!res.ok) {
+				let message = `HTTP ${res.status}`;
+				try {
+					message = (await res.json())?.error ?? message;
+				} catch {
+					/* 非 JSON 错误体 */
+				}
+				throw new Error(message);
+			}
+			const data = await res.json();
+			if (currentKey() !== key) return;
+			state.model = data.model ?? model;
+			state.modelsError = null;
+			if (state.thread) state.thread.model = state.model;
+			closePalette({ clearInput: true });
+			pushNotice(`已切换到 ${modelLabel(state.model)}`);
+			flushRender();
+		} catch (err) {
+			if (!state.palette) return;
+			state.palette.busy = false;
+			state.palette.error = `切换失败：${err.message}`;
+			renderPalette();
+		}
+	}
+
+	function openModelPicker() {
+		if (state.streaming) {
+			pushNotice("回复中，先停止", "warn");
+			flushRender();
+			return;
+		}
+		if (!currentSession()) {
+			pushNotice("先在左侧选择一个会话", "warn");
+			flushRender();
+			return;
+		}
+		if (state.enabled !== true) return;
+		openPalette("model", { draft: state.palette?.draft ?? input?.value ?? "" });
 	}
 
 	// ------------------------------------------------------------------
@@ -570,7 +864,7 @@ export function initChatPanel(deps) {
 	}
 
 	async function send() {
-		if (state.streaming) return;
+		if (state.streaming || state.palette) return;
 		const session = currentSession();
 		if (!session || state.enabled !== true || !input) return;
 		const text = input.value.trim();
@@ -675,30 +969,89 @@ export function initChatPanel(deps) {
 		input.addEventListener("input", () => {
 			deps.autoGrowInput?.();
 			updateSendButton();
+			const value = input.value;
+			if (state.palette?.layer === "model") {
+				state.palette.index = 0;
+				renderPalette();
+				return;
+			}
+			if (/^\/[A-Za-z]*$/.test(value.trim())) {
+				if (state.palette?.layer !== "command") {
+					state.palette = { layer: "command", index: 0, draft: value, loading: false, error: null, busy: false };
+				}
+				state.palette.index = 0;
+				renderPalette();
+				return;
+			}
+			if (state.palette?.layer === "command") closePalette({ restore: false, focus: false });
 		});
 		input.addEventListener("keydown", (e) => {
-			// Enter 发送、Shift+Enter 换行；输入法组合中不误发
-			if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+			// IME 组合中不处理 Enter/方向键
+			if (e.isComposing) return;
+			if (state.palette) {
+				if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+					e.preventDefault();
+					movePalette(e.key === "ArrowDown" ? 1 : -1);
+					return;
+				}
+				if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
+					e.preventDefault();
+					e.stopPropagation();
+					void activatePalette();
+					return;
+				}
+				if (e.key === "Escape") {
+					e.preventDefault();
+					e.stopPropagation();
+					paletteEscape();
+					return;
+				}
+			}
+			// Enter 发送、Shift+Enter 换行；面板打开时 Enter 已在上面消费
+			if (e.key !== "Enter" || e.shiftKey) return;
 			e.preventDefault();
-			if (state.streaming) return;
+			if (state.streaming || state.palette) return;
 			void send();
 		});
 	}
 	if (sendBtn) {
 		sendBtn.addEventListener("click", () => {
+			if (state.palette) return;
 			if (state.streaming) void stop();
 			else void send();
 		});
 	}
+	if (paletteEl) {
+		paletteEl.addEventListener("click", (e) => {
+			const row = e.target.closest?.("[data-palette-index]");
+			if (!row || !state.palette) return;
+			state.palette.index = Number(row.dataset.paletteIndex) || 0;
+			void activatePalette();
+		});
+	}
+	el("chat-model")?.addEventListener("click", () => openModelPicker());
+	// 点击面板外关闭（面板/输入框/模型 chip 内除外）
+	document.addEventListener("click", (e) => {
+		if (!state.palette) return;
+		const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+		const inside = (node) => node && (path.includes(node) || (typeof node.contains === "function" && node.contains(e.target)));
+		if (inside(paletteEl) || inside(input) || inside(el("chat-model"))) return;
+		closePalette({ restore: true, focus: false });
+	});
 
 	render();
 
 	return {
 		setOpen(open) {
 			state.open = open === true;
+			if (!state.open) closePalette({ restore: true, focus: false });
 			if (state.open) void ensureLoaded();
 		},
 		handleEscape() {
+			if (state.palette) {
+				paletteEscape();
+				return true;
+			}
 			if (!state.streaming) return false;
 			void stop();
 			return true;
@@ -714,6 +1067,10 @@ export function initChatPanel(deps) {
 				}
 				resetStreamState();
 			}
+			closePalette({ restore: false, clearInput: true, focus: false });
+			state.models = [];
+			state.modelsAt = 0;
+			state.modelsError = null;
 			state.thread = null;
 			state.threadId = null;
 			state.model = null;

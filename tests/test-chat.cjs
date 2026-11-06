@@ -68,11 +68,11 @@ function waitFor(checkFn, timeoutMs = 3000, label = "等待事件") {
 }
 
 /** 写一个最小 pi session 文件（header + model_change + user + tool + answer）。 */
-function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复" }) {
+function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复", modelId = "fake-1" }) {
 	fs.mkdirSync(path.dirname(file), { recursive: true });
 	const lines = [
 		{ type: "session", version: 3, id, timestamp: "2026-01-01T00:00:00.000Z", cwd },
-		{ type: "model_change", id: "m1", parentId: null, timestamp: "2026-01-01T00:00:00.100Z", provider: "fake", modelId: "fake-1" },
+		{ type: "model_change", id: "m1", parentId: null, timestamp: "2026-01-01T00:00:00.100Z", provider: "fake", modelId },
 		{
 			type: "message",
 			id: "u1",
@@ -131,7 +131,7 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复" 
 
 (async () => {
 	const { parsePiVersion, versionAtLeast, resolvePiCandidates, piRpcArgs, probeFirstPi } = await import(urlOf("trajectory-web/server/pi-binary.mjs"));
-	const { RpcChild, createChatHost, checkChatDir, isPathInside, resolveAgentDir } = await import(urlOf("trajectory-web/server/chat-host.mjs"));
+	const { RpcChild, createChatHost, checkChatDir, isPathInside, resolveAgentDir, sanitizeModel, providerNameOf } = await import(urlOf("trajectory-web/server/chat-host.mjs"));
 	const chatSession = await import(urlOf("trajectory-web/server/chat-session.mjs"));
 	const { buildProjection } = await import(urlOf("trajectory-web/server/session.mjs"));
 
@@ -227,6 +227,52 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复" 
 			"<trajectory_index>x</trajectory_index><trajectory_index_delta>y</trajectory_index_delta>\n问题",
 		) === "问题",
 	);
+
+	// ---- 模型白名单 / session 模型 ----
+	const rawModel = {
+		provider: "fake",
+		id: "fake-1",
+		name: "Fake One",
+		reasoning: true,
+		contextWindow: 128000,
+		maxTokens: 4096,
+		apiKey: "sk-secret",
+		baseUrl: "https://secret.invalid",
+		headers: { authorization: "Bearer secret" },
+		oauth: { token: "x" },
+		api: "openai-completions",
+	};
+	const safeModel = sanitizeModel(rawModel);
+	check(
+		"sanitizeModel：字段白名单",
+		Object.keys(safeModel).sort().join(",") === "contextWindow,id,maxTokens,name,provider,providerName,reasoning",
+		JSON.stringify(safeModel),
+	);
+	check(
+		"sanitizeModel：不含密钥/URL/headers",
+		!/sk-secret|secret\.invalid|apiKey|baseUrl|headers|oauth|Bearer/.test(JSON.stringify(safeModel)),
+		JSON.stringify(safeModel),
+	);
+	check(
+		"sanitizeModel：缺 provider/id 返回 null",
+		sanitizeModel({ id: "x" }) === null && sanitizeModel({ provider: "p" }) === null && sanitizeModel(null) === null,
+	);
+	check("providerNameOf：已知映射 + 自定义原值", providerNameOf("litellm") === "LiteLLM" && providerNameOf("my-provider") === "my-provider");
+	const sessionModelFile = path.join(tmp, "session-models.jsonl");
+	fs.writeFileSync(
+		sessionModelFile,
+		[
+			JSON.stringify({ type: "session", version: 3, id: "s-model", timestamp: "2026-01-01T00:00:00.000Z" }),
+			JSON.stringify({ type: "model_change", id: "m1", provider: "fake", modelId: "fake-1" }),
+			JSON.stringify({ type: "message", id: "u1", message: { role: "user", content: "x" } }),
+			JSON.stringify({ type: "model_change", id: "m2", provider: "other", modelId: "fake-2" }),
+		].join("\n") + "\n",
+	);
+	check(
+		"readSessionModel：取最后一条 model_change",
+		chatSession.readSessionModel(sessionModelFile)?.provider === "other" && chatSession.readSessionModel(sessionModelFile)?.id === "fake-2",
+	);
+	check("readSessionModel：缺失文件返回 null", chatSession.readSessionModel(path.join(tmp, "no-session.jsonl")) === null);
 
 	const projFile = path.join(tmp, "proj-chat", "2026-01-01T00-00-00-000Z_thread-a.jsonl");
 	writePiSessionFile(projFile, {
@@ -328,6 +374,7 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复" 
 		cwd: "/tmp/projA",
 		userText: "<trajectory_index>x</trajectory_index>\n问题 A",
 		assistantText: "答复 A",
+		modelId: "fake-thread",
 	});
 	fs.mkdirSync(path.join(chatHttpDir, "pi", "chat-sess-1", "meta"), { recursive: true });
 	fs.writeFileSync(
@@ -335,6 +382,8 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复" 
 		JSON.stringify({ ordinal: 1, displayText: "问题 A", contextRefs: [{ id: "a1:p2", kind: "tool", label: "工具", preview: "bash" }] }) + "\n",
 	);
 
+	const traceFile = path.join(tmp, "pi-trace.log");
+	process.env.FAKE_PI_TRACE = traceFile;
 	const handle = await createTrajectoryServer({
 		scope: "all",
 		webDir: WEB,
@@ -349,7 +398,7 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复" 
 	check("HTTP：capabilities 200 且 enabled", capHttp.enabled === true && capHttp.piVersion === "1.5.0", JSON.stringify(capHttp));
 	const health = await (await fetch(`${handle.url}api/health`)).json();
 	check("HTTP：轨迹 health 不受影响", health.ok === true && health.scope === "all");
-	check("HTTP：未实现的 chat 路由 501", (await fetch(`${handle.url}api/chat/models`)).status === 501);
+	check("HTTP：未实现的 chat 路由 501", (await fetch(`${handle.url}api/chat/skills?source=pi&session=chat-sess-1`)).status === 501);
 
 	const threadUrl = (thread) =>
 		`${handle.url}api/chat/thread?source=pi&session=chat-sess-1${thread ? `&thread=${encodeURIComponent(thread)}` : ""}`;
@@ -410,6 +459,43 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复" 
 		listingPi.sessions.length === 1 && !listingPi.sessions.some((item) => item.id === "thread-a"),
 		JSON.stringify(listingPi.sessions.map((item) => item.id)),
 	);
+
+	// ---- T4：模型列表 ----
+	const modelsUrl = (extra = "") => `${handle.url}api/chat/models?source=pi&session=chat-sess-1${extra}`;
+	const modelsPlain = await (await fetch(modelsUrl())).json();
+	check(
+		"HTTP models：两个模型且 current=child 当前模型",
+		Array.isArray(modelsPlain.models) && modelsPlain.models.length === 2 && modelsPlain.current?.id === "fake-1",
+		JSON.stringify(modelsPlain).slice(0, 300),
+	);
+	check("HTTP models：refreshedAt 有值", typeof modelsPlain.refreshedAt === "string" && modelsPlain.refreshedAt.length > 0, String(modelsPlain.refreshedAt));
+	check(
+		"HTTP models：字段白名单",
+		modelsPlain.models.every((m) => Object.keys(m).sort().join(",") === "contextWindow,id,maxTokens,name,provider,providerName,reasoning"),
+		JSON.stringify(modelsPlain.models[0]),
+	);
+	check(
+		"HTTP models：无敏感字段",
+		!/sk-fake-secret|fake-header|fake-one\.invalid|fake-two\.invalid|fake-oauth|apiKey|baseUrl|headers|oauth/.test(JSON.stringify(modelsPlain)),
+		JSON.stringify(modelsPlain).slice(0, 500),
+	);
+	const modelsThread = await (await fetch(modelsUrl("&thread=thread-a"))).json();
+	check(
+		"HTTP models：带 thread 读文件里的模型",
+		modelsThread.current?.provider === "fake" && modelsThread.current?.id === "fake-thread",
+		JSON.stringify(modelsThread.current),
+	);
+	check("HTTP models：带 thread 不切 child", (await (await fetch(modelsUrl())).json()).current?.id === "fake-1");
+	const traceAfterThreadModels = fs.existsSync(traceFile) ? fs.readFileSync(traceFile, "utf8") : "";
+	check("HTTP models：带 thread 不触发 switch_session", !traceAfterThreadModels.includes("switch_session:"), traceAfterThreadModels);
+	check("HTTP models：thread 非法 400", (await fetch(modelsUrl("&thread=../x"))).status === 400);
+	check(
+		"HTTP models：thread 不存在 404",
+		(await fetch(`${handle.url}api/chat/models?source=pi&session=chat-sess-1&thread=nope`)).status === 404,
+	);
+	check("HTTP models：未知 session 404", (await fetch(`${handle.url}api/chat/models?source=pi&session=nope`)).status === 404);
+	check("HTTP models：GET /api/chat/model 405", (await fetch(`${handle.url}api/chat/model`)).status === 405);
+	check("HTTP models：POST /api/chat/models 405", (await postJson(`${handle.url}api/chat/models`, { source: "pi", session: "chat-sess-1" })).status === 405);
 
 	// ---- T3：send/stop（fake child 的 SSE 集成） ----
 	const chatBody = (prompt, extra = {}) => ({ source: "pi", session: "chat-sess-1", prompt, ...extra });
@@ -502,6 +588,48 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复" 
 	const back = await readSse(await send("hi", { threadId: "thread-a" }));
 	check("send：已有线程先 switch_session", back.events[0]?.data.threadId === "thread-a", JSON.stringify(back.events[0]));
 
+	// ---- T4：切换模型（先 switch_session 再 set_model） ----
+	const threadBFile = path.join(chatHttpDir, "pi", "chat-sess-1", "sessions", "2026-01-01T00-00-00-000Z_thread-b.jsonl");
+	writePiSessionFile(threadBFile, { id: "thread-b", cwd: "/tmp/projA", userText: "问题 B", modelId: "fake-thread-b" });
+	const traceBeforeSwitch = fs.existsSync(traceFile) ? fs.readFileSync(traceFile, "utf8") : "";
+	const switchedModel = await postJson(`${handle.url}api/chat/model`, {
+		source: "pi",
+		session: "chat-sess-1",
+		threadId: "thread-b",
+		provider: "other",
+		id: "fake-2",
+	});
+	const switchedBody = await switchedModel.json();
+	check(
+		"POST model：200 + 脱敏返回",
+		switchedModel.ok && switchedBody.ok === true && switchedBody.model?.id === "fake-2" && !/sk-fake|baseUrl|headers|apiKey/.test(JSON.stringify(switchedBody)),
+		JSON.stringify(switchedBody).slice(0, 300),
+	);
+	const traceAfterSwitch = fs.readFileSync(traceFile, "utf8").slice(traceBeforeSwitch.length);
+	const switchIdx = traceAfterSwitch.indexOf("switch_session:");
+	const setIdx = traceAfterSwitch.indexOf("set_model:");
+	check(
+		"POST model：先 switch_session 再 set_model",
+		switchIdx >= 0 && setIdx > switchIdx && /thread-b\.jsonl/.test(traceAfterSwitch.slice(switchIdx, setIdx)),
+		traceAfterSwitch,
+	);
+	check("POST model：threadId 返回目标线程", switchedBody.threadId === "thread-b", String(switchedBody.threadId));
+	const afterModel = await (await fetch(modelsUrl())).json();
+	check("POST model：GET current 反映新模型", afterModel.current?.provider === "other" && afterModel.current?.id === "fake-2", JSON.stringify(afterModel.current));
+	const modelPost = (body) => postJson(`${handle.url}api/chat/model`, { source: "pi", session: "chat-sess-1", ...body });
+	check("POST model：未知模型 400", (await modelPost({ provider: "fake", id: "nope" })).status === 400);
+	check("POST model：缺 provider 400", (await modelPost({ id: "fake-1" })).status === 400);
+	check("POST model：缺 id 400", (await modelPost({ provider: "fake" })).status === 400);
+	check("POST model：非法 threadId 400", (await modelPost({ threadId: "../x", provider: "fake", id: "fake-1" })).status === 400);
+	check("POST model：线程不存在 404", (await modelPost({ threadId: "no-such", provider: "fake", id: "fake-1" })).status === 404);
+	const slowModelRes = await send("slow");
+	const slowModelRead = readSse(slowModelRes);
+	await sleep(120);
+	const conflictModel = await modelPost({ threadId: "thread-b", provider: "fake", id: "fake-1" });
+	check("POST model：活动 turn 409", conflictModel.status === 409, String(conflictModel.status));
+	await postJson(`${handle.url}api/chat/stop`, { source: "pi", session: "chat-sess-1" });
+	await slowModelRead;
+
 	const crash = await readSse(await send("exit"));
 	check(
 		"send：child exit 中途退出 → error 事件",
@@ -510,6 +638,7 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复" 
 	);
 
 	await handle.close();
+	delete process.env.FAKE_PI_TRACE;
 
 	const noChat = await createTrajectoryServer({
 		scope: "all",

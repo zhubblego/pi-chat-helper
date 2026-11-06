@@ -155,6 +155,28 @@ function freePort() {
 		const def = await (await fetch(`${url}api/session`)).json();
 		check("默认会话 = 当前 pi 会话", def.sessionId === "ext-1", String(def.sessionId));
 
+		// ---- T4：真 pi 模型列表（进程内 chat host） ----
+		const chatCap = await (await fetch(`${url}api/chat/capabilities`)).json();
+		check("模式 A 对话 enabled（PATH pi 1.5.0）", chatCap.enabled === true, JSON.stringify(chatCap).slice(0, 300));
+		if (chatCap.enabled) {
+			const modelsRes = await (await fetch(`${url}api/chat/models?source=pi&session=ext-1`)).json();
+			check("真 pi 模型列表非空", Array.isArray(modelsRes.models) && modelsRes.models.length > 0, JSON.stringify(modelsRes).slice(0, 300));
+			check(
+				"真 pi 模型列表无密钥字段",
+				!/"apiKey"|"baseUrl"|"headers"|"oauth"|api_key|authorization/i.test(JSON.stringify(modelsRes)),
+				JSON.stringify(modelsRes).slice(0, 300),
+			);
+			check(
+				"真 pi current 有 provider/id",
+				typeof modelsRes.current?.provider === "string" && typeof modelsRes.current?.id === "string",
+				JSON.stringify(modelsRes.current),
+			);
+		} else {
+			check("真 pi 模型列表非空", false, chatCap.reason);
+			check("真 pi 模型列表无密钥字段", false, chatCap.reason);
+			check("真 pi current 有 provider/id", false, chatCap.reason);
+		}
+
 		// ---- 精确工具归属（模式 A：来自 pi.getAllTools().sourceInfo） ----
 		const origins = await (await fetch(`${url}api/tool-origins`)).json();
 		check(

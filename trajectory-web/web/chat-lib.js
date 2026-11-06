@@ -90,3 +90,44 @@ export function chatSessionRef(input = {}) {
 export function isCurrentTurn(turn, currentKey) {
 	return Boolean(turn && turn.settled !== true && currentKey && turn.key === currentKey);
 }
+
+/** 模型展示名：name 优先，缺失用 id；过长截断。 */
+export function modelLabel(model, max = 40) {
+	if (!model) return "";
+	const label = String(model.name || model.id || "").trim();
+	if (!label) return "";
+	const limit = Math.max(1, Number(max) || 40);
+	return label.length > limit ? `${label.slice(0, limit - 1)}…` : label;
+}
+
+/** 上下文窗口：1M / 200K / 128K / 32000（低于 100K 保留原数）。 */
+export function formatContextWindow(n) {
+	const value = Number(n);
+	if (!Number.isFinite(value) || value <= 0) return "";
+	const trim = (x) => String(Number(x.toFixed(1)));
+	if (value >= 1_000_000) return `${trim(value / 1_000_000)}M`;
+	if (value >= 100_000) return `${trim(value / 1000)}K`;
+	return String(Math.round(value));
+}
+
+/**
+ * 斜杠面板过滤：多词 AND、大小写不敏感，匹配 label/hint/group/search。
+ * @param {Array<{label?:string,hint?:string,group?:string,search?:string}>} items
+ * @param {string} query
+ */
+export function filterPaletteItems(items, query) {
+	const list = Array.isArray(items) ? items : [];
+	const terms = String(query ?? "")
+		.trim()
+		.toLowerCase()
+		.split(/\s+/)
+		.filter(Boolean);
+	if (!terms.length) return list.slice();
+	return list.filter((item) => {
+		const hay = [item?.label, item?.hint, item?.group, item?.search]
+			.filter((value) => typeof value === "string" && value)
+			.join(" ")
+			.toLowerCase();
+		return terms.every((term) => hay.includes(term));
+	});
+}
