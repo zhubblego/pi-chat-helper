@@ -112,6 +112,8 @@ const STATIC = new Map([
 	["/index.html", ["index.html", "text/html; charset=utf-8"]],
 	["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
 	["/lib.js", ["lib.js", "text/javascript; charset=utf-8"]],
+	["/chat.js", ["chat.js", "text/javascript; charset=utf-8"]],
+	["/chat-lib.js", ["chat-lib.js", "text/javascript; charset=utf-8"]],
 	["/style.css", ["style.css", "text/css; charset=utf-8"]],
 	["/tokens.css", ["tokens.css", "text/css; charset=utf-8"]],
 ]);
@@ -139,6 +141,7 @@ const MAX_CACHED_PROJECTIONS = 4;
  *   piBin?: { cmd: string, argsPrefix?: string[], mode?: boolean, display?: string },
  *   hostEntry?: string,
  *   hostExecPath?: string,
+ *   chatPingMs?: number,
  * }} options
  * @returns {Promise<{port:number, host:string, url:string, server:import("node:http").Server, close:() => Promise<void>}>}
  */
@@ -316,6 +319,7 @@ export function createTrajectoryServer(options) {
 				readSessions,
 				resolveSession,
 				availableSources,
+				ssePingMs: options.chatPingMs,
 				log,
 			})
 		: null;

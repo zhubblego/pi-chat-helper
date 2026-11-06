@@ -1,9 +1,10 @@
 /**
  * chat-host.mjs — 对话控制面。
  *
- * 职责（T1 骨架）：
+ * 职责：
  *   - 解析/探测 pi 可执行文件，返回 capabilities；
- *   - 提供可复用的 RpcChild（JSON line over stdio），后续线程/SSE 阶段直接使用；
+ *   - 提供可复用的 RpcChild（JSON line over stdio）；
+ *   - 线程读取/新建（T2）与 send/stop 的 SSE 流（T3）；
  *   - 关闭时回收所有子进程。
  *
  * 本文件不 import pi SDK；子进程用 CLI 启动。
@@ -27,6 +28,16 @@ import { MIN_PI_VERSION_TEXT, parsePiVersion, piRpcArgs, probeFirstPi, probePi, 
 
 const CAP_TTL_MS = 30_000;
 const STDERR_LIMIT = 8 * 1024;
+const PROMPT_MAX_CHARS = 32_000;
+const SSE_PING_MS = 15_000;
+const PREVIEW_CHARS = 400;
+
+const SSE_HEADERS = {
+	"content-type": "text/event-stream; charset=utf-8",
+	"cache-control": "no-cache, no-store",
+	connection: "keep-alive",
+	"x-accel-buffering": "no",
+};
 
 export const CHAT_PROFILES = ["no-tools", "read-only", "full"];
 export const DEFAULT_PROFILE = "read-only";
@@ -237,6 +248,67 @@ export class RpcChild {
 	}
 }
 
+function clip(value, max = PREVIEW_CHARS) {
+	const text = String(value ?? "");
+	return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+/** 工具参数摘要：JSON 一行 + 截断，避免把大参数整体塞进 SSE。 */
+function argsPreviewOf(args) {
+	if (args === undefined || args === null) return "";
+	if (typeof args === "string") return clip(args, 300);
+	try {
+		return clip(JSON.stringify(args), 300);
+	} catch {
+		return clip(String(args), 300);
+	}
+}
+
+/** 工具结果摘要：优先取文本 content，其余类型退化为 JSON。 */
+function resultPreviewOf(result) {
+	if (result === undefined || result === null) return "";
+	if (typeof result === "string") return clip(result);
+	if (typeof result.output === "string") return clip(result.output);
+	if (Array.isArray(result.content)) {
+		const text = result.content
+			.filter((item) => item?.type === "text")
+			.map((item) => String(item.text ?? ""))
+			.join("\n");
+		if (text) return clip(text);
+	}
+	try {
+		return clip(JSON.stringify(result));
+	} catch {
+		return "";
+	}
+}
+
+/** done 事件：stopReason/usage/durationMs 取本次 run 的最后一条 assistant。 */
+function lastAssistantMeta(messages) {
+	const list = Array.isArray(messages) ? messages : [];
+	for (let i = list.length - 1; i >= 0; i--) {
+		const msg = list[i];
+		if (msg?.role !== "assistant") continue;
+		const usage = msg.usage
+			? {
+					input: Number(msg.usage.input ?? 0),
+					output: Number(msg.usage.output ?? 0),
+					totalTokens: Number(msg.usage.totalTokens ?? 0),
+				}
+			: null;
+		return {
+			stopReason: msg.stopReason ?? null,
+			usage,
+			durationMs: Number.isFinite(msg.durationMs) ? msg.durationMs : null,
+		};
+	}
+	return { stopReason: null, usage: null, durationMs: null };
+}
+
+function errorText(err) {
+	return clip(err?.message ?? String(err), 500);
+}
+
 function disabledCapabilities(chatDir, reason) {
 	return {
 		enabled: false,
@@ -274,6 +346,7 @@ function disabledCapabilities(chatDir, reason) {
  *   readSessions?: (source: string) => object[],
  *   resolveSession?: (sessions: object[], id: string) => object | null,
  *   availableSources?: () => Array<{id: string, label: string}>,
+ *   ssePingMs?: number,
  *   log?: (message:string)=>void,
  * }} [deps]
  */
@@ -284,6 +357,11 @@ export function createChatHost(deps = {}) {
 	const sessionRoots = (deps.sessionRoots ?? []).filter(Boolean).map((root) => resolve(root));
 	/** @type {Map<string, object>} */
 	const children = new Map();
+	/** 同项目串行：key = `${source}:${projectPath}`，值 = 活动 turn。 */
+	const projectTurns = new Map();
+	/** 启动中的 child（同 key 并发请求复用同一次 spawn）。 */
+	const starting = new Map();
+	const ssePingMs = deps.ssePingMs ?? SSE_PING_MS;
 	let resolvedPi = deps.pi ?? null;
 	let capCache = null;
 
@@ -472,9 +550,21 @@ export function createChatHost(deps = {}) {
 
 	async function ensureChild(source, sessionId, options = {}) {
 		const key = `${source}:${sessionId}`;
+		// 先看启动中的 promise：否则并发请求会拿到 state="starting"、piSessionId 为 null 的半成品
+		const inflight = starting.get(key);
+		if (inflight) return inflight;
 		const existing = children.get(key);
 		if (existing && existing.state !== "dead") return existing;
+		const promise = spawnChild(key, source, sessionId, options);
+		starting.set(key, promise);
+		try {
+			return await promise;
+		} finally {
+			starting.delete(key);
+		}
+	}
 
+	async function spawnChild(key, source, sessionId, options = {}) {
 		const target = options.target ?? resolveTarget(source, sessionId);
 		const pi = await requirePi();
 		const dirs = chatSessionDirs(chatDir, source, sessionId);
@@ -532,6 +622,243 @@ export function createChatHost(deps = {}) {
 			await child.close({ graceMs: 500 });
 			throw httpError(502, `pi 子进程启动失败：${err.message}`);
 		}
+	}
+
+	/** 关掉现有 child，下次 ensureChild 用新的 spawn 参数（--session-id）重建。 */
+	async function restartChild(record) {
+		if (record.currentTurn) throw httpError(409, "回复中，先停止再切换线程");
+		if (children.get(record.key) === record) children.delete(record.key);
+		record.state = "dead";
+		await record.child.close({ graceMs: 800 });
+	}
+
+	/** 让 child 切到指定线程（文件必须已存在）；返回最新 get_state。 */
+	async function switchThread(record, file) {
+		const switched = await record.child.send({ type: "switch_session", sessionPath: file.file }, { timeoutMs: 20_000 });
+		if (switched.data?.cancelled) throw httpError(409, "切换到线程被取消");
+		return await readChildState(record);
+	}
+
+	async function readChildState(record) {
+		const state = await record.child.send({ type: "get_state" }, { timeoutMs: 15_000 });
+		record.piSessionId = state.data?.sessionId ?? record.piSessionId;
+		record.sessionFile = state.data?.sessionFile ?? null;
+		record.lastUsedAt = Date.now();
+		return state;
+	}
+
+	function writeSse(res, event, data) {
+		if (res.writableEnded || res.destroyed) return false;
+		try {
+			res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	async function handleSend(_req, res, rawBody) {
+		let payload;
+		try {
+			payload = JSON.parse(rawBody || "{}");
+		} catch {
+			throw httpError(400, "请求体不是合法 JSON");
+		}
+
+		const target = resolveTarget(payload.source, payload.session);
+		const prompt = typeof payload.prompt === "string" ? payload.prompt.trim() : "";
+		if (!prompt) throw httpError(400, "prompt 不能为空");
+		if (prompt.length > PROMPT_MAX_CHARS) throw httpError(400, `prompt 超过 ${PROMPT_MAX_CHARS} 字符`);
+		const requestedThread = payload.threadId ?? null;
+		if (requestedThread !== null && !isSafeThreadId(requestedThread)) throw httpError(400, "非法线程 id");
+
+		const cap = await capabilities();
+		if (!cap.enabled) throw httpError(501, cap.reason ?? "对话未启用");
+
+		const dirs = chatSessionDirs(chatDir, target.source, target.sessionId);
+		// 未指定线程时沿用该轨迹会话最新的 pi session；都没有则由 pi 新建。
+		const desiredThreadId =
+			requestedThread ?? readSessionId(latestThreadFile(dirs.sessionsDir)?.file ?? "") ?? null;
+
+		let record = await ensureChild(target.source, target.sessionId, { target, threadId: desiredThreadId ?? undefined });
+
+		// 指定线程但文件不存在：已有 child 停在其他 session 时无法 switch，重启后用 --session-id 新建。
+		if (desiredThreadId && record.piSessionId !== desiredThreadId && !findThreadFile(dirs.sessionsDir, desiredThreadId)) {
+			await restartChild(record);
+			record = await ensureChild(target.source, target.sessionId, { target, threadId: desiredThreadId });
+		}
+
+		const projectKey = `${target.source}:${record.projectPath ?? ""}`;
+		// 同步占锁：检查与占位之间不能有 await，否则并发请求会同时通过。
+		if (record.currentTurn) throw httpError(409, "该对话正在生成回复，先停止再发送");
+		if (projectTurns.has(projectKey)) throw httpError(409, "本项目还有对话在生成，请稍后再试");
+
+		/** @type {{record:object, projectKey:string, aborted:boolean, finished:boolean, ping:any}} */
+		const turn = {
+			record,
+			projectKey,
+			aborted: false,
+			finished: false,
+			ping: null,
+		};
+		record.currentTurn = turn;
+		projectTurns.set(projectKey, turn);
+
+		let headersSent = false;
+		let offEvent = () => {};
+		let onClose = () => {};
+		try {
+			// 线程已存在但与 child 当前 session 不同：先切会话（此时已占锁，不会与别的 turn 交叉）。
+			if (desiredThreadId && record.piSessionId !== desiredThreadId) {
+				const file = findThreadFile(dirs.sessionsDir, desiredThreadId);
+				if (!file) throw httpError(404, `线程 ${desiredThreadId} 不存在`);
+				await switchThread(record, file);
+			}
+			const state = await readChildState(record);
+
+			res.writeHead(200, SSE_HEADERS);
+			headersSent = true;
+			writeSse(res, "meta", {
+				threadId: record.piSessionId,
+				model: modelOfState(state.data?.model),
+				profile: record.profile,
+			});
+
+			turn.ping = setInterval(() => {
+				if (res.writableEnded || res.destroyed) return;
+				try {
+					res.write(": ping\n\n");
+				} catch {
+					/* 连接已断，close 回收 */
+				}
+			}, ssePingMs);
+			turn.ping.unref?.();
+
+			let settle = () => {};
+			const finished = new Promise((resolvePromise) => {
+				settle = resolvePromise;
+			});
+			let doneSent = false;
+			let thinkingSent = false;
+
+			const finish = (event, data) => {
+				if (doneSent) return;
+				doneSent = true;
+				writeSse(res, event, data);
+				settle();
+			};
+
+			offEvent = record.child.onEvent((event) => {
+				if (turn.finished || doneSent) return;
+				switch (event.type) {
+					case "message_update": {
+						const update = event.assistantMessageEvent;
+						if (update?.type === "text_delta") {
+							writeSse(res, "delta", { text: String(update.delta ?? "") });
+						} else if (update?.type === "thinking_delta" && !thinkingSent) {
+							thinkingSent = true;
+							writeSse(res, "status", { phase: "thinking" });
+						}
+						break;
+					}
+					case "tool_execution_start":
+						writeSse(res, "tool", {
+							phase: "start",
+							toolCallId: event.toolCallId ?? null,
+							toolName: event.toolName ?? "tool",
+							argsPreview: argsPreviewOf(event.args),
+						});
+						break;
+					case "tool_execution_end":
+						writeSse(res, "tool", {
+							phase: "end",
+							toolCallId: event.toolCallId ?? null,
+							toolName: event.toolName ?? "tool",
+							isError: event.isError === true,
+							resultPreview: resultPreviewOf(event.result),
+						});
+						break;
+					case "agent_end": {
+						const last = lastAssistantMeta(event.messages);
+						finish("done", {
+							stopReason: turn.aborted ? "aborted" : last.stopReason,
+							usage: last.usage,
+							durationMs: last.durationMs,
+						});
+						break;
+					}
+					case "child_error":
+						finish("error", { message: errorText(event.message ?? "pi 子进程启动失败"), code: "child_error" });
+						break;
+					case "child_exit":
+						finish("error", {
+							message: `pi 子进程已退出（code=${event.code ?? "null"}）${event.stderr ? `：${clip(event.stderr, 300)}` : ""}`,
+							code: "child_exit",
+						});
+						break;
+					// agent_settled：done 已由 agent_end 发出，忽略避免重复收尾
+					// extension_ui_request：审批留到 T7，当前 profile 不会触发
+					default:
+						break;
+				}
+			});
+
+			onClose = () => {
+				if (turn.finished) return;
+				turn.aborted = true;
+				record.child.send({ type: "abort" }, { timeoutMs: 10_000 }).catch(() => {});
+				settle();
+			};
+			res.on("close", onClose);
+
+			const accepted = await record.child.send({ type: "prompt", message: prompt }, { timeoutMs: 30_000 });
+			if (accepted.data?.disposition === "handled") {
+				// 扩展命令/输入处理器消费了 prompt：不会再有 agent_end，直接收尾。
+				finish("done", { stopReason: "stop", usage: null, durationMs: null });
+			}
+			await finished;
+		} catch (err) {
+			if (!headersSent) throw err;
+			writeSse(res, "error", { message: errorText(err), code: err.status ? "request" : "rpc_error" });
+		} finally {
+			turn.finished = true;
+			if (turn.ping) clearInterval(turn.ping);
+			offEvent();
+			res.off("close", onClose);
+			if (record.currentTurn === turn) record.currentTurn = null;
+			if (projectTurns.get(projectKey) === turn) projectTurns.delete(projectKey);
+			// meta 之前失败走 JSON（外层 sendJson），这里不能提前 end 响应
+			if (headersSent && !res.writableEnded) {
+				try {
+					res.end();
+				} catch {
+					/* 连接已断 */
+				}
+			}
+		}
+	}
+
+	async function handleStop(rawBody, res, sendJson) {
+		let payload;
+		try {
+			payload = JSON.parse(rawBody || "{}");
+		} catch {
+			throw httpError(400, "请求体不是合法 JSON");
+		}
+		const target = resolveTarget(payload.source, payload.session);
+		const record = children.get(`${target.source}:${target.sessionId}`) ?? null;
+		const turn = record?.currentTurn ?? null;
+		if (!turn) {
+			sendJson(res, 200, { ok: true, stopped: false });
+			return;
+		}
+		turn.aborted = true;
+		try {
+			await record.child.send({ type: "abort" }, { timeoutMs: 10_000 });
+		} catch {
+			/* child 已退出：SSE 侧会收到 child_exit */
+		}
+		sendJson(res, 200, { ok: true, stopped: true });
 	}
 
 	async function handleGetThread(url, res, sendJson) {
@@ -634,6 +961,22 @@ export function createChatHost(deps = {}) {
 				sendJson(res, 405, { error: "method not allowed" });
 				return true;
 			}
+			if (url.pathname === "/api/chat/send") {
+				if (req.method !== "POST") {
+					sendJson(res, 405, { error: "method not allowed" });
+					return true;
+				}
+				await handleSend(req, res, body);
+				return true;
+			}
+			if (url.pathname === "/api/chat/stop") {
+				if (req.method !== "POST") {
+					sendJson(res, 405, { error: "method not allowed" });
+					return true;
+				}
+				await handleStop(body, res, sendJson);
+				return true;
+			}
 			return false;
 		} catch (err) {
 			sendJson(res, err.status ?? 500, { error: err.message });
@@ -642,8 +985,15 @@ export function createChatHost(deps = {}) {
 	}
 
 	async function close() {
+		// 先 abort 活动 turn（让 pi 把 partial 写回 session），再杀进程。
+		await Promise.allSettled(
+			[...children.values()]
+				.filter((record) => record.currentTurn)
+				.map((record) => record.child?.send({ type: "abort" }, { timeoutMs: 2000 })),
+		);
 		await Promise.allSettled([...children.values()].map((record) => record.child?.close()));
 		children.clear();
+		projectTurns.clear();
 	}
 
 	return {

@@ -35,6 +35,8 @@ export interface TrajectoryServerOptions {
 	piBin?: PiBinSpec | string;
 	hostEntry?: string;
 	hostExecPath?: string;
+	/** SSE 保活间隔（毫秒）；默认 15000，仅测试注入小值。 */
+	chatPingMs?: number;
 }
 
 export interface TrajectoryServerHandle {

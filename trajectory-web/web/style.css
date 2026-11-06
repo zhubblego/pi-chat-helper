@@ -1283,6 +1283,44 @@ mark.ev-hit {
 	outline: none;
 }
 
+/* 对话头：模型 / 工具权限 chip（T4/T7 接选择器，当前只读展示） */
+.chat-head {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 38px;
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.chat-model,
+.chat-profile {
+	min-width: 0;
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	border: 0;
+	border-radius: 999px;
+	padding: 3px 10px;
+	background: var(--dsw-alias-bg-layer-2);
+	color: var(--dsw-alias-label-secondary);
+	font: var(--dsw-font-xs-13);
+}
+
+.chat-model {
+	flex: 1 1 auto;
+	text-align: left;
+	color: var(--dsw-alias-label-primary);
+	font: var(--dsw-font-xs-strong-13);
+}
+
+.chat-profile {
+	flex: none;
+	color: var(--dsw-alias-label-tertiary);
+}
+
 /* 手动拖过高度：输入区固定高，输入卡与 textarea 撑满（不再按内容自适应） */
 .chat-drawer[data-composer="manual"] .chat-composer {
 	height: var(--tw-composer-h);
@@ -1320,6 +1358,41 @@ mark.ev-hit {
 	line-height: 20px;
 }
 
+/* 加载线程：三条骨架气泡，不转圈遮住整个抽屉 */
+.chat-skeleton {
+	height: 44px;
+	border-radius: var(--dsw-radius-lg);
+	background: var(--dsw-alias-bg-layer-2);
+	animation: chat-skeleton-pulse 1.2s var(--ds-ease-in-out) infinite;
+}
+
+.chat-skeleton.short {
+	width: 62%;
+}
+
+@keyframes chat-skeleton-pulse {
+	0%,
+	100% {
+		opacity: 0.55;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+
+.chat-msg-user {
+	align-self: flex-end;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 4px;
+	max-width: 82%;
+}
+
+.chat-msg-user .chat-msg.user {
+	max-width: 100%;
+}
+
 .chat-msg.user {
 	align-self: flex-end;
 	max-width: 82%;
@@ -1341,12 +1414,166 @@ mark.ev-hit {
 	color: var(--dsw-alias-label-primary);
 }
 
+.chat-msg.ai.is-streaming {
+	position: relative;
+}
+
+.chat-msg-meta {
+	margin-top: 6px;
+	color: var(--dsw-alias-label-caption);
+	font: var(--dsw-font-xxs-12);
+}
+
+.chat-thinking {
+	color: var(--dsw-alias-label-caption);
+	font: var(--dsw-font-xs-13);
+}
+
+/* 流式光标：跟随末段文本闪烁 */
+.chat-stream-cursor {
+	display: inline-block;
+	margin-left: 2px;
+	color: var(--dsw-alias-state-business-primary);
+	animation: chat-cursor-blink 1s steps(2, start) infinite;
+}
+
+@keyframes chat-cursor-blink {
+	0%,
+	49% {
+		opacity: 1;
+	}
+	50%,
+	100% {
+		opacity: 0;
+	}
+}
+
+.chat-msg-error {
+	margin-top: 6px;
+	color: var(--dsw-alias-state-error-primary);
+	font: var(--dsw-font-xs-13);
+}
+
+.chat-notice {
+	align-self: center;
+	max-width: 90%;
+	text-align: center;
+	color: var(--dsw-alias-label-caption);
+	font: var(--dsw-font-xs-13);
+	line-height: 18px;
+}
+
+.chat-notice.is-error {
+	color: var(--dsw-alias-state-error-primary);
+}
+
+/* 工具卡片：工具名/参数/结果/错误色；复用轨迹的事件 token */
+.chat-tool {
+	align-self: stretch;
+	border: 1px solid var(--dsw-alias-border-l1);
+	border-radius: var(--dsw-radius-md);
+	background: var(--dsw-alias-bg-layer-2);
+	overflow: hidden;
+}
+
+.chat-tool.is-error {
+	border-color: var(--dsw-alias-state-error-primary);
+}
+
+.chat-tool-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 10px;
+	border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.chat-tool-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--dsw-alias-label-primary);
+	font: var(--dsw-font-xs-strong-13);
+}
+
+.chat-tool-phase {
+	margin-left: auto;
+	flex: none;
+	color: var(--dsw-alias-label-caption);
+	font: var(--dsw-font-xxs-12);
+}
+
+.chat-tool-phase.is-error {
+	color: var(--dsw-alias-state-error-primary);
+}
+
+.chat-tool-body {
+	max-height: 160px;
+	overflow: auto;
+	padding: 6px 10px;
+	color: var(--dsw-alias-label-secondary);
+	font-family: var(--ds-font-family-code);
+	font-size: 12px;
+	line-height: 18px;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.chat-tool-body.result {
+	border-top: 1px dashed var(--dsw-alias-border-l1);
+	color: var(--dsw-alias-label-tertiary);
+}
+
+.chat-tool-body.is-error {
+	color: var(--dsw-alias-state-error-primary);
+}
+
+/* 窄窗口：模型/profile chip 收窄，不挤占消息宽度 */
+@media (max-width: 900px) {
+	.chat-model,
+	.chat-profile {
+		max-width: 45%;
+	}
+}
+
 /* 输入卡（复刻上游 InputBar：输入面 token 填充 + 面板圆角 + l2 发丝线/软阴影；textarea 透明无边框） */
 .chat-composer {
 	position: relative;
 	flex: none;
 	padding: 10px 12px 12px;
 	border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+/* 占位：上下文 chips / 斜杠面板 / 技能 chip（T5/T6 接入，先占好定位与视觉） */
+.chat-context {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-bottom: 8px;
+}
+
+.chat-palette {
+	position: absolute;
+	left: 12px;
+	right: 12px;
+	bottom: calc(100% - 2px);
+	max-height: 260px;
+	overflow-y: auto;
+	border: 1px solid var(--dsw-alias-border-l2);
+	border-radius: var(--dsw-radius-lg);
+	background: var(--dsw-alias-bg-layer-1);
+	box-shadow: var(--dsw-elevation-soft);
+	z-index: 4;
+}
+
+.chat-skill {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 10px 0;
+	color: var(--dsw-alias-label-secondary);
+	font: var(--dsw-font-xs-13);
 }
 
 .chat-card {
@@ -1407,6 +1634,11 @@ mark.ev-hit {
 .chat-send svg {
 	width: 16px;
 	height: 16px;
+}
+
+.chat-stop-glyph {
+	font-size: 11px;
+	line-height: 1;
 }
 
 @media (hover: hover) {

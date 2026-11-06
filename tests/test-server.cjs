@@ -2,7 +2,8 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
+const { spawn, execFileSync } = require("node:child_process");
+const { pathToFileURL } = require("node:url");
 
 let failed = 0;
 const check = (label, cond, extra = "") => {
@@ -14,6 +15,36 @@ const ROOT = path.join(__dirname, "..");
 const SERVER = path.join(ROOT, "trajectory-web", "server", "main.mjs");
 const WEB = path.join(ROOT, "trajectory-web", "web");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** 读完一条 SSE 流，按事件块解析成 {event,data} 数组（原始文本保留给保活断言）。 */
+async function readSse(response) {
+	if (!response.body) throw new Error("响应没有可读流");
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder("utf-8");
+	let buffer = "";
+	let raw = "";
+	const events = [];
+	while (true) {
+		const { value, done } = await reader.read();
+		if (done) break;
+		const text = decoder.decode(value, { stream: true });
+		raw += text;
+		buffer += text;
+		let index;
+		while ((index = buffer.indexOf("\n\n")) >= 0) {
+			const block = buffer.slice(0, index);
+			buffer = buffer.slice(index + 2);
+			let event = "message";
+			const data = [];
+			for (const line of block.split("\n")) {
+				if (line.startsWith("event:")) event = line.slice(6).trim();
+				else if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+			}
+			if (data.length) events.push({ event, data: JSON.parse(data.join("\n")) });
+		}
+	}
+	return { events, raw };
+}
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tw-srv-"));
 const sessionsRoot = path.join(tmp, "sessions");
@@ -241,6 +272,106 @@ async function stopServer(child) {
 		check("project-path 不匹配时 codex 空列表", (await (await fetch(`${baseZ}/api/sessions?source=codex`)).json()).sessions?.length === 0);
 		check("project-path 不匹配退出", await stopServer(project));
 		project = null;
+
+		// ---- T3：对话 SSE（进程内，fake child） ----
+		const { createTrajectoryServer } = await import(pathToFileURL(path.join(ROOT, "trajectory-web", "server", "app.mjs")).href);
+		const FAKE = path.join(__dirname, "fixtures", "fake-pi.cjs");
+		const chatSessions = path.join(tmp, "chat-sessions");
+		const chatProject = path.join(tmp, "chat-project");
+		const otherProject = path.join(tmp, "chat-project-2");
+		fs.mkdirSync(chatProject, { recursive: true });
+		fs.mkdirSync(otherProject, { recursive: true });
+		for (const dir of [path.join(chatSessions, "--c1--"), path.join(chatSessions, "--c2--")]) fs.mkdirSync(dir, { recursive: true });
+		writeSession(path.join(chatSessions, "--c1--"), { id: "cs-1", cwd: chatProject, first: "对话一" });
+		writeSession(path.join(chatSessions, "--c1--"), { id: "cs-2", cwd: chatProject, first: "对话二" });
+		writeSession(path.join(chatSessions, "--c2--"), { id: "cs-3", cwd: otherProject, first: "对话三" });
+
+		const chatServer = await createTrajectoryServer({
+			scope: "all",
+			webDir: WEB,
+			sessionsRoot: chatSessions,
+			codexRoot: path.join(tmp, "no-codex"),
+			port: 0,
+			chat: true,
+			chatDir: path.join(tmp, "chat-srv-dir"),
+			piBin: { cmd: process.execPath, argsPrefix: [FAKE], mode: false, display: "fake-pi" },
+			chatPingMs: 25,
+		});
+		const chatBase = chatServer.url;
+		const send = (session, prompt, extra = {}) =>
+			fetch(`${chatBase}api/chat/send`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ source: "pi", session, prompt, ...extra }),
+			});
+
+		check("chat：静态 /chat.js 200", (await fetch(`${chatBase}chat.js`)).status === 200);
+		check("chat：静态 /chat-lib.js 200", (await fetch(`${chatBase}chat-lib.js`)).status === 200);
+
+		const toolStream = await readSse(await send("cs-1", "think tool"));
+		const order = toolStream.events.map((e) => e.event);
+		check(
+			"chat：SSE 顺序 meta→status→delta→tool→done",
+			order[0] === "meta" &&
+				order.indexOf("status") > 0 &&
+				order.indexOf("delta") > order.indexOf("status") &&
+				order.indexOf("tool") > order.indexOf("delta") &&
+				order.at(-1) === "done",
+			JSON.stringify(order),
+		);
+		check("chat：meta 的 threadId 是 pi session id", toolStream.events[0].data.threadId === "fake-session-1", JSON.stringify(toolStream.events[0]?.data));
+		check("chat：done 只发一次", order.filter((e) => e === "done").length === 1, JSON.stringify(order));
+
+		const slowRes = await send("cs-1", "slow");
+		const slowRead = readSse(slowRes);
+		await sleep(120);
+		const sameChild = await send("cs-1", "second");
+		check("chat：同 child 已有 turn 409", sameChild.status === 409, String(sameChild.status));
+		const sameProject = await send("cs-2", "second");
+		check("chat：同项目另一个 child 409", sameProject.status === 409, String(sameProject.status));
+		await fetch(`${chatBase}api/chat/stop`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ source: "pi", session: "cs-1" }),
+		});
+		const slow = await slowRead;
+		check("chat：保活注释出现（chatPingMs=25）", slow.raw.includes(": ping"), slow.raw.slice(0, 200));
+		check("chat：stop 后以 done(aborted) 收尾", slow.events.at(-1)?.event === "done" && slow.events.at(-1)?.data.stopReason === "aborted", JSON.stringify(slow.events.at(-1)));
+		const afterStop = await (await fetch(`${chatBase}api/chat/stop`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ source: "pi", session: "cs-1" }),
+		})).json();
+		check("chat：收尾后 turn/项目锁已释放（stopped=false）", afterStop.stopped === false, JSON.stringify(afterStop));
+
+		// 浏览器断开：取消读取 → res.close → abort；锁与 turn 必须回收
+		const dropRes = await send("cs-3", "slow");
+		const dropReader = dropRes.body.getReader();
+		await dropReader.read();
+		await dropReader.cancel().catch(() => {});
+		await sleep(200);
+		const afterDrop = await (await fetch(`${chatBase}api/chat/stop`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ source: "pi", session: "cs-3" }),
+		})).json();
+		check("chat：客户端断开后 turn 已回收", afterDrop.stopped === false, JSON.stringify(afterDrop));
+
+		const crash = await readSse(await send("cs-1", "exit"));
+		check(
+			"chat：child exit 转 error 事件",
+			crash.events.some((e) => e.event === "error" && e.data.code === "child_exit"),
+			JSON.stringify(crash.events.at(-1)),
+		);
+
+		await chatServer.close();
+		let residual = "";
+		try {
+			residual = execFileSync("pgrep", ["-f", FAKE], { encoding: "utf8" }).trim();
+		} catch {
+			residual = "";
+		}
+		check("chat：server.close 后无 fake child 残留", residual === "", residual);
 	} catch (err) {
 		check("测试执行", false, err.stack);
 	} finally {

@@ -16,6 +16,42 @@ const WEB = path.join(ROOT, "trajectory-web", "web");
 const urlOf = (rel) => pathToFileURL(path.join(ROOT, rel)).href;
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tw-chat-"));
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function postJson(url, body) {
+	return fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+}
+
+/** 读完一条 SSE 流，按事件块解析成 {event,data} 数组（同时保留原始文本）。 */
+async function readSse(response) {
+	if (!response.body) throw new Error("响应没有可读流");
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder("utf-8");
+	let buffer = "";
+	let raw = "";
+	const events = [];
+	while (true) {
+		const { value, done } = await reader.read();
+		if (done) break;
+		const text = decoder.decode(value, { stream: true });
+		raw += text;
+		buffer += text;
+		let index;
+		while ((index = buffer.indexOf("\n\n")) >= 0) {
+			const block = buffer.slice(0, index);
+			buffer = buffer.slice(index + 2);
+			let event = "message";
+			const data = [];
+			for (const line of block.split("\n")) {
+				if (line.startsWith("event:")) event = line.slice(6).trim();
+				else if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+			}
+			if (data.length) events.push({ event, data: JSON.parse(data.join("\n")) });
+		}
+	}
+	return { events, raw };
+}
+
 function waitFor(checkFn, timeoutMs = 3000, label = "等待事件") {
 	return new Promise((resolve, reject) => {
 		const started = Date.now();
@@ -373,6 +409,104 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复" 
 		"HTTP：/api/sessions 不含 chat 文件",
 		listingPi.sessions.length === 1 && !listingPi.sessions.some((item) => item.id === "thread-a"),
 		JSON.stringify(listingPi.sessions.map((item) => item.id)),
+	);
+
+	// ---- T3：send/stop（fake child 的 SSE 集成） ----
+	const chatBody = (prompt, extra = {}) => ({ source: "pi", session: "chat-sess-1", prompt, ...extra });
+	const send = (prompt, extra = {}) =>
+		fetch(`${handle.url}api/chat/send`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(chatBody(prompt, extra)),
+		});
+
+	const firstRes = await send("hi");
+	check("send：200", firstRes.status === 200, String(firstRes.status));
+	check("send：text/event-stream; charset=utf-8", (firstRes.headers.get("content-type") ?? "").startsWith("text/event-stream"));
+	const first = await readSse(firstRes);
+	check(
+		"SSE：meta 首事件（切到最新线程）",
+		first.events[0]?.event === "meta" && first.events[0].data.threadId === "thread-a",
+		JSON.stringify(first.events[0]),
+	);
+	check("SSE：meta 含 model/profile", first.events[0].data.model?.id === "fake-1" && first.events[0].data.profile === "read-only", JSON.stringify(first.events[0].data));
+	check(
+		"SSE：delta 拼接",
+		first.events.filter((e) => e.event === "delta").map((e) => e.data.text).join("") === "你好，世界",
+		JSON.stringify(first.events),
+	);
+	const doneEvents = first.events.filter((e) => e.event === "done");
+	check(
+		"SSE：done 唯一，usage/duration/stopReason 来自最后 assistant",
+		doneEvents.length === 1 &&
+			first.events.at(-1).event === "done" &&
+			doneEvents[0].data.usage?.totalTokens === 15 &&
+			doneEvents[0].data.durationMs === 123 &&
+			doneEvents[0].data.stopReason === "stop",
+		JSON.stringify(first.events.at(-1)),
+	);
+
+	const think = await readSse(await send("think"));
+	const statuses = think.events.filter((e) => e.event === "status");
+	check("SSE：首个 thinking_delta 只发一次 status", statuses.length === 1 && statuses[0].data.phase === "thinking", JSON.stringify(statuses));
+	check(
+		"SSE：status 在 delta 之前",
+		think.events.findIndex((e) => e.event === "status") < think.events.findIndex((e) => e.event === "delta"),
+	);
+
+	const tool = await readSse(await send("tool"));
+	const toolEvents = tool.events.filter((e) => e.event === "tool");
+	check(
+		"SSE：tool start/end 映射",
+		toolEvents.length === 2 &&
+			toolEvents[0].data.phase === "start" &&
+			toolEvents[0].data.toolCallId === "call_1" &&
+			toolEvents[0].data.toolName === "read" &&
+			toolEvents[0].data.argsPreview.includes("README") &&
+			toolEvents[1].data.phase === "end" &&
+			toolEvents[1].data.resultPreview.includes("# README") &&
+			toolEvents[1].data.isError === false,
+		JSON.stringify(toolEvents),
+	);
+
+	const statusOf = async (body) => (await postJson(`${handle.url}api/chat/send`, body)).status;
+	check("send：空 prompt 400", (await statusOf(chatBody("   "))) === 400);
+	check("send：prompt 超长 400", (await statusOf(chatBody("x".repeat(32001)))) === 400);
+	check("send：非法 threadId 400", (await statusOf(chatBody("hi", { threadId: "../x" }))) === 400);
+	check("send：未知 session 404", (await statusOf({ source: "pi", session: "nope", prompt: "hi" })) === 404);
+	check("send：缺 source 400", (await statusOf({ session: "chat-sess-1", prompt: "hi" })) === 400);
+
+	const slowRes = await send("slow");
+	const slowRead = readSse(slowRes);
+	await sleep(150);
+	const conflict = await postJson(`${handle.url}api/chat/send`, chatBody("second"));
+	check("send：同 child 已有 turn 时 409", conflict.status === 409, String(conflict.status));
+	const stopRes = await postJson(`${handle.url}api/chat/stop`, { source: "pi", session: "chat-sess-1", threadId: "thread-a" });
+	const stopBody = await stopRes.json();
+	check("stop：{ok,stopped:true}", stopRes.status === 200 && stopBody.ok === true && stopBody.stopped === true, JSON.stringify(stopBody));
+	const slow = await slowRead;
+	check(
+		"stop 后 done stopReason=aborted",
+		slow.events.some((e) => e.event === "done" && e.data.stopReason === "aborted"),
+		JSON.stringify(slow.events.at(-1)),
+	);
+	const idleStop = await (await postJson(`${handle.url}api/chat/stop`, { source: "pi", session: "chat-sess-1" })).json();
+	check("stop：无活动 turn 时 stopped=false", idleStop.ok === true && idleStop.stopped === false, JSON.stringify(idleStop));
+
+	const fresh = await readSse(await send("hi", { threadId: "missing-1" }));
+	check(
+		"send：不存在的 threadId 用 --session-id 新建",
+		fresh.events[0]?.data.threadId === "missing-1",
+		JSON.stringify(fresh.events[0]),
+	);
+	const back = await readSse(await send("hi", { threadId: "thread-a" }));
+	check("send：已有线程先 switch_session", back.events[0]?.data.threadId === "thread-a", JSON.stringify(back.events[0]));
+
+	const crash = await readSse(await send("exit"));
+	check(
+		"send：child exit 中途退出 → error 事件",
+		crash.events.some((e) => e.event === "error" && e.data.code === "child_exit"),
+		JSON.stringify(crash.events.at(-1)),
 	);
 
 	await handle.close();

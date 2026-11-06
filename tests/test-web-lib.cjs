@@ -13,6 +13,27 @@ const check = (label, cond, extra = "") => {
 	const lib = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "lib.js")).href);
 	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, buildAgentTree, deriveInfo, deriveTargets, deriveTaskName, DERIVE_TOOL, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments, hitSnippet } = lib;
 
+	// ---- SSE 解析（chat-lib.js） ----
+	const { parseSseChunk, parseSseData } = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "chat-lib.js")).href);
+	const sseOne = parseSseChunk('event: meta\ndata: {"a":1}\n\n');
+	check("SSE：单事件", sseOne.events.length === 1 && sseOne.events[0].event === "meta" && sseOne.rest === "", JSON.stringify(sseOne));
+	check("SSE：data 可 JSON 解析", parseSseData(sseOne.events[0])?.a === 1);
+	const sseMulti = parseSseChunk("event: delta\ndata: a\ndata: b\n\nevent: done\ndata: {}\n\n");
+	check("SSE：多行 data 与多事件", sseMulti.events.length === 2 && sseMulti.events[0].data === "a\nb" && sseMulti.events[1].event === "done", JSON.stringify(sseMulti));
+	const sseCrlf = parseSseChunk('event: meta\r\ndata: {"x":1}\r\n\r\n');
+	check("SSE：CRLF", sseCrlf.events.length === 1 && parseSseData(sseCrlf.events[0])?.x === 1);
+	const sseSplit = parseSseChunk('event: delta\ndata: {"text":"你');
+	check("SSE：跨 chunk 保留未完成事件", sseSplit.events.length === 0 && sseSplit.rest.includes("data:"), JSON.stringify(sseSplit));
+	const sseJoined = parseSseChunk(`${sseSplit.rest}好"}\n\n`);
+	check("SSE：拼上下一 chunk 后解析", sseJoined.events.length === 1 && parseSseData(sseJoined.events[0])?.text === "你好", JSON.stringify(sseJoined));
+	const sseCrlfSplit = parseSseChunk("event: meta\r\ndata: {}\r");
+	check("SSE：结尾孤立的 \\r 不被吞", sseCrlfSplit.events.length === 0 && sseCrlfSplit.rest.endsWith("\r"));
+	check("SSE：跨 chunk 的 CRLF", parseSseChunk(`${sseCrlfSplit.rest}\n\r\n`).events.length === 1);
+	const sseComment = parseSseChunk(": ping\n\nevent: done\ndata: {}\n\n");
+	check("SSE：注释不产生事件", sseComment.events.length === 1 && sseComment.events[0].event === "done", JSON.stringify(sseComment));
+	check("SSE：坏 JSON 返回 null", parseSseData({ data: "{bad" }) === null);
+	check("SSE：空 data 返回 null", parseSseData({ data: "" }) === null);
+
 	// ---- 搜索高亮切分 ----
 	check("高亮：单词命中切分", JSON.stringify(highlightSegments("hello world npm", ["npm"])) === JSON.stringify([{ text: "hello world ", hit: false }, { text: "npm", hit: true }]));
 	check("高亮：大小写不敏感", highlightSegments("run NPM install", ["npm"])[1]?.hit === true);
@@ -303,8 +324,13 @@ const check = (label, cond, extra = "") => {
 
 	// ---- 回归守卫：对话页 UI（消息流 + 输入卡，本地消息流未接模型） ----
 	check("对话页两段结构：消息流(role=log) + 输入卡", indexSource.includes('id="chat-list"') && indexSource.includes('role="log"') && indexSource.includes('id="chat-input"') && indexSource.includes('id="chat-send"'));
-	check("对话页交互接线：Enter 发送/Shift 换行/IME 防误发/自增高/本地消息流", appSource.includes("function sendChat") && appSource.includes("e.isComposing") && appSource.includes("function autoGrowChatInput") && appSource.includes("state.chat.push") && appSource.includes("CHAT_INPUT_MAX_H"));
-	check("AI 消息走 markdown 渲染，上下文行同步函数已随标题移除", !appSource.includes("renderChatCtx") && appSource.includes('m.role === "ai"') && appSource.includes("mdNode(m.text)"));
+	const chatSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "web", "chat.js"), "utf8");
+	check("对话前端接线：send/stop/SSE 解析/response.ok", chatSource.includes("/api/chat/send") && chatSource.includes("/api/chat/stop") && chatSource.includes("/api/chat/thread") && chatSource.includes("parseSseChunk") && chatSource.includes("response.ok"));
+	check("流式解码必须是 TextDecoder + {stream:true}", chatSource.includes('new TextDecoder("utf-8")') && chatSource.includes("stream: true"));
+	check("app.js 已移交对话：initChatPanel + 移除本地消息流", appSource.includes("initChatPanel") && !appSource.includes("state.chat.push") && !appSource.includes("function sendChat") && !appSource.includes("function renderChat") && !appSource.includes("syncChatSend"));
+	check("对话头/上下文/面板/技能占位就位", ["chat-head", "chat-model", "chat-profile", "chat-context", "chat-palette", "chat-skill"].every((id) => indexSource.includes(`id="${id}"`)));
+	check("对话栏消息仍走 markdown 渲染", chatSource.includes("mdNode(String(message.text))"));
+	check("流式/工具/错误/空态样式就位", [".chat-head", ".chat-tool", ".chat-msg.ai.is-streaming", ".chat-stream-cursor", ".chat-notice", ".chat-msg-error", ".chat-empty", ".chat-skeleton"].every((sel) => styleSource.includes(sel)));
 	check("输入卡与输入框圆角收敛（16px，不用 28px 的 panel 圆角）", /\.chat-card \{[^}]*border-radius: var\(--dsw-radius-lg\)/s.test(styleSource) && /\.chat-input \{[^}]*border-radius: var\(--dsw-radius-lg\)/s.test(styleSource) && !/\.chat-card \{[^}]*radius-panel/s.test(styleSource));
 	check("对话页样式复刻上游：用户气泡 + 输入卡 + info 圆发送钮", styleSource.includes(".chat-msg.user") && styleSource.includes("var(--dsw-specific-bubble)") && styleSource.includes(".chat-card") && styleSource.includes("var(--dsw-specific-input-major)") && styleSource.includes(".chat-send") && styleSource.includes("var(--dsw-alias-button-info-fill)"));
 

@@ -8,7 +8,8 @@
  *
  * 支持：get_state / get_available_models / get_commands / set_model /
  *       new_session / switch_session / prompt / abort。
- * prompt 会依次发 text_delta、agent_end；message 含 "think" 时先发 thinking_delta。
+ * prompt 按关键字模拟：含 "think" 先发 thinking_delta；含 "tool" 发 tool_execution_*；
+ * 含 "slow" 不自动收尾（等 abort）；含 "exit" 中途退出（code=3）；其余正常出字后 agent_end。
  */
 const args = process.argv.slice(2);
 
@@ -18,9 +19,26 @@ if (args.includes("--version")) {
 }
 
 const readline = require("node:readline");
+const fs = require("node:fs");
+const path = require("node:path");
+
+/** 从 session 文件读 header id；读不到时用文件名去时间戳前缀兑底。 */
+function sessionIdFromFile(file) {
+	try {
+		const header = JSON.parse(fs.readFileSync(file, "utf8").split("\n", 1)[0]);
+		if (typeof header?.id === "string" && header.id) return header.id;
+	} catch {
+		/* 文件不存在或不是合法 session */
+	}
+	return path.basename(file).replace(/\.jsonl$/, "").replace(/^.*_/, "");
+}
 
 let sessionSeq = 0;
 let sessionId = "fake-session-1";
+const sessionIdArg = args.indexOf("--session-id");
+const sessionFileArg = args.indexOf("--session");
+if (sessionIdArg >= 0 && args[sessionIdArg + 1]) sessionId = args[sessionIdArg + 1];
+else if (sessionFileArg >= 0 && args[sessionFileArg + 1]) sessionId = sessionIdFromFile(args[sessionFileArg + 1]);
 let isStreaming = false;
 let model = {
 	provider: "fake",
@@ -69,38 +87,79 @@ function state() {
 	};
 }
 
+let timers = [];
+
+function clearTimers() {
+	for (const timer of timers) clearTimeout(timer);
+	timers = [];
+}
+
 function streamPrompt(command) {
+	clearTimers();
 	isStreaming = true;
 	const message = String(command.message ?? "");
 	const thinking = message.includes("think");
-	setTimeout(() => {
-		if (thinking) {
+	const withTool = message.includes("tool");
+	const slow = message.includes("slow");
+	const crash = message.includes("exit");
+	const later = (fn, ms) => timers.push(setTimeout(fn, ms));
+	if (thinking) {
+		later(() => {
 			emit({
 				type: "message_update",
 				usage,
 				assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "想一想", partial: {} },
 			});
-		}
-	}, 5);
-	setTimeout(() => {
+		}, 5);
+	}
+	later(() => {
 		emit({
 			type: "message_update",
 			usage,
 			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "你好", partial: {} },
 		});
 	}, 10);
-	setTimeout(() => {
+	later(() => {
 		emit({
 			type: "message_update",
 			usage,
 			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "，世界", partial: {} },
 		});
 	}, 15);
-	setTimeout(() => {
+	if (withTool) {
+		later(() => {
+			emit({ type: "tool_execution_start", toolCallId: "call_1", toolName: "read", args: { path: "README.md" } });
+		}, 17);
+		later(() => {
+			emit({
+				type: "tool_execution_end",
+				toolCallId: "call_1",
+				toolName: "read",
+				result: { content: [{ type: "text", text: "# README" }] },
+				isError: false,
+				durationMs: 4,
+			});
+		}, 19);
+	}
+	if (crash) {
+		later(() => process.exit(3), 25);
+		return;
+	}
+	if (slow) return;
+	later(() => {
+		clearTimers();
 		isStreaming = false;
 		emit({
 			type: "agent_end",
-			messages: [{ role: "assistant", content: [{ type: "text", text: "你好，世界" }] }],
+			messages: [
+				{
+					role: "assistant",
+					content: [{ type: "text", text: "你好，世界" }],
+					stopReason: "stop",
+					durationMs: 123,
+					usage: { input: 10, output: 5, totalTokens: 15 },
+				},
+			],
 			willRetry: false,
 		});
 	}, 20);
@@ -151,7 +210,7 @@ rl.on("line", (line) => {
 			reply(command, { cancelled: false });
 			break;
 		case "switch_session":
-			sessionId = String(command.sessionPath ?? "").split(/[\\/]/).pop()?.replace(/\.jsonl$/, "") || sessionId;
+			sessionId = sessionIdFromFile(String(command.sessionPath ?? "")) || sessionId;
 			reply(command, {});
 			break;
 		case "prompt":
@@ -163,6 +222,7 @@ rl.on("line", (line) => {
 			streamPrompt(command);
 			break;
 		case "abort":
+			clearTimers();
 			isStreaming = false;
 			reply(command);
 			emit({ type: "agent_end", messages: [], willRetry: false });

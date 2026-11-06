@@ -1,7 +1,7 @@
 /**
  * app.js — 轨迹观察页：左侧会话栏，右侧轨迹（按轮次分段，工具条过滤/折叠）；
  * 点轨迹行在行下方内联展开详情面板（工具条随面板作用于当前行）；
- * 顶栏按钮开关右侧对话栏（本地消息流，未接模型）。
+ * 顶栏按钮开关右侧对话栏（对话栏接 pi 子进程，SSE 流式）。
  *
  * 数据：
  *   - /api/sessions  会话列表（mode A 本项目；mode B 全部项目，按项目分组）
@@ -40,6 +40,7 @@ import {
 	renderMarkdown,
 	taskShort,
 } from "./lib.js";
+import { initChatPanel } from "./chat.js";
 
 const LS_FILTERS = "tw.filters";
 const LS_THEME = "tw.theme";
@@ -102,8 +103,7 @@ const state = {
 	openId: null,
 	openFull: null,
 	openLightJson: "",
-	// 「对话」侧栏的本地消息流（未接模型）：{ role: "user" | "ai", text }
-	chat: [],
+	// 「对话」侧栏的本地消息流已移除：由 chat.js 接管（SSE + 服务端线程）
 	chatOpen: false,
 	translated: false,
 	translating: false,
@@ -1323,31 +1323,11 @@ function closePanel() {
 }
 
 // ---------------------------------------------------------------------------
-// 侧边对话栏（顶栏对话按钮开关，位于主题按钮右侧）：围绕当前展开的轨迹行
-// 本轮仅 UI + 本地消息流，模型后端后续接入；视觉复刻上游：用户右气泡
-// （specific-bubble/radius-xl）、AI 左全宽 markdown、底部输入卡（input-major/radius-panel）+ info 色圆发送钮
+// 侧边对话栏（顶栏对话按钮开关，位于主题按钮右侧）：消息流与流式渲染由 chat.js
+// 接管（/api/chat/*），本文件只负责开关、宽度/高度拖拽与依赖注入。
 // ---------------------------------------------------------------------------
 
 const CHAT_INPUT_MAX_H = 132; // 与 CSS .chat-input max-height 同步（约 6 行封顶后内部滚动）
-
-function chatMsgNode(m) {
-	if (m.role === "ai") return h("div", { class: "chat-msg ai" }, mdNode(m.text));
-	return h("div", { class: "chat-msg user", text: m.text });
-}
-
-function renderChat(scrollBottom = false) {
-	const list = el("chat-list");
-	if (state.chat.length === 0) {
-		list.replaceChildren(h("div", { class: "chat-empty", text: "对话功能预览：未接入模型，消息仅本地展示" }));
-		return;
-	}
-	list.replaceChildren(...state.chat.map(chatMsgNode));
-	if (scrollBottom) list.scrollTop = list.scrollHeight;
-}
-
-function syncChatSend() {
-	el("chat-send").disabled = el("chat-input").value.trim().length === 0;
-}
 
 function autoGrowChatInput() {
 	// 手动拖过高度时交给 CSS 撑满，不再按内容改 height（否则会把拖拽结果覆盖掉）
@@ -1355,17 +1335,6 @@ function autoGrowChatInput() {
 	const input = el("chat-input");
 	input.style.height = "auto";
 	input.style.height = `${Math.min(input.scrollHeight, CHAT_INPUT_MAX_H)}px`;
-}
-
-function sendChat() {
-	const input = el("chat-input");
-	const text = input.value.trim();
-	if (!text) return;
-	state.chat.push({ role: "user", text });
-	input.value = "";
-	autoGrowChatInput();
-	syncChatSend();
-	renderChat(true);
 }
 
 // ---------------------------------------------------------------------------
@@ -1385,6 +1354,7 @@ function setChatOpen(open) {
 	} catch {
 		/* 无痕模式等场景忽略 */
 	}
+	chat.setOpen(open);
 }
 
 // ---------------------------------------------------------------------------
@@ -1661,6 +1631,7 @@ function switchSource(id) {
 	renderRail();
 	renderTopbar();
 	renderSessions();
+	chat.onSessionChanged();
 	pollSessions(true);
 	pollSession(true);
 	writeViewHash();
@@ -1928,6 +1899,7 @@ async function pollSessions(force = false) {
 		if (!state.selectedId && (j.current || j.sessions?.[0])) {
 			state.selectedId = j.current ?? j.sessions[0].id;
 			renderSessions();
+			chat.onSessionChanged();
 		}
 	} catch {
 		/* 列表失败不打断主循环 */
@@ -1952,6 +1924,7 @@ async function pollSession(force = false) {
 			pendingOpen = null;
 			writeViewHash();
 			renderMain();
+			chat.onSessionChanged();
 			setSync("会话已消失，刷新列表", "warn");
 			pollSessions(true);
 			return;
@@ -2183,6 +2156,7 @@ function selectSession(id, from = null) {
 	renderTopbar();
 	renderMain();
 	main.scrollTop = 0;
+	chat.onSessionChanged();
 	pollSession(true);
 }
 
@@ -2262,18 +2236,6 @@ el("agent-rail").addEventListener("click", (e) => {
 el("chat-btn").addEventListener("click", () => setChatOpen(!state.chatOpen));
 el("crop-btn").addEventListener("click", () => setCropMode(!state.cropMode));
 el("distill-btn").addEventListener("click", () => setDistillMode(!state.distillMode));
-el("chat-input").addEventListener("input", () => {
-	autoGrowChatInput();
-	syncChatSend();
-});
-el("chat-input").addEventListener("keydown", (e) => {
-	// Enter 发送、Shift+Enter 换行；输入法组合中不误发
-	if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-		e.preventDefault();
-		sendChat();
-	}
-});
-el("chat-send").addEventListener("click", () => sendChat());
 el("dv-translate").addEventListener("click", () => void translatePanel());
 el("dv-copy").addEventListener("click", (e) => {
 	e.stopPropagation();
@@ -2319,6 +2281,8 @@ el("back-main").addEventListener("click", () => {
 });
 document.addEventListener("keydown", (e) => {
 	if (e.key === "Escape") {
+		// 对话栏优先：流式中 Esc = 停止生成，否则交给原有抽屉/面板链
+		if (chat.handleEscape()) return;
 		if (state.copyOpen) {
 			setCopyMenuOpen(false);
 			return;
@@ -2379,7 +2343,18 @@ renderThemeButton();
 loadPrefs();
 loadTranslatePrefs();
 renderToolbar();
-renderChat();
+// 对话栏：消息流与 SSE 由 chat.js 接管；本文件只提供 DOM 助手、当前会话与输入框自增高
+const chat = initChatPanel({
+	el,
+	h,
+	mdNode,
+	getSession: () => {
+		if (!state.selectedId) return null;
+		const session = state.sessions.find((item) => item.id === state.selectedId);
+		return { source: state.source, id: state.selectedId, name: session?.name ?? null, projectPath: session?.projectPath ?? null };
+	},
+	autoGrowInput: autoGrowChatInput,
+});
 loadChatWidth();
 bindChatResize();
 loadComposerHeight();
