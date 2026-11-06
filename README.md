@@ -109,7 +109,7 @@ npm run dev        # 默认 http://127.0.0.1:7788
 
 ### 对话存储
 
-对话线程是独立的 pi session，落在 `<chatDir>/<source>/<safeSessionId>/sessions`；`chatDir` 默认 `<agentDir>/pi-chat-helper/chats`，删除它不影响轨迹历史。`meta/turns.jsonl` 每行带 `threadId`，以 `(threadId, ordinal)` 为键，`ordinal` 按该线程的 user 消息顺序递增；同轨迹会话的多个 pi thread 互不覆盖。
+对话线程是独立的 pi session，落在 `<chatDir>/<source>/<safeSessionId>/sessions`；`chatDir` 默认 `<agentDir>/pi-chat-helper/chats`，删除它不影响轨迹历史。`meta/turns.jsonl` 每行带 `threadId`，以 `(threadId, ordinal)` 为键，`ordinal` 按该线程的 user 消息顺序递增；同轨迹会话的多个 pi thread 互不覆盖。浏览器用 `localStorage["tw.chatThread"]` 记住每个 `source:session` 的当前线程；新建但尚未落盘的虚拟线程另用 `tw.chatThreadNew` 标记，刷新后仍保留。
 
 ### 界面风格
 

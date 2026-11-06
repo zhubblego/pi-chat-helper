@@ -386,7 +386,7 @@ event: tool
 data: {"phase":"end","toolCallId":"call_1","toolName":"read_trajectory","isError":false,"resultPreview":"【工具】bash ..."}
 
 event: approval
-data: {"id":"ui_1","toolName":"bash","title":"允许执行命令？","message":"npm test","timeout":120}
+data: {"id":"ui_1","toolName":"bash","title":"允许 bash？","message":"npm test","timeout":120}
 
 event: notice
 data: {"text":"已回退到 GLM-5.3","kind":"warn"}
@@ -399,6 +399,8 @@ data: {"message":"provider 返回 429：...","code":"stream_error"}
 ```
 
 - `meta` 在流开始前发一次；`status` 只在首次 `thinking_delta` 或工具开始时发；`delta` 可多次；`tool`/`approval`/`notice` 可选；`done` 或 `error` 结束。
+- `approval.timeout` 单位是**秒**：host 把 RPC `extension_ui_request.timeout` 的毫秒向上取整成秒给前端；前端倒计时按秒。
+- `approval.toolName` 由 host 从 `title` 的正则 `允许 <tool>？`/`允许 <tool>?` 解析；解析不到时仍可「仅本次允许」，但不写 allow-set。
 - 每 15 秒发一次注释保活：`: ping\n\n`。
 - 客户端断开（`res.on("close")` 且未结束）→ child `abort`；所有未决审批自动拒绝；assistant 的部分输出由 pi 自己落盘。
 - 同一 child 已有活动 turn → 409，不创建新流。
@@ -437,8 +439,9 @@ Content-Type: application/json
 响应：`{ "ok": true }`。
 
 - 服务端把 `{type:"extension_ui_response", id, confirmed}` 写回对应 child stdin。
-- `allowForSession:true` 时，host 把该工具名加入当前项目的内存 allow-set；后续同类请求直接自动确认，不再弹前端。
-- 未知 `id`、child 已退出、或超过 120 秒：返回 200 但 `ok:false`（no-op），前端关闭弹层。
+- `allowForSession:true` **仅在 `confirmed:true` 且从 `title` 解析到 `toolName`** 时生效：host 把该工具名加入当前项目的内存 allow-set；后续同类请求直接自动确认，不再弹前端。未解析到 toolName 时仍可「仅本次允许」，但不写 allow-set。
+- allow-set 键为 `source:projectPath` + `toolName`，只存在 host 内存，重启清空；不落盘。
+- 未知 `id`、无活动 turn、`threadId` 不匹配、child 已退出、或超过 120 秒：返回 200 但 `ok:false`（no-op），前端关闭弹层。
 
 ## 8. 存储
 
@@ -562,7 +565,7 @@ Content-Type: application/json
 - 渲染复用服务端的 `renderContextEvent`（与轨迹详情一致），包含类型、轮次、时间、正文。
 - 工具只读，自动放行；仍以 `tool` 事件显示在 UI。
 - **codex 支持程度**：工具层已支持 `readCodexSession` + `buildProjectionFrom`（fixture 验证 list/read）；send 上下文链路是 source-agnostic 的，但 codex send 未做 e2e，留 T9 补。viewer 的 Guardian 审批合并只用于展示；工具读取时不合并 Guardian，勾选 Guardian-only 条目会得到「不在当前选中集/已失效」。
-- **已知限制**：工具读取整份轨迹投影，未加 32MB 大文件守卫（T9）；浏览器实测未做（CDP 不可用）；`tw.chatThread` 线程记忆未实现（T7「新对话」时补）。
+- **已知限制**：工具读取整份轨迹投影，未加 32MB 大文件守卫（T9）；浏览器实测未做（CDP 不可用）；codex send 上下文未 e2e（T9）。
 
 ### 9.4 增删语义
 

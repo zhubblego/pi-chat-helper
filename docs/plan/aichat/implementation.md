@@ -11,6 +11,7 @@
 | `trajectory-web/server/pi-binary.mjs` | 新增 | pi 可执行文件解析与版本探测 |
 | `trajectory-web/server/chat-session.mjs` | 新增 | 纯函数：pi session 投影 → 对话消息、侧车轮次、清单/delta、路径校验 |
 | `trajectory-web/server/chat-settings.mjs` | 新增 | 纯函数：`settings.json` 原子读写、按项目分键、profile/projectSkills 默认与校验 |
+| `trajectory-web/server/approval.mjs` | 新增 | 纯函数：审批 toolName 解析、摘要截断、timeout 毫秒→秒、AUTO 常量 |
 | `trajectory-web/server/context-render.mjs` | 新增 | 纯函数：单条轨迹事件渲染（服务端与子进程扩展共用） |
 | `trajectory-web/server/app.mjs` | 修改 | 注入 `chatDir`/`piBin`；挂 `/api/chat/*`；POST 白名单；安全校验；静态资源；close 顺序 |
 | `trajectory-web/server/main.mjs` | 修改 | `--chat-dir`、`--no-chat`、`--pi-bin`；把解析结果传给 server |
@@ -181,17 +182,18 @@ export async function probePi(pi, { timeoutMs = 5000 } = {}) {
 
 ### 2.6 审批桥
 
-1. 子进程扩展 `chat-approval.ts` 在 `tool_call` 里调用 `ctx.ui.confirm(...)`。
-2. RPC 模式把请求变成 `{type:"extension_ui_request", id, method:"confirm", title, message, timeout}`。
+1. 子进程扩展 `chat-approval.ts` 在 `tool_call` 里调用 `ctx.ui.confirm(...)`（timeout 120_000 ms）。
+2. RPC 模式把请求变成 `{type:"extension_ui_request", id, method:"confirm", title, message, timeout}`；`timeout` 为毫秒。
 3. host：
-   - 若当前项目 allow-set 含该工具 → 直接回 `confirmed:true`，不发前端；
-   - 否则发 SSE `approval`，把 `{id, resolve}` 放进 `currentTurn.approvals`；
-   - 120 秒未响应 → 回 `confirmed:false`（拒绝）。
+   - 从 `title` 正则 `允许 <tool>？`/`允许 <tool>?` 解析 `toolName`；解析不到时仍可「仅本次允许」，但不写 allow-set。
+   - 若当前项目 allow-set（键 `source:projectPath`，值 `Set<toolName>`，仅内存）含该工具 → 直接回 `confirmed:true`，不发前端；
+   - 否则发 SSE `approval`（`timeout` 为秒：RPC 毫秒向上取整），把 `{id, toolName, timer}` 放进 `currentTurn.approvals`；
+   - 120 秒未响应（或扩展自身的 120s 超时）→ 回 `confirmed:false`（拒绝）并发 `notice`；扩展与 host 双计时都只会拒绝，不会误执行。
 4. `POST /api/chat/approval`：
    - 找到 pending 的 `id` → 回写 `{type:"extension_ui_response", id, confirmed}`；
-   - `allowForSession` → 把工具名加入当前项目 allow-set（内存，不落盘）；
-   - 未知 id → `{ok:false}`，200。
-5. 浏览器断开：所有 pending 回 `cancelled`；`chat-approval.ts` 的 confirm 返回 false → `{block:true}`。
+   - `allowForSession:true` **仅在 `confirmed:true` 且解析到 `toolName`** 时，把工具名加入当前项目 allow-set（内存，不落盘）；
+   - 未知 id / 无活动 turn / `threadId` 不匹配 → `{ok:false}`，200。
+5. 清理：浏览器断开、stop、close、child exit 时，所有 pending 回 `confirmed:false`（拒绝）并清定时器；无活动 turn 的 `extension_ui_request` 直接回 `cancelled`；`chat-approval.ts` 的 confirm 返回 false → `{block:true}`。
 
 ### 2.7 `app.mjs` 接线
 
@@ -346,7 +348,7 @@ export default function (pi: ExtensionAPI) {
     const ok = await ctx.ui.confirm(
       `允许 ${event.toolName}？`,
       detail,
-      { timeout: 120 },
+      { timeout: 120_000 },
     );
     if (!ok) return { block: true, reason: "用户拒绝了本次工具调用" };
   });
@@ -354,6 +356,7 @@ export default function (pi: ExtensionAPI) {
 ```
 
 - 只在 `full` profile 加载；`read-only`/`no-tools` 不加载。
+- `ctx.ui.confirm` 的 `timeout` 与 RPC `extension_ui_request.timeout` 单位是**毫秒**（`120_000` = 120s）；host 转成 SSE `approval.timeout` 的秒。
 - `ctx.ui.confirm` 在 RPC 模式转成 `extension_ui_request`；host 负责转发与「本会话允许」。
 - 超时/取消/断连一律视为拒绝。
 - `describeToolCall` 只取命令/path 的可读摘要，不把整个文件内容塞进弹层。
@@ -668,7 +671,7 @@ export function initChatPanel(deps) { ... }
   - 首页 200 且含 `chat-profile`/`chat-approval`；
   - 无进程残留（`pgrep -f "mode rpc"`）。
 - 真浏览器：三档 profile、审批、工具卡片、切项目/线程、重启恢复。CDP 不可用时注明「未做浏览器实测」。
-- T6 现状：浏览器仍未实测（CDP 不可用）；chips/勾选/50 上限仅纯函数 + 源码守卫；工具整份投影未加 32MB 守卫（T9）；codex send 上下文未 e2e（T9）。
+- T6/T7 现状：浏览器仍未实测（CDP 不可用）；chips/勾选/50 上限/审批/权限菜单仅纯函数 + 源码守卫；`tw.chatThread` + `tw.chatThreadNew` 已实现；工具整份投影未加 32MB 守卫（T9）；codex send 上下文未 e2e（T9）。
 
 ## 6. 提交拆分
 

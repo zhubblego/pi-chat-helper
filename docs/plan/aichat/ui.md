@@ -266,8 +266,8 @@ stateDiagram-v2
 - 写入：勾选/取消/清空时立即写；切换会话前也写。
 - 读取：页面启动、打开对话栏、切换会话/源、轨迹数据首次到达。
 - 损坏 JSON → 重置 `{}`；不主动删除旧 key。
-- 线程记忆：`tw.chatThread`，值 `{ "<source>:<sessionId>": "<pi session id>" }`；「新对话」成功后写入；没有记忆值时由服务端取最新。
-- T6 现状：`tw.chatThread` 尚未实现（T7「新对话」时补）；「以此新开」后若刷新前未发消息，会回退到服务端最新线程。
+- 线程记忆：`tw.chatThread`，值 `{ "<source>:<sessionId>": "<pi session id>" }`；meta/「新对话」/「以此新开」后写入；没有记忆值时由服务端取最新。
+- 新建未落盘的虚拟线程另用 `tw.chatThreadNew` 标记：刷新后仍保留该空线程；`GET thread` 返回 `exists:true` 后清除标记。记住的旧线程文件真的不存在时清除记忆并回退最新。
 
 ## 7. 工具调用与审批
 
@@ -301,7 +301,7 @@ stateDiagram-v2
 ```
 
 - 触发：SSE `approval` 事件；覆盖抽屉内容，不阻塞主轨迹区。
-- 展示：标题、工具名、命令/path 摘要（截断 500 字）、倒计时（来自 `timeout`）。
+- 展示：标题、工具名、命令/path 摘要（截断 500 字）、倒计时（`approval.timeout`，单位秒；host 把 RPC 毫秒向上取整成秒，前端按秒倒计时）。
 - 操作：
   - `仅本次允许`：`POST /api/chat/approval {confirmed:true}`；
   - `本会话允许`：勾上后同上并带 `allowForSession:true`；
