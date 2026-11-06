@@ -91,7 +91,22 @@
 			<div class="chat-composer">
 				<div id="composer-resize" class="composer-resize" role="separator" aria-orientation="horizontal" aria-label="调整输入区高度" tabindex="0" title="拖动调整输入区高度（双击恢复默认）"></div>
 				<div id="chat-context" class="chat-context" hidden></div>
-				<div id="chat-palette" class="chat-palette" role="listbox" aria-label="斜杠命令" hidden></div>
+				<div id="chat-palette" class="chat-palette" hidden>
+					<div class="chat-palette-head">
+						<input
+							id="chat-palette-search"
+							class="chat-palette-search"
+							type="search"
+							autocomplete="off"
+							spellcheck="false"
+							aria-controls="chat-palette-list"
+							aria-autocomplete="list"
+							placeholder="搜索命令"
+							aria-label="搜索命令"
+						/>
+					</div>
+					<div id="chat-palette-list" class="chat-palette-list" role="listbox" aria-label="斜杠命令"></div>
+				</div>
 				<div class="chat-card">
 					<div id="chat-skill" class="chat-skill" hidden></div>
 					<textarea id="chat-input" class="chat-input" rows="1" placeholder="问问这条轨迹…" aria-label="对话输入"></textarea>

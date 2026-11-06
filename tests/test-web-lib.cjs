@@ -494,6 +494,24 @@ const check = (label, cond, extra = "") => {
 			styleSource.includes(".chat-model::before") &&
 			styleSource.includes(".chat-model.is-reasoning::before"),
 	);
+	const paletteSearchIndex = indexSource.indexOf('id="chat-palette-search"');
+	const paletteHeadIndex = indexSource.indexOf('class="chat-palette-head"');
+	const paletteListIndex = indexSource.indexOf('id="chat-palette-list"');
+	const openPaletteBody = chatSource.slice(chatSource.indexOf("function openPalette"), chatSource.indexOf("function closePalette"));
+	check(
+		"palette 独立搜索框：顶部 head/list + 搜索查询不读 textarea",
+		paletteSearchIndex > paletteHeadIndex &&
+			paletteListIndex > paletteSearchIndex &&
+			indexSource.includes('type="search"') &&
+			chatSource.includes("function paletteQuery") &&
+			chatSource.includes("paletteSearchEl?.value") &&
+			chatSource.includes("filterPaletteItems(paletteSkillItems(), query)") &&
+			chatSource.includes("paletteSearchEl?.focus()") &&
+			chatSource.includes('paletteSearchEl.value = ""') &&
+			!chatSource.includes("commandQuery") &&
+			!openPaletteBody.includes('input.value = ""') &&
+			[" .chat-palette-head", ".chat-palette-search", ".chat-palette-list"].every((sel) => styleSource.includes(sel.trim())),
+	);
 	check(
 		"技能面板接线：command 技能项 / skill 层 / 开关 / 大小守卫",
 		chatSource.includes('id: "skill"') &&

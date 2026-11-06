@@ -49,6 +49,8 @@ export function initChatPanel(deps) {
 	const sendBtn = el("chat-send");
 	const announcer = el("chat-announcer");
 	const paletteEl = el("chat-palette");
+	const paletteListEl = el("chat-palette-list");
+	const paletteSearchEl = el("chat-palette-search");
 	const profileMenuEl = el("chat-profile-menu");
 	const approvalEl = el("chat-approval");
 	const sendIcon = sendBtn?.firstElementChild?.cloneNode(true) ?? null;
@@ -1011,8 +1013,8 @@ export function initChatPanel(deps) {
 	// 斜杠面板：command 层 → 模型 / 技能层
 	// ------------------------------------------------------------------
 
-	function commandQuery() {
-		return String(input?.value ?? "").replace(/^\//, "");
+	function paletteQuery() {
+		return String(paletteSearchEl?.value ?? "").trim();
 	}
 
 	function skillScopeLabel(scope) {
@@ -1039,9 +1041,10 @@ export function initChatPanel(deps) {
 
 	function paletteItems() {
 		if (!state.palette) return [];
-		if (state.palette.layer === "command") return filterPaletteItems(COMMAND_ITEMS, commandQuery());
-		if (state.palette.layer === "skill") return filterPaletteItems(paletteSkillItems(), input?.value ?? "");
-		return filterPaletteItems(paletteModelItems(), input?.value ?? "");
+		const query = paletteQuery();
+		if (state.palette.layer === "command") return filterPaletteItems(COMMAND_ITEMS, query);
+		if (state.palette.layer === "skill") return filterPaletteItems(paletteSkillItems(), query);
+		return filterPaletteItems(paletteModelItems(), query);
 	}
 
 	function paletteSkillItems() {
@@ -1072,15 +1075,21 @@ export function initChatPanel(deps) {
 	}
 
 	function renderPalette() {
-		if (!paletteEl) return;
+		if (!paletteEl || !paletteListEl) return;
 		if (!state.palette) {
 			paletteEl.hidden = true;
-			paletteEl.replaceChildren();
+			paletteListEl.replaceChildren();
 			return;
 		}
 		paletteEl.hidden = false;
 		const layer = state.palette.layer;
-		paletteEl.setAttribute("aria-label", layer === "model" ? "选择模型" : layer === "skill" ? "选择技能" : "斜杠命令");
+		const label = layer === "model" ? "选择模型" : layer === "skill" ? "选择技能" : "斜杠命令";
+		paletteListEl.setAttribute("aria-label", label);
+		if (paletteSearchEl) {
+			const placeholder = layer === "model" ? "搜索模型" : layer === "skill" ? "搜索技能" : "搜索命令";
+			paletteSearchEl.placeholder = placeholder;
+			paletteSearchEl.setAttribute("aria-label", placeholder);
+		}
 		const nodes = [];
 
 		if (layer === "skill" && state.palette.confirm) {
@@ -1098,7 +1107,7 @@ export function initChatPanel(deps) {
 					),
 				),
 			);
-			paletteEl.replaceChildren(...nodes);
+			paletteListEl.replaceChildren(...nodes);
 			return;
 		}
 
@@ -1192,18 +1201,24 @@ export function initChatPanel(deps) {
 			);
 			index++;
 		}
-		paletteEl.replaceChildren(...nodes);
+		paletteListEl.replaceChildren(...nodes);
 	}
 
-	function openPalette(layer, { draft = null } = {}) {
+	function openPalette(layer, { draft = null, clearOnSelect = null } = {}) {
 		if (!currentSession() || state.enabled !== true) return;
 		const previousDraft = draft ?? state.palette?.draft ?? input?.value ?? "";
-		state.palette = { layer, index: 0, draft: previousDraft, loading: false, error: null, busy: false, confirm: null };
+		state.palette = {
+			layer,
+			index: 0,
+			draft: previousDraft,
+			clearOnSelect: clearOnSelect ?? state.palette?.clearOnSelect ?? false,
+			loading: false,
+			error: null,
+			busy: false,
+			confirm: null,
+		};
+		if (paletteSearchEl) paletteSearchEl.value = "";
 		if (layer === "model" || layer === "skill") {
-			if (input) {
-				input.value = "";
-				deps.autoGrowInput?.();
-			}
 			if (layer === "model") void loadModels({ refresh: true });
 			else {
 				// 首次/切会话带 refresh=1（重新发现技能）；同一会话用服务端 60s 缓存
@@ -1213,12 +1228,13 @@ export function initChatPanel(deps) {
 		}
 		renderPalette();
 		updateSendButton();
-		input?.focus();
+		paletteSearchEl?.focus();
 	}
 
 	function closePalette({ restore = true, clearInput = false, focus = true } = {}) {
 		const draft = state.palette?.draft ?? "";
 		state.palette = null;
+		if (paletteSearchEl) paletteSearchEl.value = "";
 		renderPalette();
 		if (input) {
 			if (clearInput) input.value = "";
@@ -1235,11 +1251,9 @@ export function initChatPanel(deps) {
 		state.palette.index = 0;
 		state.palette.error = null;
 		state.palette.loading = false;
-		if (input) {
-			input.value = "/";
-			deps.autoGrowInput?.();
-		}
+		if (paletteSearchEl) paletteSearchEl.value = "";
 		renderPalette();
+		paletteSearchEl?.focus();
 	}
 
 	function paletteEscape() {
@@ -1251,6 +1265,34 @@ export function initChatPanel(deps) {
 		}
 		if (state.palette.layer !== "command") backToCommandLayer();
 		else closePalette({ restore: true });
+	}
+
+	/** 搜索框与 textarea 共用：面板打开时消费 ↑↓/Enter/Tab/Esc；返回 true 表示已处理。 */
+	function handlePaletteKeydown(e) {
+		if (!state.palette || e.isComposing) return false;
+		if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+			e.preventDefault();
+			movePalette(e.key === "ArrowDown" ? 1 : -1);
+			return true;
+		}
+		if (e.key === "Tab" && e.shiftKey) {
+			e.preventDefault();
+			closePalette({ restore: true });
+			return true;
+		}
+		if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
+			e.preventDefault();
+			e.stopPropagation();
+			void activatePalette();
+			return true;
+		}
+		if (e.key === "Escape") {
+			e.preventDefault();
+			e.stopPropagation();
+			paletteEscape();
+			return true;
+		}
+		return false;
 	}
 
 	function movePalette(delta) {
@@ -1271,8 +1313,9 @@ export function initChatPanel(deps) {
 		if (!items.length) return;
 		const item = items[state.palette.index] ?? items[0];
 		if (state.palette.layer === "command") {
-			if (item.id === "model") openPalette("model", { draft: state.palette.draft });
-			else if (item.id === "skill") openPalette("skill", { draft: state.palette.draft });
+			const clearOnSelect = state.palette.clearOnSelect === true;
+			if (item.id === "model") openPalette("model", { draft: state.palette.draft, clearOnSelect });
+			else if (item.id === "skill") openPalette("skill", { draft: state.palette.draft, clearOnSelect });
 			return;
 		}
 		if (state.palette.layer === "skill") {
@@ -1300,7 +1343,7 @@ export function initChatPanel(deps) {
 	function applySkill(item) {
 		if (!item) return;
 		state.skill = { name: item.name, chars: item.chars ?? null, warning: item.warning === true };
-		closePalette({ clearInput: true });
+		closePalette({ clearInput: state.palette?.clearOnSelect === true });
 		renderSkillChip();
 		updateSendButton();
 	}
@@ -1389,7 +1432,7 @@ export function initChatPanel(deps) {
 			return;
 		}
 		if (state.model?.provider === model.provider && state.model?.id === model.id) {
-			closePalette({ clearInput: true });
+			closePalette({ clearInput: state.palette.clearOnSelect === true });
 			return;
 		}
 		const key = currentKey();
@@ -1422,7 +1465,7 @@ export function initChatPanel(deps) {
 			state.model = data.model ?? model;
 			state.modelsError = null;
 			if (state.thread) state.thread.model = state.model;
-			closePalette({ clearInput: true });
+			closePalette({ clearInput: state.palette?.clearOnSelect === true });
 			pushNotice(`已切换到 ${modelLabel(state.model)}`);
 			flushRender();
 		} catch (err) {
@@ -1445,7 +1488,10 @@ export function initChatPanel(deps) {
 			return;
 		}
 		if (state.enabled !== true) return;
-		openPalette("model", { draft: state.palette?.draft ?? input?.value ?? "" });
+		openPalette("model", {
+			draft: state.palette?.draft ?? input?.value ?? "",
+			clearOnSelect: state.palette?.clearOnSelect ?? false,
+		});
 	}
 
 	// ------------------------------------------------------------------
@@ -1820,44 +1866,23 @@ export function initChatPanel(deps) {
 		input.addEventListener("input", () => {
 			deps.autoGrowInput?.();
 			updateSendButton();
+			// 面板打开时 textarea 不参与搜索；输入即视为焦点离开搜索框。
+			if (state.palette) {
+				closePalette({ restore: false, focus: false });
+				return;
+			}
 			const value = input.value;
-			if (state.palette?.layer === "model" || state.palette?.layer === "skill") {
-				state.palette.index = 0;
-				renderPalette();
-				return;
-			}
 			if (/^\/[A-Za-z]*$/.test(value.trim())) {
-				if (state.palette?.layer !== "command") {
-					state.palette = { layer: "command", index: 0, draft: value, loading: false, error: null, busy: false };
-				}
-				state.palette.index = 0;
-				renderPalette();
-				return;
+				openPalette("command", { draft: value, clearOnSelect: true });
 			}
-			if (state.palette?.layer === "command") closePalette({ restore: false, focus: false });
+		});
+		input.addEventListener("focus", () => {
+			if (state.palette) closePalette({ restore: true, focus: false });
 		});
 		input.addEventListener("keydown", (e) => {
 			// IME 组合中不处理 Enter/方向键
 			if (e.isComposing) return;
-			if (state.palette) {
-				if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-					e.preventDefault();
-					movePalette(e.key === "ArrowDown" ? 1 : -1);
-					return;
-				}
-				if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
-					e.preventDefault();
-					e.stopPropagation();
-					void activatePalette();
-					return;
-				}
-				if (e.key === "Escape") {
-					e.preventDefault();
-					e.stopPropagation();
-					paletteEscape();
-					return;
-				}
-			}
+			if (handlePaletteKeydown(e)) return;
 			// Enter 发送、Shift+Enter 换行；面板打开时 Enter 已在上面消费
 			if (e.key !== "Enter" || e.shiftKey) return;
 			e.preventDefault();
@@ -1872,7 +1897,36 @@ export function initChatPanel(deps) {
 			else void send();
 		});
 	}
+	if (paletteSearchEl) {
+		paletteSearchEl.addEventListener("input", () => {
+			if (!state.palette) return;
+			state.palette.index = 0;
+			renderPalette();
+		});
+		paletteSearchEl.addEventListener("keydown", (e) => {
+			handlePaletteKeydown(e);
+		});
+	}
+	let palettePointerAt = 0;
 	if (paletteEl) {
+		paletteEl.addEventListener(
+			"pointerdown",
+			() => {
+				palettePointerAt = Date.now();
+			},
+			true,
+		);
+		paletteEl.addEventListener("focusout", (e) => {
+			if (!state.palette) return;
+			if (e.relatedTarget && paletteEl.contains(e.relatedTarget)) return;
+			setTimeout(() => {
+				if (!state.palette) return;
+				if (Date.now() - palettePointerAt < 250) return;
+				const active = document.activeElement;
+				if (active && (paletteEl.contains(active) || active === el("chat-model"))) return;
+				closePalette({ restore: true, focus: false });
+			}, 0);
+		});
 		paletteEl.addEventListener("click", (e) => {
 			const toggle = e.target.closest?.("[data-settings-toggle]");
 			if (toggle) {
@@ -1917,12 +1971,12 @@ export function initChatPanel(deps) {
 		const option = e.target.closest?.("[data-profile]");
 		if (option) void selectProfile(option.dataset.profile);
 	});
-	// 点击面板外关闭（面板/输入框/模型 chip 内除外）
+	// 点击面板外（含 textarea）关闭；模型 chip 除外，它负责切换 panel 层
 	document.addEventListener("click", (e) => {
 		if (!state.palette) return;
 		const path = typeof e.composedPath === "function" ? e.composedPath() : [];
 		const inside = (node) => node && (path.includes(node) || (typeof node.contains === "function" && node.contains(e.target)));
-		if (inside(paletteEl) || inside(input) || inside(el("chat-model"))) return;
+		if (inside(paletteEl) || inside(el("chat-model"))) return;
 		closePalette({ restore: true, focus: false });
 	});
 	// 点击权限菜单外关闭
