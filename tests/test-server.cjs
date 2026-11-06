@@ -478,6 +478,18 @@ async function stopServer(child) {
 		check("安全：非 chat POST 请求体 >1MB 也 413", secBigTranslate.status === 413, String(secBigTranslate.status));
 		const securityTrace = securityTraceNow().slice(securityTraceStart.length);
 		check("安全：拒绝请求未 spawn chat child", !securityTrace.includes("--mode rpc"), securityTrace.slice(-400));
+		const longError = await rawRequest(chatBase, {
+			method: "POST",
+			pathname: "/api/chat/model",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ source: "pi", session: "cs-1", provider: "p".repeat(600), id: "x" }),
+		});
+		const longErrorBody = JSON.parse(longError.body);
+		check(
+			"安全：错误 JSON 截断 500",
+			longError.status === 400 && typeof longErrorBody.error === "string" && longErrorBody.error.length <= 500,
+			`${longError.status} len=${longErrorBody.error?.length}`,
+		);
 
 		// 大线程：stat 前置拒绝，不解析 32MB 文件。
 		writeSession(path.join(chatSessions, "--c1--"), { id: "cs-large", cwd: chatProject, first: "大线程" });
