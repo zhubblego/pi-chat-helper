@@ -11,6 +11,8 @@
 | `trajectory-web/server/pi-binary.mjs` | 新增 | pi 可执行文件解析与版本探测 |
 | `trajectory-web/server/chat-session.mjs` | 新增 | 纯函数：pi session 投影 → 对话消息、侧车轮次、清单/delta、路径校验 |
 | `trajectory-web/server/chat-settings.mjs` | 新增 | 纯函数：`settings.json` 原子读写、按项目分键、profile/projectSkills 默认与校验 |
+| `trajectory-web/server/chat-pool.mjs` | 新增 | 纯函数：进程池上限、空闲 TTL、LRU 选择 |
+| `trajectory-web/server/trajectory-reader.mjs` | 新增 | 子进程扩展共用：按 pi/codex 读轨迹投影与事件查找 |
 | `trajectory-web/server/approval.mjs` | 新增 | 纯函数：审批 toolName 解析、摘要截断、timeout 毫秒→秒、AUTO 常量 |
 | `trajectory-web/server/context-render.mjs` | 新增 | 纯函数：单条轨迹事件渲染（服务端与子进程扩展共用） |
 | `trajectory-web/server/app.mjs` | 修改 | 注入 `chatDir`/`piBin`；挂 `/api/chat/*`；POST 白名单；安全校验；静态资源；close 顺序 |
@@ -119,12 +121,15 @@ abort
 
 - key = `${source}:${sessionId}`（一个轨迹会话一个 child）。
 - 懒启动：首次 `send/models/skills/thread(new)` 时 `ensureChild`。
-- 全局上限 **2**：超出时回收最久未用的 idle child（LRU）；都在忙则 409。
-- 空闲 **15 分钟** 回收：定时器每分钟扫一次，`state==="idle" && now-lastUsedAt>TTL` → kill。
-- 同项目串行：`projectTurns` 按 `${source}:${projectPath}` 占位；有活动 turn 时第二个请求 409（即使属于另一个 child）。
+- 全局上限 **2**：容量检查与 spawn 在同一条 promise 链（pool gate）上串行；超出时回收最久未用的 idle child（LRU）；没有可淘汰的则 409。
+- 空闲 **15 分钟** 回收：60 秒定时扫一次，`state==="idle" && !currentTurn && now-lastUsedAt > TTL` → `close+delete`；timer `unref`，`close` 清 timer。
+- `lastUsedAt` 在所有使用点更新：ensureChild 命中/启动中、send、models/skills/settings/thread、stop/approval、readChildState；LRU 按此排序。
+- 同项目串行：`projectTurns` 按 `${source}:${canonicalProjectPath}` 占位；检查与占位前移到 ensureChild 之前，有活动 turn 时第二个请求 409（即使属于另一个 child）。
 - 同 child 串行：`currentTurn` 非空 → 409。
 - 切线程：同一 child 内 `switch_session`；切换前必须 `currentTurn === null`。
 - 切项目：不同 child；受全局上限约束。
+- 设置一致性：`record.settingsKey = profile:projectSkills`；ensureChild 命中时设置变了且 idle → `restartChildKeepThread`；settings POST 立即重启同项目 idle child，busy/starting 标 `settingsStale`，turn 结束后下次 ensure 重启；目标自身 busy 仍 409。
+- 路径统一：`projectPath` / allow-set / settings / projectTurns 都使用 canonical 项目路径；实际 spawn 目录单独放 `record.cwd`，项目目录被删时不再漂移。
 
 ### 2.4 `pi-binary.mjs`
 
@@ -151,9 +156,9 @@ export async function probePi(pi, { timeoutMs = 5000 } = {}) {
 
 `send` 顺序：
 
-1. 校验 `source/session/threadId/prompt/contextIds/skill/profile`。
-2. `ensureChild` → 若 `currentTurn` 非空或项目锁被占 → 409。
-3. 占项目锁 + child 锁。
+1. 校验 `source/session/threadId/prompt/contextIds/skill/profile`；带 contextIds 时先 stat 轨迹文件（>32MB → 400）。
+2. **先占项目锁**：按 canonical `projectPath` 检查并写入 `projectTurns`；同项目已有 turn → 409。检查与占位之间不能有 `await`，否则并发请求会同时通过。
+3. `ensureChild`（容量 gate；设置变化且 idle 时按需重启）；若 `currentTurn` 非空 → 409；占 child 锁。
 4. 解析 context：`getProjection` → `findEvent` 逐条；写 `context.next.json`；rename `context.active.json`；算 `added/removed`。
 5. 解析 skill：`get_commands` 找名字；读 `SKILL.md` 做大小守卫；拼 `/skill:<name>` 前缀。
 6. 确保线程：`threadId` 为空则 `new_session`；否则若与 child 当前 session 不同则 `switch_session`。
@@ -161,7 +166,14 @@ export async function probePi(pi, { timeoutMs = 5000 } = {}) {
 8. 写 `meta` 事件（含 `threadId/userOrdinal/model/profile/context/skill`）。
 9. 写 SSE 头；启动 keepalive（15s）。
 10. `prompt` 命令；订阅事件直到 `agent_end`/`error`/`res.close`。
-11. `finally`：清 keepalive、清审批、释放锁、`currentTurn=null`。
+11. `finally`：清 keepalive、清审批、释放 child/项目锁、`currentTurn=null`。
+
+进程池与设置一致性（T8）：
+
+- 全局上限 2；`ensureChild` 的容量检查与 spawn 走同一条 `poolChain`，避免并发超限；满时淘汰最久未用的 idle child（无 `currentTurn`、非当前 key），没有可淘汰的 → 409。
+- 空闲 TTL 15 分钟，60 秒扫一次；`lastUsedAt` 在 ensure/send/models/skills/settings/thread/stop/approval/readChildState 更新；`close` 清 timer、children、projectTurns、starting。
+- `record.settingsKey = profile:projectSkills`；ensureChild 命中时设置变了且无 turn → `restartChildKeepThread`；settings POST 立即重启同项目 idle child，busy/starting 标 `settingsStale`，turn 结束后下一次 ensure 重启；目标自身 busy 仍 409。
+- `projectPath` / allow-set / settings / projectTurns 统一使用 canonical 项目路径；实际 spawn 目录单独放 `record.cwd`。
 
 事件映射：
 
@@ -176,7 +188,7 @@ export async function probePi(pi, { timeoutMs = 5000 } = {}) {
 | `agent_end` | `done {stopReason, usage, durationMs}` |
 | child exit / RPC error | `error {message, code}` |
 
-- `res.on("close")`：若未结束 → `abort`；所有 pending 审批回写 `cancelled`；清理。
+- `res.on("close")`：若未结束 → `abort`；所有 pending 审批回写 `confirmed:false`（拒绝），无活动 turn 的请求回 `cancelled`；清理。
 - 写入 `meta` 之后再失败，只能发 `error` 事件，不能再回 JSON。
 - `meta` 之前失败（400/409/501/502）走 JSON。
 
@@ -223,7 +235,7 @@ const chat = options.noChat ? null : createChatHost({
 });
 ```
 
-- 路由：`/api/chat/` 前缀先做安全校验（Origin/Host/Content-Type），再读 body、`chat.handle(...)`；未启用时 capabilities 返回 disabled，其余 501。
+- 路由：`/api/chat/` 前缀（以及所有 POST）先做 Host/Origin 校验，chat POST 再加 Content-Type；通过后才读 body、`chat.handle(...)`；未启用时 capabilities 返回 disabled，其余 501。
 - POST 白名单加入 `CHAT_POSTS`。
 - 静态资源加 `/chat.js`、`/chat-lib.js`。
 - `close`：
@@ -631,10 +643,11 @@ export function initChatPanel(deps) { ... }
   8. 无效 context id → `meta.context.dropped`；仍 200。
   9. 同 child 第二次 send → 409；同项目另一个 child → 409；stop 后恢复。
   10. `settings` 切 profile → `restart:true`，fake child 被杀并重启。
-  11. 安全：错误 Origin / 非 JSON content-type → 403/400；路径穿越 → 400。
-  12. `chatDir` 位于 `sessionsRoot` 下 → `enabled:false`。
-  13. `server.close()` 后无 child 残留。
-  14. 静态 `/chat.js`、`/chat-lib.js` 200。
+  11. 安全：错误 Origin / evil Host / Origin null / Origin 端口不符 → 403；chat POST 非 JSON 或缺 Content-Type → 403；OPTIONS → 405；无 `Access-Control-Allow-*`；拒绝时 fake child trace 无 `--mode rpc` spawn。
+  12. 大小：请求体 >1MB → 413；线程文件 >32MB → GET thread/models 与 send/model 在 spawn 前 400；轨迹文件 >32MB 且带 contextIds → spawn 前 400；错误 JSON ≤500。
+  13. `chatDir` 位于 `sessionsRoot` 下 → `enabled:false`；非回环监听且 chat 启用 → `enabled:false` + reason。
+  14. `server.close()` 后无 child 残留。
+  15. 静态 `/chat.js`、`/chat-lib.js` 200。
 
 ### 5.3 `tests/test-web-lib.cjs`
 
@@ -671,7 +684,7 @@ export function initChatPanel(deps) { ... }
   - 首页 200 且含 `chat-profile`/`chat-approval`；
   - 无进程残留（`pgrep -f "mode rpc"`）。
 - 真浏览器：三档 profile、审批、工具卡片、切项目/线程、重启恢复。CDP 不可用时注明「未做浏览器实测」。
-- T6/T7 现状：浏览器仍未实测（CDP 不可用）；chips/勾选/50 上限/审批/权限菜单仅纯函数 + 源码守卫；`tw.chatThread` + `tw.chatThreadNew` 已实现；工具整份投影未加 32MB 守卫（T9）；codex send 上下文未 e2e（T9）。
+- T10 现状：全套测试通过；浏览器仍未实测（CDP 不可用）；chips/勾选/50 上限/审批/权限菜单主要靠纯函数 + 源码守卫；`tw.chatThread` + `tw.chatThreadNew` 已实现；工具与 host 均已加 32MB 守卫；codex send 上下文未 e2e，留后续。
 
 ## 6. 提交拆分
 
@@ -698,14 +711,16 @@ export function initChatPanel(deps) { ... }
 
 ## 8. 验收清单
 
-- [ ] R1：`/model` 列表与 pi 一致；切换后刷新/重启保持；响应无密钥。
-- [ ] R2：`/skill` 列表与 pi 一致；发送出现 pi 原生 `<skill>` 块；项目技能开关生效；超大技能拦截。
-- [ ] R3：对话文件只落 chatDir；`/api/sessions`、轨迹列表、pi `/resume` 看不到；chatDir 在 sessions 下时禁用。
-- [ ] R4：勾选 → 清单 → 模型调用 `read_trajectory` → 回答引用；增删下一轮生效；反选不抹历史（文档已声明）。
-- [ ] R5：真子进程可调工具、可恢复会话；工具调用在抽屉可见。
-- [ ] R6：三档 profile 可切；默认只读；全量档 bash/write/edit 逐次审批；拒绝不执行。
-- [ ] R7：默认只加载全局技能；项目技能打开后才出现。
-- [ ] R8：每轨迹会话 1 child；全局 2；空闲 15 分钟回收；同项目并发 409；关闭无残留。
-- [ ] R9：`/deepseek-trail start` / `npm run dev` 启动不变；首条消息懒启动；A/B 都可用。
-- [ ] R10：Origin/Host/JSON content-type/路径/大小校验全过；禁用态不报错。
-- [ ] 全套测试通过；`tsc` 0；`pi -ne -e .` 0；dev 冒烟无残留；ROADMAP 只写已验证内容。
+- [x] R1：`/model` 列表与 pi 一致；切换后刷新/重启保持；响应无密钥。（fake child + 真 pi models；浏览器 chip 未实测）
+- [x] R2：`/skill` 列表与 pi 一致；发送前缀/项目技能开关/大小守卫生效；超大技能拦截。（原生 `<skill>` 展开由 pi 保证，壳侧验证前缀）
+- [x] R3：对话文件只落 chatDir；`/api/sessions`/轨迹列表看不到；chatDir 在 sessions 下时禁用。（未直接跑 pi `/resume`；路径隔离已验证）
+- [x] R4：勾选 → 清单 → 模型调用 `read_trajectory` → 回答引用；增删下一轮生效；反选不抹历史（文档已声明）。（T6 真 pi 冒烟）
+- [x] R5：真子进程可调工具、可恢复会话；工具调用以 SSE tool 事件可见。（抽屉浏览器渲染未实测）
+- [x] R6：三档 profile 可切；默认只读；全量档 bash/write/edit 逐次审批；拒绝不执行。（T7 真 pi bash deny/allow）
+- [x] R7：默认只加载全局技能；项目技能打开后才出现。（fake child spawn 参数 + 列表）
+- [x] R8：每轨迹会话 1 child；全局 2；空闲 15 分钟回收；同项目并发 409；关闭无残留。（T8 fake child + 真 pi 3 会话冒烟）
+- [x] R9：`/deepseek-trail start` / `npm run dev` 启动不变；首条消息懒启动；A/B 都可用。（test-extension 模式 A + 模式 B dev 冒烟）
+- [x] R10：Host/Origin/JSON content-type/路径/大小校验全过；禁用态不报错。（T9 安全用例）
+- [ ] 浏览器实测：三档 profile、审批弹层、工具卡片、切项目/线程、重启恢复。CDP 不可用，未做。
+- [ ] Codex send 上下文 e2e：工具层 list/read 已测，send 未做，留后续。
+- [x] 全套测试：test-chat 165、test-server 184、test-web-lib 193、test-extension 88、test-codex 38、test-projection 33、test-sessions 10、test-turn 21、test-tool-origins 11、test-render 28、test-question-panel 8、test-headless-tui 11；`tsc` 0；`pi -ne -e .` 0；模式 B dev 冒烟正常 send/done，无 rpc 残留；ROADMAP 只写已验证内容。

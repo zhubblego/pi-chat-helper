@@ -53,10 +53,13 @@
 
 ### 1.4 本地接口安全
 
-- 只监听回环地址；不新增 CORS。
-- 所有 POST 要求 `Content-Type: application/json`（非 safelisted，触发预检；服务端不响应 OPTIONS，跨站请求被浏览器拦下）。
-- `Origin` 存在时必须与 `http://127.0.0.1:<port>` 或 `http://localhost:<port>` 同源；`Host` 必须是回环地址（防 DNS rebinding）。
-- 未通过校验的 POST 返回 403，不执行任何子进程操作。
+- 只监听回环地址；不新增 CORS；OPTIONS 返回 405，不返回任何 `Access-Control-Allow-*`。
+- **所有 POST** 校验 Host 与 Origin；**仅 chat POST** 额外强制 `Content-Type: application/json`（可带 `charset`）。translate / context-edit / crop-entry 维持原有请求契约，不强制 JSON Content-Type。
+- `Host` 的 hostname 只允许 `127.0.0.1`、`localhost`、`[::1]`（可带端口）；其他 Host 403，防 DNS rebinding。
+- `Origin` 存在时必须为 `http` + 回环 hostname + **实际监听端口**；`127.0.0.1` / `localhost` / `[::1]` 互通。无 Origin 的 curl 允许；`Origin: null`、跨源、`https`、端口不一致均 403。
+- 未通过校验（含 chat POST 非 JSON / 缺 Content-Type）统一返回 **403**；在读取 body、`chat.handle`、spawn 之前拒绝，不执行任何子进程操作。
+- 监听地址非回环且 chat 启用时，**禁用 chat**（viewer 与轨迹接口不受影响）；`capabilities` 返回 `enabled:false`，请求侧 Host 检查继续兜底。
+- 大小：请求体 >1MB → **413**；线程文件/轨迹文件 >32MB → **400**（stat 前置，不解析）；错误 JSON 统一截断 500。
 
 ## 2. 能力探测
 
@@ -278,7 +281,7 @@ GET /api/chat/thread?source=pi&session=<id>[&thread=<id>]
 - `displayText/context/skill` 来自 `meta/turns.jsonl`（按 user 消息序号对齐）；缺失时回退为「去掉已知 `<trajectory_index>`/`<trajectory_index_delta>` 块后的文本」。
 - `pending`：child 存活时取 `get_state().isStreaming`；child 不存在时 `false`。
 - `warnings`：session 解析告警、缺失 sidecar、无效 context id 等非致命情况。
-- 单线程文件读取上限 **32MB**；超过返回 413，提示手动清理。
+- 单线程文件读取上限 **32MB**；超过返回 **400**，提示手动清理（stat 前置，不解析）。
 
 ### 5.2 新建线程
 
@@ -565,7 +568,7 @@ Content-Type: application/json
 - 渲染复用服务端的 `renderContextEvent`（与轨迹详情一致），包含类型、轮次、时间、正文。
 - 工具只读，自动放行；仍以 `tool` 事件显示在 UI。
 - **codex 支持程度**：工具层已支持 `readCodexSession` + `buildProjectionFrom`（fixture 验证 list/read）；send 上下文链路是 source-agnostic 的，但 codex send 未做 e2e，留 T9 补。viewer 的 Guardian 审批合并只用于展示；工具读取时不合并 Guardian，勾选 Guardian-only 条目会得到「不在当前选中集/已失效」。
-- **已知限制**：工具读取整份轨迹投影，未加 32MB 大文件守卫（T9）；浏览器实测未做（CDP 不可用）；codex send 上下文未 e2e（T9）。
+- **已知限制**：工具读取整份轨迹投影时已加 32MB 守卫；浏览器实测未做（CDP 不可用）；codex send 上下文未 e2e，留后续。
 
 ### 9.4 增删语义
 
@@ -630,13 +633,13 @@ Content-Type: application/json
 
 ## 11. 校验与安全
 
-- **只监听回环地址**；不新增 CORS；POST 校验 Origin/Host/Content-Type（见 1.4）。
+- **只监听回环地址**；不新增 CORS，OPTIONS 405；所有 POST 校验 Host/Origin，chat POST 额外校验 JSON Content-Type（见 1.4）；非回环监听时禁用 chat。
 - **路径**：`source` 白名单；`session` 必须能从 `readSessions(source)` 解析；`sessionId` sanitize；`threadId` 正则；最终路径必须在 chatDir 内。
 - **上下文**：每个 id 必须能从当前投影 `findEvent` 找到；找不到跳过并告警；≤50。
 - **技能**：只接受 `get_commands` 里的名字；大小守卫；项目技能只在开关打开时加载。
 - **模型**：只接受 `get_available_models` 返回的 `{provider,id}`；不接受 baseUrl/apiKey。
 - **密钥**：模型列表、线程响应、错误信息都不含 auth/headers；错误信息截断到 500 字符。
-- **大小**：prompt 32k；context 50 条；请求体 1MB；线程文件 32MB；技能 32k 警告 / 200k 拒绝。
+- **大小**：prompt 32k；context 50 条；请求体 1MB（413）；线程/轨迹文件 32MB（400）；技能 32k 警告 / 200k 拒绝。
 - **工具**：默认只读；全量档逐次审批；拒绝/超时/断连即不执行；同项目串行。
 - **提示注入**：系统提示声明资料非指令；默认只读；全量档写操作必须审批。
 - **文件权限**：chatDir 目录 `0700`；meta 文件 `0600`；不写入 `~/.pi/agent/sessions`。

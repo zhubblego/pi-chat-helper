@@ -98,6 +98,21 @@ npm run dev        # 默认 http://127.0.0.1:7788
 - **工具过滤**：工具名子菜单多选（默认全选），工具按归属分组显示——内置 / `MCP: <server>` / 扩展包 / 未识别；归属来自 pi 运行时映射 + 静态扫描合并；「全部反选」的状态跨会话继承。
 - 前端 2s 轮询（etag 增量）、会话列表约 6s 刷新、详情按需取全文；服务只读会话文件，仅监听回环地址。
 
+### 对话页（chat）
+
+轨迹页的对话栏可以针对当前轨迹会话直接问 pi：服务端用 `pi --mode rpc` 启动独立子进程，不污染你正在用的 TUI 会话，也不 import pi SDK。对话能力包括：
+
+- **模型**：`/model` 列表来自子进程 `get_available_models`，切换走 `set_model`；响应只保留展示字段，不含 key/baseUrl/headers。
+- **技能**：`/skill` 列表来自 `get_commands`；发送时在消息最前拼 `/skill:<name>`，由 pi 原生展开；项目技能默认关闭，打开后按项目 spawn `--skill`。
+- **上下文**：勾选轨迹条目后作为 `<trajectory_index>` 清单随消息发送；模型可用只读 `read_trajectory` 工具按 id 取正文（单条 6k / 单次 12k 字符），反选只影响下一轮，不抹除已读历史。
+- **工具 profile**：`no-tools`（仅对话）/ `read-only`（默认，只读轨迹工具 + 读项目文件）/ `full`（可写文件、可跑命令，逐次审批）。全量档支持「本会话允许」，拒绝/超时/断连即不执行。
+- **新对话与线程记忆**：`#chat-new` 新建 pi thread；浏览器用 `localStorage["tw.chatThread"]` 记住当前线程，未落盘的新线程用 `tw.chatThreadNew` 保留；「以此新开」保留当前上下文选择。
+- **进程池**：每轨迹会话一个 child，全局最多 2 个；满时按 `lastUsedAt` 回收最久未用 idle child，15 分钟空闲回收（60 秒扫描一次）；同项目同一时间只允许一个 turn（第二个 409）。
+- **安全**：仅监听回环地址；所有 POST 校验 Host/Origin，chat POST 要求 `application/json`，失败 403；请求体 >1MB 413，线程/轨迹文件 >32MB 400；不新增 CORS，OPTIONS 405。非回环监听时 chat 自动禁用，轨迹 viewer 不受影响。
+- **存储**：对话线程是独立 pi session，落在 `<chatDir>/<source>/<safeSessionId>/sessions`；`chatDir` 默认 `<agentDir>/pi-chat-helper/chats`，只写这里，删除不影响轨迹历史；`/api/sessions` 与 pi `/resume` 看不到。
+
+已知限制：对话页的浏览器交互尚未做 CDP 实测；Codex 的 `read_trajectory` 工具已支持，但 Codex send 上下文链路未做 e2e；暂无线程列表/重命名/删除 UI；不支持图片/语音/多模态输入。
+
 ### 轨迹源
 
 | 源 | 位置 | 投影方式 |
@@ -139,7 +154,8 @@ pi -ne -e .        # 只加载本仓库开发版，不叠加其它已装扩展
 # trajectory-web（纯 node，不需要 PI_HOME）
 node tests/test-projection.cjs   # 投影：分组/工具配对/统计/分支重建/light 截断
 node tests/test-sessions.cjs     # 会话扫描：列表字段/项目范围/尾部会话名/live/排序
-node tests/test-server.cjs       # HTTP：多会话列表/指定会话/增量/详情/双范围/热更新/退出
+node tests/test-chat.cjs         # 对话 host：RPC/线程/SSE/上下文/审批/进程池/安全纯函数
+node tests/test-server.cjs       # HTTP：多会话列表/指定会话/增量/详情/双范围/热更新/对话/安全/退出
 node tests/test-web-lib.cjs      # 前端纯函数：过滤映射/Markdown 转义/会话列表助手/搜索结果高亮切分
 node tests/test-codex.cjs        # Codex 轨迹源：rollout 扫描/翻译映射（消息/思维/工具配对/redacted/子 agent 派发任务）/投影复用
 node tests/test-tool-origins.cjs # 工具归属静态扫描：分组/保护规则/相似度竞争
@@ -159,7 +175,15 @@ PI_HOME=<pi 安装目录> node tests/test-headless-tui.cjs
 node ~/.npm/_npx/483d2954a4c5190c/node_modules/typescript/bin/tsc -p tsconfig.json
 ```
 
-环境变量 `PI_HOME` 指向本机 pi 安装目录。两种安装布局都支持：旧布局（`dist/` 与 `node_modules/` 同在 `PI_HOME` 根）或 managed install（`PI_HOME` 指到 `node_modules/@earendil-works/pi-coding-agent`，依赖从上层 `node_modules/` 找）。
+环境变量 `PI_HOME` 指向本机 pi 安装目录：旧布局要求 `dist/` 与 `node_modules/` 同在 `PI_HOME` 根。managed install 的 package 目录通常只有自己的 `dist/`，而 `test-turn`/`test-render`/`test-question-panel`/`test-headless-tui` 还需要 `@earendil-works/pi-tui`；可建一个临时 PI_HOME 指向两层：
+
+```bash
+mkdir -p /tmp/pi-home
+ln -s <pi 安装目录>/node_modules /tmp/pi-home/node_modules
+ln -s <pi 安装目录>/node_modules/@earendil-works/pi-coding-agent/dist /tmp/pi-home/dist
+PI_HOME=/tmp/pi-home node tests/test-turn.cjs
+```
+
 
 ## License
 
