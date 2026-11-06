@@ -449,9 +449,110 @@ export function initChatPanel(deps) {
 		renderMessages();
 		renderComposer();
 		renderSkillChip();
+		renderContext();
 		updateSendButton();
 		updateA11y();
 		renderPalette();
+	}
+
+	function contextIds() {
+		return deps.getSelectedIds?.() ?? [];
+	}
+
+	function contextRefs(ids) {
+		const list = Array.isArray(ids) ? ids : [];
+		const refs = deps.getEventRefs?.(list) ?? [];
+		return list.map((id) => refs.find((ref) => ref.id === id) ?? { id, kind: "unknown", label: "失效条目", preview: "", invalid: true });
+	}
+
+	/** 上下文 chips：标签/预览/打开/移除/清空/以此新开 + 轻提示。 */
+	function renderContext() {
+		const box = el("chat-context");
+		if (!box) return;
+		const ids = contextIds();
+		if (!state.open || ids.length === 0) {
+			box.hidden = true;
+			box.replaceChildren();
+			return;
+		}
+		box.hidden = false;
+		const nodes = [h("span", { class: "chat-ctx-label", text: `上下文 ${ids.length}` })];
+		for (const ref of contextRefs(ids)) {
+			nodes.push(
+				h(
+					"span",
+					{ class: `chat-ctx-chip${ref.invalid ? " is-invalid" : ""}`, title: ref.preview || ref.label },
+					h(
+						"button",
+						{ class: "chat-ctx-main", type: "button", title: ref.preview || ref.label, onClick: () => deps.openEvent?.(ref.id) },
+						h("span", { class: "chat-ctx-tag", text: ref.label }),
+						ref.preview ? h("span", { class: "chat-ctx-preview", text: String(ref.preview).slice(0, 24) }) : null,
+					),
+					h("button", {
+						class: "chat-ctx-remove",
+						type: "button",
+						title: "移除",
+						"aria-label": `移除 ${ref.label}`,
+						text: "×",
+						onClick: (event) => {
+							event.stopPropagation();
+							setContextIds(ids.filter((id) => id !== ref.id));
+						},
+					}),
+				),
+			);
+		}
+		nodes.push(
+			h("button", { class: "chat-ctx-clear", type: "button", text: "清空", onClick: () => setContextIds([]) }),
+			h("button", { class: "chat-ctx-new", type: "button", text: "以此新开", onClick: () => void newThreadPreservingSelection() }),
+			h("span", { class: "chat-ctx-hint", text: "取消勾选只影响之后的读取" }),
+		);
+		box.replaceChildren(...nodes);
+	}
+
+	function setContextIds(ids) {
+		deps.setSelectedIds?.(ids, { silent: true });
+		renderContext();
+		updateSendButton();
+	}
+
+	async function newThreadPreservingSelection() {
+		if (state.streaming) {
+			pushNotice("回复中，先停止", "warn");
+			flushRender();
+			return;
+		}
+		const session = currentSession();
+		if (!session) return;
+		try {
+			const res = await fetch("/api/chat/thread", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ source: session.source, session: session.id }),
+			});
+			if (!res.ok) {
+				let message = `HTTP ${res.status}`;
+				try {
+					message = (await res.json())?.error ?? message;
+				} catch {
+					/* 非 JSON 错误体 */
+				}
+				throw new Error(message);
+			}
+			const data = await res.json();
+			state.thread = data.thread ?? null;
+			state.threadId = data.thread?.id ?? null;
+			state.model = data.thread?.model ?? state.model;
+			state.skill = null;
+			state.loadedKey = sessionKeyOf(session);
+			setMessages([]);
+			render();
+			pushNotice("已新建对话（保留当前上下文选择）");
+			flushRender();
+		} catch (err) {
+			pushNotice(`新建对话失败：${err.message}`, "error");
+			flushRender();
+		}
 	}
 
 	/** 流式中 aria-live=off（避免逐字朗读）；收尾时短暂 hold，只让 #chat-announcer 播报最后一条。 */
@@ -1099,6 +1200,18 @@ export function initChatPanel(deps) {
 				if (data.profile) state.profile = data.profile;
 				const user = state.messages.find((message) => turn.ids.has(message.id) && message.role === "user");
 				if (user && "skill" in data) user.skill = data.skill ?? null;
+				if (data.context && typeof data.context === "object") {
+					const dropped = Array.isArray(data.context.dropped) ? data.context.dropped.filter((id) => typeof id === "string") : [];
+					if (dropped.length) {
+						const current = contextIds();
+						setContextIds(current.filter((id) => !dropped.includes(id)));
+					}
+					if (user) {
+						const included = Array.isArray(data.context.included) ? data.context.included : [];
+						user.context = contextRefs(included);
+					}
+					renderContext();
+				}
 				// 发送被 pi 接受：技能 chip 清除（失败在 meta 之前，会保留）
 				if (state.skill) {
 					state.skill = null;
@@ -1192,6 +1305,7 @@ export function initChatPanel(deps) {
 
 		const controller = new AbortController();
 		const turn = { controller, key: sessionKeyOf(session), settled: false, metaReceived: false, ids: new Set() };
+		const contextSelection = contextIds();
 		state.streaming = true;
 		state.turn = turn;
 		state.controller = controller;
@@ -1205,6 +1319,7 @@ export function initChatPanel(deps) {
 			role: "user",
 			displayText: text,
 			ts: new Date().toISOString(),
+			context: contextRefs(contextSelection),
 			skill: state.skill ? { name: state.skill.name, chars: state.skill.chars, warning: state.skill.warning } : null,
 		});
 		state.messages.push({
@@ -1231,6 +1346,7 @@ export function initChatPanel(deps) {
 					session: session.id,
 					threadId: state.threadId ?? null,
 					prompt: text,
+					contextIds: contextSelection,
 					skill: state.skill?.name ?? undefined,
 				}),
 				signal: controller.signal,
@@ -1382,6 +1498,7 @@ export function initChatPanel(deps) {
 			state.open = open === true;
 			if (!state.open) closePalette({ restore: true, focus: false });
 			if (state.open) void ensureLoaded();
+			renderContext();
 		},
 		handleEscape() {
 			if (state.palette) {
@@ -1426,10 +1543,11 @@ export function initChatPanel(deps) {
 			else render();
 		},
 		onSelectionChanged() {
-			// 上下文勾选（T6）才需要发请求；当前阶段只影响蒸馏列表
+			renderContext();
+			updateSendButton();
 		},
 		onTrajectoryChanged() {
-			// 轨迹轮询不驱动对话刷新；线程在打开/发送结束时读取
+			renderContext();
 		},
 		refreshThread() {
 			if (!state.open) return Promise.resolve();

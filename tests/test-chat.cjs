@@ -146,6 +146,7 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 	const { parsePiVersion, versionAtLeast, resolvePiCandidates, piRpcArgs, probeFirstPi } = await import(urlOf("trajectory-web/server/pi-binary.mjs"));
 	const { RpcChild, createChatHost, checkChatDir, isPathInside, resolveAgentDir, sanitizeModel, providerNameOf } = await import(urlOf("trajectory-web/server/chat-host.mjs"));
 	const chatSession = await import(urlOf("trajectory-web/server/chat-session.mjs"));
+	const contextRender = await import(urlOf("trajectory-web/server/context-render.mjs"));
 	const chatSettings = await import(urlOf("trajectory-web/server/chat-settings.mjs"));
 	const { buildProjection } = await import(urlOf("trajectory-web/server/session.mjs"));
 
@@ -333,6 +334,87 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 		missingThreadIdThrew = true;
 	}
 	check("upsertTurn：缺 threadId 拒绝", missingThreadIdThrew);
+
+	// ---- context-render：各 kind 标签/正文/截断 ----
+	const evUser = { id: "u1:0", kind: "user", iso: "2026-01-01T00:00:01.000Z", text: "帮我改", preview: "帮我改" };
+	const evAnswer = { id: "a2:0", kind: "answer", iso: "2026-01-01T00:00:02.000Z", text: "因为依赖没装", preview: "因为依赖没装" };
+	const evText = { id: "a1:0", kind: "text", iso: "2026-01-01T00:00:02.000Z", text: "过程文本", preview: "过程文本" };
+	const evThinking = { id: "a1:1", kind: "thinking", iso: "2026-01-01T00:00:02.000Z", text: "想一想", preview: "想一想" };
+	const evTool = { id: "a1:2", kind: "tool", iso: "2026-01-01T00:00:03.000Z", preview: "read x", tool: { name: "read", argsText: '{"path":"x"}', result: "内容", isError: false, durationMs: 4 } };
+	const evBash = { id: "b1:0", kind: "bash", iso: "2026-01-01T00:00:04.000Z", preview: "! npm test", bash: { command: "npm test", output: "ok", exitCode: 0 } };
+	const evSystem = { id: "s1:0", kind: "system", iso: "2026-01-01T00:00:05.000Z", preview: "系统上下文", system: { sections: [{ label: "AGENTS.md", text: "规则正文" }] } };
+	const evCompaction = { id: "c1:0", kind: "compaction", iso: "2026-01-01T00:00:06.000Z", preview: "压缩", compaction: { summary: "压缩摘要", tokensBefore: 1000 } };
+	const evCustom = { id: "m1:0", kind: "custom", iso: "2026-01-01T00:00:07.000Z", preview: "自定义", custom: { customType: "note", text: "自定义正文" } };
+	const evApproval = { id: "p1:0", kind: "approval", iso: "2026-01-01T00:00:08.000Z", preview: "审批", approval: { action: "bash", verdict: { outcome: "allow", rationale: "安全" } } };
+	const labelCases = [
+		["提问", evUser, "帮我改"],
+		["回答", evAnswer, "因为依赖没装"],
+		["过程", evText, "过程文本"],
+		["思考", evThinking, "想一想"],
+		["工具", evTool, "工具：read"],
+		["命令", evBash, "命令：npm test"],
+		["上下文", evSystem, "AGENTS.md：规则正文"],
+		["压缩", evCompaction, "压缩摘要"],
+		["自定义", evCustom, "自定义正文"],
+		["审批", evApproval, "bash"],
+	];
+	for (const [label, ev, body] of labelCases) {
+		const rendered = contextRender.renderContextEvent(ev);
+		check(`renderContextEvent：${ev.kind} 标签/正文`, rendered.includes(`【${label}】`) && rendered.includes(body), rendered.slice(0, 160));
+	}
+	const longText = { id: "x:0", kind: "answer", iso: "2026-01-01T00:00:00.000Z", text: "x".repeat(100), preview: "x" };
+	const truncated = contextRender.renderContextEvent(longText, { maxChars: 10 });
+	check("renderContextEvent：单条截断标记", truncated.includes("单条已截断") && truncated.length < 200, truncated);
+	check("perKindLimits：单条默认 6000", contextRender.perKindLimits.default === 6000 && contextRender.perKindLimits.tool === 6000);
+	const ref = contextRender.contextEventRef(evTool);
+	check(
+		"contextEventRef：id/kind/label/preview/chars",
+		ref.id === "a1:2" && ref.kind === "tool" && ref.label === "工具" && ref.preview.length > 0 && ref.chars > 0,
+		JSON.stringify(ref),
+	);
+
+	// ---- 清单 / delta / 选中集过滤 ----
+	const indexItems = [
+		{ id: "a1:p2", kind: "tool", label: "工具", preview: "bash · " + "x".repeat(100) },
+		{ id: "a2:p0", kind: "answer", label: "回答", preview: "因为依赖没装" },
+	];
+	const index = chatSession.buildTrajectoryIndex(indexItems, { source: "pi", sessionId: "ext-1" });
+	check(
+		"buildTrajectoryIndex：头/条目/preview 80 截断",
+		index.startsWith('<trajectory_index source="pi" session="ext-1" count="2">') &&
+			index.includes("- [a1:p2] 工具 · bash · ") &&
+			index.includes("…") &&
+			index.endsWith("</trajectory_index>"),
+		index,
+	);
+	check("buildTrajectoryIndex：空选中返回空串", chatSession.buildTrajectoryIndex([]) === "");
+	const delta = chatSession.selectionDelta([{ id: "a" }, { id: "b" }], [{ id: "b" }, { id: "c" }]);
+	check("selectionDelta：added/removed", delta.added.join(",") === "c" && delta.removed.join(",") === "a", JSON.stringify(delta));
+	check("buildTrajectoryDelta：无变化空串 + 变化 JSON", chatSession.buildTrajectoryDelta({ added: [], removed: [] }) === "" && chatSession.buildTrajectoryDelta(delta) === '<trajectory_index_delta>{"added":["c"],"removed":["a"]}</trajectory_index_delta>');
+
+	const entries = [
+		{ id: "u1:0", kind: "user", label: "提问", preview: "帮我改", text: "帮我改 x", chars: 10 },
+		{ id: "a1:0", kind: "tool", label: "工具", preview: "npm test", text: "工具：bash npm test exit 1", chars: 20 },
+		{ id: "a2:0", kind: "answer", label: "回答", preview: "因为依赖没装", text: "因为依赖没装", chars: 8 },
+	];
+	check("selectContextEntries：ids 白名单", contextRender.selectContextEntries(entries, { ids: ["a1:0"] }).map((e) => e.id).join(",") === "a1:0");
+	check(
+		"selectContextEntries：query 大小写不敏感 + kind",
+		contextRender.selectContextEntries(entries, { query: "NPM TEST" }).map((e) => e.id).join(",") === "a1:0" &&
+			contextRender.selectContextEntries(entries, { kind: "answer" }).map((e) => e.id).join(",") === "a2:0",
+	);
+	const page = contextRender.paginateContextEntries(entries, { offset: 1, limit: 1 });
+	check("paginateContextEntries：offset/limit/nextOffset", page.entries[0].id === "a1:0" && page.nextOffset === 2, JSON.stringify(page));
+	check("paginateContextEntries：limit 最大 20", contextRender.paginateContextEntries(entries, { limit: 99 }).limit === 20);
+	const batch = contextRender.renderContextBatch(
+		[
+			{ id: "a", rendered: "x".repeat(5000) },
+			{ id: "b", rendered: "y".repeat(5000) },
+			{ id: "c", rendered: "z".repeat(5000) },
+		],
+		{ singleLimit: 6000, totalLimit: 12000, startOffset: 0 },
+	);
+	check("renderContextBatch：总量 12k 截断 + nextOffset", batch.truncated === true && batch.count === 2 && batch.nextOffset === 2 && batch.text.length <= 12000, JSON.stringify({ count: batch.count, nextOffset: batch.nextOffset, len: batch.text.length }));
 
 	const projFile = path.join(tmp, "proj-chat", "2026-01-01T00-00-00-000Z_thread-a.jsonl");
 	writePiSessionFile(projFile, {

@@ -13,8 +13,10 @@ import { spawn } from "node:child_process";
 import { accessSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { buildProjection } from "./session.mjs";
 import { buildSystemPrompt } from "./chat-prompt.mjs";
+import { contextEventRef } from "./context-render.mjs";
 import {
 	CHAT_PROFILES,
 	DEFAULT_PROFILE,
@@ -23,15 +25,21 @@ import {
 	updateProjectSettings,
 } from "./chat-settings.mjs";
 import {
+	buildTrajectoryDelta,
+	buildTrajectoryIndex,
 	chatSessionDirs,
 	findThreadFile,
 	isSafeThreadId,
 	latestThreadFile,
 	parseThreadProjection,
+	promoteContext,
+	readContext,
 	readSessionId,
 	readSessionModel,
 	readTurns,
+	selectionDelta,
 	upsertTurn,
+	writeContextNext,
 } from "./chat-session.mjs";
 import { MIN_PI_VERSION_TEXT, parsePiVersion, piRpcArgs, probeFirstPi, probePi, versionAtLeast } from "./pi-binary.mjs";
 
@@ -43,6 +51,8 @@ const PREVIEW_CHARS = 400;
 const SKILLS_TTL_MS = 60_000;
 const SKILL_WARN_CHARS = 32_000;
 const SKILL_MAX_CHARS = 200_000;
+const MAX_CONTEXT_IDS = 50;
+const TRAJECTORY_TOOL_PATH = fileURLToPath(new URL("../chat-trajectory-tool.ts", import.meta.url));
 
 export { CHAT_PROFILES, DEFAULT_PROFILE };
 
@@ -424,6 +434,8 @@ function disabledCapabilities(chatDir, reason) {
  *   settingsPath?: string,
  *   readSessions?: (source: string) => object[],
  *   resolveSession?: (sessions: object[], id: string) => object | null,
+ *   getProjection?: (session: object, source: string) => { full: object },
+ *   findEvent?: (projection: object, id: string) => object | null,
  *   availableSources?: () => Array<{id: string, label: string}>,
  *   ssePingMs?: number,
  *   log?: (message:string)=>void,
@@ -550,8 +562,8 @@ export function createChatHost(deps = {}) {
 
 	function profileArgs(profile) {
 		if (profile === "no-tools") return ["--no-builtin-tools"];
-		if (profile === "full") return ["--tools", "read,write,edit,bash"];
-		return ["--tools", "read,grep,ls"];
+		if (profile === "full") return ["--tools", "read,write,edit,bash,read_trajectory"];
+		return ["--tools", "read,grep,ls,read_trajectory"];
 	}
 
 	function spawnArgs({ sessionsDir, profile, threadFile, threadId, projectSkills = false, projectPath = null }) {
@@ -561,9 +573,11 @@ export function createChatHost(deps = {}) {
 			"--no-extensions",
 			"--no-context-files",
 			"--system-prompt",
-			buildSystemPrompt({ hasTrajectoryTool: false }),
+			buildSystemPrompt({ hasTrajectoryTool: true }),
 			...profileArgs(profile),
 			"-na",
+			"-e",
+			TRAJECTORY_TOOL_PATH,
 		];
 		if (projectSkills && projectPath) {
 			for (const dir of [join(projectPath, ".pi", "skills"), join(projectPath, ".agents", "skills")]) {
@@ -783,6 +797,7 @@ export function createChatHost(deps = {}) {
 			metaDir: dirs.metaDir,
 			profile,
 			projectSkills: project.projectSkills,
+			trajectoryFile: target.session.file ?? null,
 			child: null,
 			state: "starting",
 			piSessionId: null,
@@ -790,7 +805,20 @@ export function createChatHost(deps = {}) {
 			currentTurn: null,
 			lastUsedAt: Date.now(),
 		};
-		const child = new RpcChild({ pi, args, cwd: record.projectPath, env, log, name: key });
+		const child = new RpcChild({
+			pi,
+			args,
+			cwd: record.projectPath,
+			env: {
+				...env,
+				PI_CHAT_CONTEXT_FILE: join(dirs.metaDir, "context.active.json"),
+				PI_CHAT_TRAJECTORY_FILE: record.trajectoryFile ?? "",
+				PI_CHAT_SOURCE: source,
+				PI_CHAT_SESSION_ID: sessionId,
+			},
+			log,
+			name: key,
+		});
 		record.child = child;
 		children.set(key, record);
 		child.onEvent((event) => {
@@ -977,6 +1005,44 @@ export function createChatHost(deps = {}) {
 		}
 	}
 
+	/** 把 contextIds 解析成 refs；不存在的 id 进 dropped。 */
+	function resolveContextItems(target, ids) {
+		if (!ids.length) return { items: [], dropped: [] };
+		if (typeof deps.getProjection !== "function" || typeof deps.findEvent !== "function") {
+			throw httpError(501, "对话缺少轨迹投影依赖");
+		}
+		let entry;
+		try {
+			entry = deps.getProjection(target.session, target.source);
+		} catch (err) {
+			throw httpError(500, `轨迹投影读取失败：${err.message}`);
+		}
+		const items = [];
+		const dropped = [];
+		for (const id of ids) {
+			const event = deps.findEvent(entry.full, id);
+			if (!event) {
+				dropped.push(id);
+				continue;
+			}
+			items.push(contextEventRef(event));
+		}
+		return { items, dropped };
+	}
+
+	/**
+	 * 组装用户消息：pi 只在消息以 `/skill:` 开头时原生展开技能，
+	 * 所以技能命令必须在最前，index/delta 紧随其后，最后是问题。
+	 */
+	function composeUserText(contextBlock, userText) {
+		if (!contextBlock) return userText;
+		if (!userText.startsWith("/skill:")) return `${contextBlock}\n${userText}`;
+		const match = /^(\/skill:[^\s]+)([\s\S]*)$/.exec(userText);
+		if (!match) return `${contextBlock}\n${userText}`;
+		const rest = match[2].replace(/^\s+/, "");
+		return `${match[1]}\n\n${contextBlock}${rest ? `\n${rest}` : ""}`;
+	}
+
 	async function handleSend(_req, res, rawBody) {
 		let payload;
 		try {
@@ -991,6 +1057,16 @@ export function createChatHost(deps = {}) {
 		if (prompt.length > PROMPT_MAX_CHARS) throw httpError(400, `prompt 超过 ${PROMPT_MAX_CHARS} 字符`);
 		if (payload.skill !== undefined && payload.skill !== null && typeof payload.skill !== "string") {
 			throw httpError(400, "skill 需为字符串");
+		}
+		const rawContextIds = payload.contextIds;
+		const contextIds = [];
+		if (rawContextIds !== undefined && rawContextIds !== null) {
+			if (!Array.isArray(rawContextIds)) throw httpError(400, "contextIds 需为数组");
+			if (rawContextIds.length > MAX_CONTEXT_IDS) throw httpError(400, `contextIds 超过 ${MAX_CONTEXT_IDS} 条`);
+			for (const id of rawContextIds) {
+				if (typeof id !== "string" || !id) throw httpError(400, "contextIds 需为非空字符串");
+				if (!contextIds.includes(id)) contextIds.push(id);
+			}
 		}
 		const requestedThread = payload.threadId ?? null;
 		if (requestedThread !== null && !isSafeThreadId(requestedThread)) throw httpError(400, "非法线程 id");
@@ -1039,16 +1115,39 @@ export function createChatHost(deps = {}) {
 			}
 			const state = await readChildState(record);
 
+			// 上下文：解析当前选中集，与上一次 active 比出 added/removed。
+			const context = resolveContextItems(target, contextIds);
+			const previous = readContext(record.metaDir);
+			const previousItems = Array.isArray(previous.items) ? previous.items : [];
+			const delta = selectionDelta(previousItems, context.items);
+			const changed = delta.added.length > 0 || delta.removed.length > 0;
+			const firstIndex = previousItems.length === 0 && context.items.length > 0;
+			const indexText =
+				context.items.length && (firstIndex || changed)
+					? buildTrajectoryIndex(context.items, { source: target.source, sessionId: target.sessionId })
+					: "";
+			const deltaText = changed && !firstIndex ? buildTrajectoryDelta(delta) : "";
+
 			// 技能：body.skill 拼 /skill: 前缀；直输 /skill:name 原样透传并做大小守卫。
 			const resolved = await resolveSkillForSend(record, payload.skill, prompt);
+
+			// 先 promote active，再写 sidecar / 发 prompt：工具读取的是本轮快照。
+			writeContextNext(record.metaDir, {
+				source: target.source,
+				sessionId: target.sessionId,
+				updatedAt: new Date().toISOString(),
+				items: context.items,
+			});
+			promoteContext(record.metaDir);
+
 			const userOrdinal = countUserOrdinal(record);
-			// 先写 sidecar 再 prompt：显示文本/技能/模型由它保存；写失败只记日志，不阻断对话。
+			// 先写 sidecar 再 prompt：显示文本/技能/上下文/模型由它保存；写失败只记日志，不阻断对话。
 			try {
 				upsertTurn(record.metaDir, {
 					threadId: record.piSessionId,
 					ordinal: userOrdinal,
 					displayText: resolved.displayText,
-					contextRefs: [],
+					contextRefs: context.items,
 					skill: resolved.skill,
 					profile: record.profile,
 					model: modelOfState(state.data?.model),
@@ -1057,6 +1156,9 @@ export function createChatHost(deps = {}) {
 				log(`[chat] turns 写入失败：${err.message}`);
 			}
 
+			const contextBlock = [indexText, deltaText].filter(Boolean).join("\n");
+			const userText = composeUserText(contextBlock, resolved.userText);
+
 			res.writeHead(200, SSE_HEADERS);
 			headersSent = true;
 			writeSse(res, "meta", {
@@ -1064,6 +1166,13 @@ export function createChatHost(deps = {}) {
 				userOrdinal,
 				model: modelOfState(state.data?.model),
 				profile: record.profile,
+				context: {
+					selected: contextIds.length,
+					included: context.items.map((item) => item.id),
+					dropped: context.dropped,
+					added: delta.added,
+					removed: delta.removed,
+				},
 				skill: resolved.skill,
 			});
 
@@ -1154,7 +1263,7 @@ export function createChatHost(deps = {}) {
 			};
 			res.on("close", onClose);
 
-			const accepted = await record.child.send({ type: "prompt", message: resolved.userText }, { timeoutMs: 30_000 });
+			const accepted = await record.child.send({ type: "prompt", message: userText }, { timeoutMs: 30_000 });
 			if (accepted.data?.disposition === "handled") {
 				// 扩展命令/输入处理器消费了 prompt：不会再有 agent_end，直接收尾。
 				finish("done", { stopReason: "stop", usage: null, durationMs: null });

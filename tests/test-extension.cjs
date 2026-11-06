@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 
 let failed = 0;
 const check = (label, cond, extra = "") => {
@@ -220,6 +221,91 @@ function freePort() {
 			});
 		}
 
+		// ---- T6：read_trajectory 扩展（jiti 加载 + fake pi API） ----
+		const toolTmp = fs.mkdtempSync(path.join(os.tmpdir(), "tw-tool-"));
+		const toolSession = path.join(toolTmp, "tool-trajectory.jsonl");
+		const toolTime = "2026-01-01T00:00:00.000Z";
+		fs.writeFileSync(
+			toolSession,
+			[
+				{ type: "session", version: 3, id: "ext-tool", timestamp: toolTime, cwd: tmp },
+				{ type: "message", id: "u1", parentId: null, timestamp: toolTime, message: { role: "user", content: [{ type: "text", text: `第一问 ${"a".repeat(40)}` }], timestamp: 1 } },
+				{ type: "message", id: "a1", parentId: "u1", timestamp: toolTime, message: { role: "assistant", content: [{ type: "text", text: `${"x".repeat(6900)}NEEDLE-END${"x".repeat(41)}` }], timestamp: 2 } },
+				{ type: "message", id: "a2", parentId: "a1", timestamp: toolTime, message: { role: "assistant", content: [{ type: "text", text: "y".repeat(5000) }], timestamp: 3 } },
+				{ type: "message", id: "a3", parentId: "a2", timestamp: toolTime, message: { role: "assistant", content: [{ type: "text", text: "z".repeat(5000) }], timestamp: 4 } },
+			]
+				.map((line) => JSON.stringify(line))
+				.join("\n") + "\n",
+		);
+		const { buildProjection: buildToolProjection } = await import(
+			pathToFileURL(path.join(__dirname, "..", "trajectory-web", "server", "session.mjs")).href
+		);
+		const toolEvents = buildToolProjection(toolSession).questions.flatMap((q) => q.events ?? []);
+		const toolActivePath = path.join(toolTmp, "tool-active.json");
+		const toolActive = {
+			source: "pi",
+			sessionId: "ext-tool",
+			updatedAt: toolTime,
+			items: toolEvents.map((ev) => ({ id: ev.id, kind: ev.kind, label: ev.kind, preview: ev.preview ?? "", chars: 100 })),
+		};
+		fs.writeFileSync(toolActivePath, JSON.stringify(toolActive));
+		const toolMod = jiti(path.join(__dirname, "..", "trajectory-web", "chat-trajectory-tool.ts"));
+		const toolRegistry = {};
+		toolMod.default({ registerTool: (definition) => (toolRegistry[definition.name] = definition) });
+		const readTool = toolRegistry.read_trajectory;
+		check("read_trajectory 已注册", readTool?.name === "read_trajectory" && typeof readTool?.execute === "function");
+
+		process.env.PI_CHAT_CONTEXT_FILE = toolActivePath;
+		process.env.PI_CHAT_TRAJECTORY_FILE = toolSession;
+		process.env.PI_CHAT_SOURCE = "pi";
+		process.env.PI_CHAT_SESSION_ID = "ext-tool";
+		const toolText = (result) => result?.content?.[0]?.text ?? "";
+		const toolRun = (params) => readTool.execute("call", params);
+
+		const listResult = await toolRun({ action: "list" });
+		check(
+			"read_trajectory list：返回选中清单",
+			toolText(listResult).includes("当前选中") && toolActive.items.every((item) => toolText(listResult).includes(item.id)) && listResult.details?.selected === toolEvents.length,
+			toolText(listResult).slice(0, 300),
+		);
+		const answerIds = toolEvents.filter((ev) => ev.kind === "answer" || ev.kind === "text").map((ev) => ev.id);
+		const userEvent = toolEvents.find((ev) => ev.kind === "user");
+		const singleLarge = await toolRun({ action: "read", ids: [answerIds[0]] });
+		check(
+			"read_trajectory read：单条 6k 截断",
+			toolText(singleLarge).includes("截断") && toolText(singleLarge).length < 7000 && !toolText(singleLarge).includes("x".repeat(6100)),
+			`len=${toolText(singleLarge).length}`,
+		);
+		const batchLarge = await toolRun({ action: "read", ids: answerIds.slice(0, 3), limit: 3 });
+		check(
+			"read_trajectory read：单次 12k 截断 + nextOffset",
+			batchLarge.details?.truncated === true && batchLarge.details?.nextOffset === 2 && toolText(batchLarge).length <= 12200,
+			JSON.stringify({ details: batchLarge.details, len: toolText(batchLarge).length }),
+		);
+		const queryResult = await toolRun({ action: "read", query: "第一问" });
+		check("read_trajectory read：query 命中 user", queryResult.details?.page?.includes(userEvent.id), JSON.stringify(queryResult.details));
+		const deepQuery = await toolRun({ action: "read", query: "needle-end" });
+		check("read_trajectory read：query 匹配 6k 之后正文", deepQuery.details?.page?.includes(answerIds[0]), JSON.stringify(deepQuery.details));
+		const kindResult = await toolRun({ action: "read", kind: "user" });
+		check("read_trajectory read：kind 过滤", kindResult.details?.matched === 1 && kindResult.details?.page?.[0] === userEvent.id, JSON.stringify(kindResult.details));
+		const pageResult = await toolRun({ action: "read", offset: 1, limit: 1 });
+		check("read_trajectory read：offset/limit", pageResult.details?.page?.length === 1 && pageResult.details.page[0] !== userEvent.id, JSON.stringify(pageResult.details));
+		const outsideResult = await toolRun({ action: "read", ids: ["not-in-set"] });
+		check("read_trajectory read：白名单外提示", toolText(outsideResult).includes("不在当前选中集"), toolText(outsideResult).slice(0, 200));
+		fs.writeFileSync(toolActivePath, JSON.stringify({ ...toolActive, sessionId: "other" }));
+		let mismatchRejected = false;
+		try {
+			await toolRun({ action: "list" });
+		} catch (err) {
+			mismatchRejected = /不一致/.test(err.message);
+		}
+		check("read_trajectory：source/session mismatch 拒绝", mismatchRejected);
+		fs.writeFileSync(toolActivePath, JSON.stringify(toolActive));
+		delete process.env.PI_CHAT_CONTEXT_FILE;
+		delete process.env.PI_CHAT_TRAJECTORY_FILE;
+		delete process.env.PI_CHAT_SOURCE;
+		delete process.env.PI_CHAT_SESSION_ID;
+
 		// ---- 精确工具归属（模式 A：来自 pi.getAllTools().sourceInfo） ----
 		const origins = await (await fetch(`${url}api/tool-origins`)).json();
 		check(
@@ -381,6 +467,21 @@ function freePort() {
 		check("--codex 同时保留 pi 源", (await (await fetch(`${url3}api/sessions?source=pi`)).json()).sessions?.length === 1);
 		const cxProj = await (await fetch(`${url3}api/session?source=codex&id=cx-ext-1`)).json();
 		check("--codex 投影可读", cxProj.changed === true && cxProj.questions?.[0]?.events?.some((e) => e.kind === "user"), JSON.stringify(cxProj).slice(0, 160));
+		// codex 的 read_trajectory（Guardian 忽略；本 fixture 无 Guardian）
+		const cxUser = cxProj.questions.flatMap((q) => q.events ?? []).find((ev) => ev.kind === "user");
+		const codexToolFile = path.join(codexDay, fs.readdirSync(codexDay)[0]);
+		fs.writeFileSync(toolActivePath, JSON.stringify({ source: "codex", sessionId: "cx-ext-1", updatedAt: toolTime, items: [{ id: cxUser.id, kind: "user", label: "提问", preview: cxUser.preview ?? "", chars: 10 }] }));
+		process.env.PI_CHAT_CONTEXT_FILE = toolActivePath;
+		process.env.PI_CHAT_TRAJECTORY_FILE = codexToolFile;
+		process.env.PI_CHAT_SOURCE = "codex";
+		process.env.PI_CHAT_SESSION_ID = "cx-ext-1";
+		const codexRead = await readTool.execute("call", { action: "read" });
+		check("read_trajectory：codex 投影可读", toolText(codexRead).includes("codex 第一问"), toolText(codexRead).slice(0, 300));
+		delete process.env.PI_CHAT_CONTEXT_FILE;
+		delete process.env.PI_CHAT_TRAJECTORY_FILE;
+		delete process.env.PI_CHAT_SOURCE;
+		delete process.env.PI_CHAT_SESSION_ID;
+		fs.rmSync(toolTmp, { recursive: true, force: true });
 
 		await trail.handler("stop", ctx);
 		const allPort = await freePort();

@@ -14,7 +14,19 @@ const check = (label, cond, extra = "") => {
 	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, buildAgentTree, deriveInfo, deriveTargets, deriveTaskName, DERIVE_TOOL, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments, hitSnippet } = lib;
 
 	// ---- SSE 解析（chat-lib.js） ----
-	const { parseSseChunk, parseSseData, chatSessionRef, isCurrentTurn, modelLabel, formatChars, formatContextWindow, filterPaletteItems } = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "chat-lib.js")).href);
+	const {
+		parseSseChunk,
+		parseSseData,
+		chatSessionRef,
+		isCurrentTurn,
+		modelLabel,
+		formatChars,
+		formatContextWindow,
+		filterPaletteItems,
+		normalizeContextIds,
+		mergeContextIds,
+		pruneContextIds,
+	} = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "chat-lib.js")).href);
 	const sseOne = parseSseChunk('event: meta\ndata: {"a":1}\n\n');
 	check("SSE：单事件", sseOne.events.length === 1 && sseOne.events[0].event === "meta" && sseOne.rest === "", JSON.stringify(sseOne));
 	check("SSE：data 可 JSON 解析", parseSseData(sseOne.events[0])?.a === 1);
@@ -89,6 +101,24 @@ const check = (label, cond, extra = "") => {
 			filterPaletteItems(paletteItems, "claude-sonnet").length === 1,
 	);
 	check("filterPaletteItems：无匹配空数组", filterPaletteItems(paletteItems, "zzz").length === 0);
+	const ctxMap = { "pi:s-1": ["a", "a", "b"], "codex:c-1": ["x"] };
+	check(
+		"normalizeContextIds：去重 + 按会话 key",
+		normalizeContextIds(ctxMap, "pi", "s-1").join(",") === "a,b" && normalizeContextIds(ctxMap, "codex", "c-1").join(",") === "x" && normalizeContextIds(ctxMap, "pi", "nope").length === 0,
+	);
+	const manyIds = Array.from({ length: 60 }, (_, i) => `id-${i}`);
+	check("normalizeContextIds：上限 50", normalizeContextIds({ "pi:s-1": manyIds }, "pi", "s-1").length === 50);
+	const merged = mergeContextIds(ctxMap, "pi:s-2", ["m", "m", "n"]);
+	check(
+		"mergeContextIds：去重写回且不改原对象",
+		merged["pi:s-2"].join(",") === "m,n" && merged["pi:s-1"] === ctxMap["pi:s-1"] && !("pi:s-2" in ctxMap),
+	);
+	check("mergeContextIds：上限 50", mergeContextIds({}, "k", manyIds)["k"].length === 50);
+	check(
+		"pruneContextIds：Set/对象两种入参",
+		pruneContextIds(["a", "b", "c"], new Set(["b", "c"])).join(",") === "b,c" &&
+			pruneContextIds(["a", "b"], { a: true }).join(",") === "a",
+	);
 	check(
 		"formatChars：900 / 1.8k / 236k / 1.2M / 空值",
 		formatChars(900) === "900" &&
@@ -354,7 +384,7 @@ const check = (label, cond, extra = "") => {
 
 	// ---- 回归守卫：行级控件（每条事件行前的剪刀 + checkbox） ----
 	check("事件行带行级剪刀与 checkbox", appSource.includes('class: "ev-eye"') && appSource.includes('class: "ev-check"') && appSource.includes("state.selectedEvs.has(ev.id)"));
-	check("checkbox 只在蒸馏模式渲染（行级 + 轮头）", appSource.includes("if (state.distillMode) {") && appSource.split("if (state.distillMode) {").length - 1 === 2 && appSource.includes('if (!state.distillMode) classes.push("no-distill")'));
+	check("checkbox 在对话/蒸馏选择模式渲染（行级 + 轮头）", appSource.split("if (selectMode()) {").length - 1 === 2 && appSource.includes('if (!selectMode()) classes.push("no-select")') && appSource.includes("function selectMode()"));
 	check("蒸馏按钮：裁剪右侧 + 文字变「蒸馏中」+ 开态配色", indexSource.indexOf('id="crop-btn"') < indexSource.indexOf('id="distill-btn"') && indexSource.includes('id="distill-label"') && appSource.includes("function setDistillMode") && appSource.includes('el("distill-label").textContent = state.distillMode ? "蒸馏中" : "蒸馏"') && appSource.includes('el("distill-btn").addEventListener("click"') && styleSource.includes('#distill-btn[aria-pressed="true"]'));
 	check("轮头 checkbox = 全选本轮所有条目（含被过滤掉的）", appSource.includes("function toggleRoundSelected") && /function toggleRoundSelected\(index\)[\s\S]*?\(q\?\.events \?\? \[\]\)\.map\(\(ev\) => ev\.id\)/.test(appSource) && appSource.includes("toggleRoundSelected(Number(check.dataset.check))") && appSource.includes("function roundSelectedState"));
 	check("轮头勾选态由条目选中集派生（all/some/none，已删除 selectedQs）", appSource.includes('return on === ids.length ? "all" : "some"') && !appSource.includes("selectedQs") && !indexSource.includes("selectedQs"));
@@ -381,7 +411,7 @@ const check = (label, cond, extra = "") => {
 	check("顶栏对话按钮在主题按钮右侧", indexSource.includes('id="chat-btn"') && indexSource.indexOf('id="theme-btn"') < indexSource.indexOf('id="chat-btn"'));
 	check("对话栏独立成侧栏，顶部上下文行与关闭按钮已移除（顶部直接是消息流）", indexSource.includes('id="chat-drawer"') && !indexSource.includes("chat-ctx") && !indexSource.includes('id="chat-close"'));
 	check("对话栏开关接线：按钮切换 + 开态持久化 + Esc 兕底", appSource.includes("function setChatOpen") && appSource.includes('el("chat-btn").addEventListener("click"') && appSource.includes('"tw.chat"') && appSource.includes("if (state.chatOpen) {"));
-	check("对话栏样式就位（分屏 flex 列，非 fixed 覆盖）", styleSource.includes(".chat-drawer") && !styleSource.includes(".chat-ctx") && !/\.chat-drawer\s*\{[^}]*position:\s*fixed/s.test(styleSource));
+	check("对话栏样式就位（分屏 flex 列，非 fixed 覆盖）", styleSource.includes(".chat-drawer") && styleSource.includes(".chat-ctx-chip") && !/\.chat-drawer\s*\{[^}]*position:\s*fixed/s.test(styleSource));
 	check("对话栏支持拖拽编辑框上边调高输入区（把手 + 拖拽接线 + 高度持久化）", indexSource.includes('id="composer-resize"') && indexSource.includes('aria-orientation="horizontal"') && appSource.includes("function bindComposerResize") && appSource.includes("previewComposerHeight(start.height - (ev.clientY - start.y))") && appSource.includes('"tw.composerHeight"') && appSource.includes("function resetComposerHeight") && styleSource.includes(".composer-resize") && styleSource.includes('[data-composer="manual"]'));
 	check("对话栏左缘拖拽调宽（把手 + 接线 + 宽度持久化）", indexSource.includes('id="chat-resize"') && indexSource.includes('aria-orientation="vertical"') && appSource.includes("function bindChatResize") && appSource.includes("previewChatWidth(start.width - (ev.clientX - start.x))") && appSource.includes('"tw.chatWidth"') && styleSource.includes(".chat-resize") && /\.chat-drawer \{[^}]*width: min\(var\(--tw-chat-w, 440px\), 90vw\)/s.test(styleSource));
 	check("两个拖拽把手并存（左缘调宽 + 输入区上边调高）", appSource.includes("bindChatResize()") && appSource.includes("bindComposerResize()") && appSource.includes("loadChatWidth()") && appSource.includes("loadComposerHeight()") && indexSource.indexOf('id="chat-resize"') < indexSource.indexOf('id="composer-resize"'));
@@ -492,6 +522,30 @@ const check = (label, cond, extra = "") => {
 	check("流式/工具/错误/空态样式就位", [".chat-head", ".chat-tool", ".chat-msg.ai.is-streaming", ".chat-stream-cursor", ".chat-notice", ".chat-msg-error", ".chat-empty", ".chat-skeleton"].every((sel) => styleSource.includes(sel)));
 	check("输入卡与输入框圆角收敛（16px，不用 28px 的 panel 圆角）", /\.chat-card \{[^}]*border-radius: var\(--dsw-radius-lg\)/s.test(styleSource) && /\.chat-input \{[^}]*border-radius: var\(--dsw-radius-lg\)/s.test(styleSource) && !/\.chat-card \{[^}]*radius-panel/s.test(styleSource));
 	check("对话页样式复刻上游：用户气泡 + 输入卡 + info 圆发送钮", styleSource.includes(".chat-msg.user") && styleSource.includes("var(--dsw-specific-bubble)") && styleSource.includes(".chat-card") && styleSource.includes("var(--dsw-specific-input-major)") && styleSource.includes(".chat-send") && styleSource.includes("var(--dsw-alias-button-info-fill)"));
+	check(
+		"上下文选择：selectMode / tw.chatCtx 恢复保存 / 上限 50 / prune",
+		appSource.includes('const CHAT_CTX_KEY = "tw.chatCtx"') &&
+			appSource.includes("function saveChatContext()") &&
+			appSource.includes("function restoreChatContext()") &&
+			appSource.includes("pruneChatContext()") &&
+			appSource.includes("CHAT_CTX_LIMIT = 50") &&
+			appSource.includes("function addSelectedIds") &&
+			appSource.includes("if (open) restoreChatContext();") &&
+			appSource.includes("saveChatContext();"),
+	);
+	check(
+		"chat 上下文 chips：选中集 / send contextIds / meta.context / 以此新开",
+		chatSource.includes("getSelectedIds") &&
+			chatSource.includes("contextIds: contextSelection") &&
+			chatSource.includes("data.context") &&
+			chatSource.includes("chat-ctx-chip") &&
+			chatSource.includes("以此新开") &&
+			chatSource.includes("newThreadPreservingSelection") &&
+			indexSource.includes('id="chat-context"') &&
+			styleSource.includes(".chat-ctx-chip") &&
+			styleSource.includes(".chat-ctx-hint"),
+	);
+	check("勾选列改名 no-select（不再用 no-distill）", styleSource.includes(".ev.no-select") && !appSource.includes("no-distill") && !styleSource.includes("no-distill"));
 
 	console.log(failed === 0 ? "\nALL PASS" : `\n${failed} FAILED`);
 	process.exit(failed === 0 ? 0 : 1);

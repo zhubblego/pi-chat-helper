@@ -319,6 +319,8 @@ export function createTrajectoryServer(options) {
 				readSessions,
 				resolveSession,
 				availableSources,
+				getProjection: (session, sourceId) => getProjection(session, sourceId),
+				findEvent,
 				ssePingMs: options.chatPingMs,
 				log,
 			})

@@ -141,3 +141,36 @@ export function formatChars(n) {
 	if (value < 1_000_000) return `${Number((value / 1000).toFixed(1))}k`;
 	return `${Number((value / 1_000_000).toFixed(1))}M`;
 }
+
+/** 从 tw.chatCtx 读取某会话的 id：去重、上限 50。 */
+export function normalizeContextIds(map, source, sessionId, limit = 50) {
+	const key = `${source}:${sessionId ?? ""}`;
+	const raw = map && typeof map === "object" && Array.isArray(map[key]) ? map[key] : [];
+	const ids = [];
+	for (const id of raw) {
+		if (typeof id === "string" && id && !ids.includes(id)) ids.push(id);
+		if (ids.length >= limit) break;
+	}
+	return ids;
+}
+
+/** 写回某会话的 id：不改原 map；去重、上限 50。 */
+export function mergeContextIds(map, key, ids, limit = 50) {
+	const next = { ...(map && typeof map === "object" ? map : {}) };
+	const merged = [];
+	for (const id of Array.isArray(ids) ? ids : []) {
+		if (typeof id === "string" && id && !merged.includes(id)) merged.push(id);
+		if (merged.length >= limit) break;
+	}
+	next[key] = merged;
+	return next;
+}
+
+/** 过滤投影里不存在的事件 id。eventsById 可为 Set/Map/普通对象。 */
+export function pruneContextIds(ids, eventsById) {
+	const has =
+		eventsById instanceof Set || eventsById instanceof Map
+			? (id) => eventsById.has(id)
+			: (id) => Boolean(eventsById?.[id]);
+	return (Array.isArray(ids) ? ids : []).filter((id) => typeof id === "string" && id && has(id));
+}

@@ -585,6 +585,127 @@ async function stopServer(child) {
 			JSON.stringify(unknownDirectMeta.skill),
 		);
 
+		// ---- T6：轨迹上下文清单 / active / delta / 工具 env ----
+		const lightCs1 = await (await fetch(`${chatBase}api/session?source=pi&id=cs-1`)).json();
+		const ctxIds = lightCs1.questions.flatMap((q) => (q.events ?? []).map((e) => e.id));
+		const [ctxA, ctxB] = ctxIds;
+		const ctxMetaDir = path.join(chatDir, "pi", "cs-1", "meta");
+		const ctxActivePath = path.join(ctxMetaDir, "context.active.json");
+		const traceLen = () => (fs.existsSync(chatTrace) ? fs.readFileSync(chatTrace, "utf8").length : 0);
+		const traceSince = (len) => (fs.existsSync(chatTrace) ? fs.readFileSync(chatTrace, "utf8").slice(len) : "");
+		const promptOf = (traceText) => {
+			const line = traceText.split("\n").find((item) => item.startsWith("prompt:"));
+			if (!line) return "";
+			try {
+				return JSON.parse(line.slice("prompt:".length));
+			} catch {
+				return "";
+			}
+		};
+		const traceBeforeCtx = traceLen();
+		const ctxFirst = await readSse(await send("cs-1", "先看两条", { contextIds: [ctxA, ctxB] }));
+		const ctxMeta = ctxFirst.events.find((event) => event.event === "meta")?.data ?? {};
+		check(
+			"context：meta.context 首次清单",
+			ctxMeta.context?.selected === 2 &&
+				ctxMeta.context?.included?.join(",") === [ctxA, ctxB].join(",") &&
+				ctxMeta.context?.dropped?.length === 0 &&
+				ctxMeta.context?.added?.length === 2 &&
+				ctxMeta.context?.removed?.length === 0,
+			JSON.stringify(ctxMeta.context),
+		);
+		const traceCtx = traceSince(traceBeforeCtx);
+		const firstPrompt = promptOf(traceCtx);
+		check(
+			"context：prompt 含完整 <trajectory_index>",
+			firstPrompt.includes(`<trajectory_index source="pi" session="cs-1" count="2">`) && firstPrompt.includes(`[${ctxA}]`) && firstPrompt.includes(`[${ctxB}]`),
+			firstPrompt.slice(0, 600),
+		);
+		const activeFirst = JSON.parse(fs.readFileSync(ctxActivePath, "utf8"));
+		check(
+			"context：active 快照写 source/session/items",
+			activeFirst.source === "pi" && activeFirst.sessionId === "cs-1" && activeFirst.items?.length === 2,
+			JSON.stringify(activeFirst).slice(0, 300),
+		);
+		const turnsAfterCtx = fs
+			.readFileSync(path.join(ctxMetaDir, "turns.jsonl"), "utf8")
+			.split("\n")
+			.filter(Boolean)
+			.map((line) => JSON.parse(line));
+		const ctxTurn = turnsAfterCtx.filter((turn) => turn.threadId === "fake-session-1").sort((a, b) => a.ordinal - b.ordinal).at(-1);
+		check(
+			"context：turns.contextRefs 写入 items",
+			ctxTurn?.contextRefs?.length === 2 &&
+				ctxTurn.contextRefs.every((item) => item.id && item.kind && item.label !== undefined && item.preview !== undefined && Number.isInteger(item.chars)),
+			JSON.stringify(ctxTurn?.contextRefs),
+		);
+		const sessionFileCs1 = (await (await fetch(`${chatBase}api/sessions?source=pi`)).json()).sessions.find((session) => session.id === "cs-1")?.file;
+		check(
+			"context：工具 env 注入 active/trajectory",
+			traceCtx.includes(`env:pi|cs-1|${sessionFileCs1}|${ctxActivePath}`),
+			traceCtx.slice(-800),
+		);
+		check(
+			"context：read-only spawn 白名单含 read_trajectory",
+			traceCtx.includes("--tools read,grep,ls,read_trajectory"),
+			traceCtx.slice(-800),
+		);
+
+		const traceBeforeCtx2 = traceLen();
+		const ctxSecond = await readSse(await send("cs-1", "只看一条", { contextIds: [ctxB, "missing-id"] }));
+		const ctxMeta2 = ctxSecond.events.find((event) => event.event === "meta")?.data ?? {};
+		check(
+			"context：缺失 id 进 dropped、变化算 delta",
+			ctxMeta2.context?.selected === 2 &&
+				ctxMeta2.context?.included?.join(",") === ctxB &&
+				ctxMeta2.context?.dropped?.join(",") === "missing-id" &&
+				ctxMeta2.context?.removed?.join(",") === ctxA,
+			JSON.stringify(ctxMeta2.context),
+		);
+		const secondPrompt = promptOf(traceSince(traceBeforeCtx2));
+		check(
+			"context：变化时发 delta + 新 index",
+			secondPrompt.includes(`<trajectory_index source="pi" session="cs-1" count="1">`) &&
+				secondPrompt.includes(`<trajectory_index_delta>{"added":[],"removed":["${ctxA}"]}</trajectory_index_delta>`),
+			secondPrompt.slice(0, 600),
+		);
+		const activeSecond = JSON.parse(fs.readFileSync(ctxActivePath, "utf8"));
+		check("context：active 快照更新", activeSecond.items?.length === 1 && activeSecond.items[0].id === ctxB, JSON.stringify(activeSecond).slice(0, 300));
+
+		const traceBeforeEmpty = traceLen();
+		const ctxEmpty = await readSse(await send("cs-1", "不看上下文"));
+		const ctxMeta3 = ctxEmpty.events.find((event) => event.event === "meta")?.data ?? {};
+		const emptyPrompt = promptOf(traceSince(traceBeforeEmpty));
+		const activeEmpty = JSON.parse(fs.readFileSync(ctxActivePath, "utf8"));
+		check(
+			"context：空选中写空 active、无 index",
+			ctxMeta3.context?.selected === 0 && ctxMeta3.context?.included?.length === 0 && activeEmpty.items?.length === 0 && !emptyPrompt.includes("<trajectory_index source"),
+			JSON.stringify({ meta: ctxMeta3.context, active: activeEmpty.items, prompt: emptyPrompt.slice(0, 200) }),
+		);
+		const traceBeforeSkillCtx = traceLen();
+		const skillCtx = await readSse(await send("cs-1", "带技能", { contextIds: [ctxA], skill: "demo" }));
+		const skillCtxMeta = skillCtx.events.find((event) => event.event === "meta")?.data ?? {};
+		const skillCtxPrompt = promptOf(traceSince(traceBeforeSkillCtx));
+		check(
+			"context：技能命令在最前、index 紧随（保证 pi 原生展开）",
+			skillCtxMeta.skill?.name === "demo" && skillCtxPrompt.startsWith("/skill:demo\n\n<trajectory_index") && skillCtxPrompt.includes(`[${ctxA}]`),
+			skillCtxPrompt.slice(0, 300),
+		);
+		check(
+			"context：contextIds 非数组/非字符串 400",
+			(await postJson(`${chatBase}api/chat/send`, { source: "pi", session: "cs-1", prompt: "x", contextIds: "a" })).status === 400 &&
+				(await postJson(`${chatBase}api/chat/send`, { source: "pi", session: "cs-1", prompt: "x", contextIds: [1] })).status === 400,
+		);
+		check(
+			"context：contextIds >50 400",
+			(await postJson(`${chatBase}api/chat/send`, {
+				source: "pi",
+				session: "cs-1",
+				prompt: "x",
+				contextIds: Array.from({ length: 51 }, (_, i) => `id-${i}`),
+			})).status === 400,
+		);
+
 		const toolStream = await readSse(await send("cs-1", "think tool"));
 		const order = toolStream.events.map((e) => e.event);
 		check(

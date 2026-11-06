@@ -224,6 +224,59 @@ export function stripInjectedBlocks(text) {
 		.trim();
 }
 
+function escapeAttr(value) {
+	return String(value ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+function normalizeIdList(items) {
+	const ids = [];
+	for (const item of Array.isArray(items) ? items : []) {
+		const id = typeof item === "string" ? item : item?.id;
+		if (typeof id === "string" && id && !ids.includes(id)) ids.push(id);
+	}
+	return ids;
+}
+
+function eventKindLabel(kind) {
+	const labels = { user: "提问", thinking: "思考", text: "过程", answer: "回答", tool: "工具", bash: "命令", system: "上下文" };
+	return labels[kind] ?? String(kind ?? "事件");
+}
+
+/**
+ * 生成 <trajectory_index> 清单；空选中返回 ""。preview 截断 80 字符。
+ * @param {Array<{id:string,label?:string,kind?:string,preview?:string}>} items
+ */
+export function buildTrajectoryIndex(items, { source = "pi", sessionId = "" } = {}) {
+	const list = (Array.isArray(items) ? items : []).filter((item) => typeof item?.id === "string" && item.id);
+	if (!list.length) return "";
+	const lines = list.map((item) => {
+		const label = item.label ?? eventKindLabel(item.kind);
+		const preview = item.preview ? ` · ${clip(item.preview, 80)}` : "";
+		return `- [${item.id}] ${label}${preview}`;
+	});
+	return `<trajectory_index source="${escapeAttr(source)}" session="${escapeAttr(sessionId)}" count="${list.length}">\n${lines.join("\n")}\n</trajectory_index>`;
+}
+
+/** 选中集差异：prev/next 可为 id 数组或含 id 的对象数组。 */
+export function selectionDelta(prev, next) {
+	const prevIds = normalizeIdList(prev);
+	const nextIds = normalizeIdList(next);
+	const prevSet = new Set(prevIds);
+	const nextSet = new Set(nextIds);
+	return {
+		added: nextIds.filter((id) => !prevSet.has(id)),
+		removed: prevIds.filter((id) => !nextSet.has(id)),
+	};
+}
+
+/** 选中集变化的压缩块；无变化返回 ""。 */
+export function buildTrajectoryDelta(delta) {
+	const added = Array.isArray(delta?.added) ? delta.added : [];
+	const removed = Array.isArray(delta?.removed) ? delta.removed : [];
+	if (!added.length && !removed.length) return "";
+	return `<trajectory_index_delta>${JSON.stringify({ added, removed })}</trajectory_index_delta>`;
+}
+
 function clip(text, max = 400) {
 	const value = String(text ?? "");
 	return value.length > max ? `${value.slice(0, max)}…` : value;

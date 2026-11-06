@@ -40,7 +40,7 @@ import {
 	renderMarkdown,
 	taskShort,
 } from "./lib.js";
-import { chatSessionRef } from "./chat-lib.js";
+import { chatSessionRef, mergeContextIds, normalizeContextIds, pruneContextIds } from "./chat-lib.js";
 import { initChatPanel } from "./chat.js";
 
 const LS_FILTERS = "tw.filters";
@@ -80,8 +80,10 @@ const state = {
 	folded: new Set(),
 	// 整轮裁剪（轮序号）：模型上下文真的剔掉
 	hiddenQs: new Set(),
-	// 行级选中（蒸馏模式下的条目选择；轮头勾选态由它派生，不再单独存轮级集合）
+	// 行级选中（对话/蒸馏模式下共享的上下文选择；轮头勾选态由它派生）
 	selectedEvs: new Set(),
+	// 当前选中集对应的 source:session 键（切会话时重载 tw.chatCtx）
+	chatCtxKey: null,
 	// 单条裁剪（entry id）：模型上下文真的剔掉
 	croppedEntries: new Set(),
 	// 裁剪模式：只在开态时列表里才出现剪刀按钮；裁剪结果与它无关（服务端持久化）
@@ -668,6 +670,11 @@ function setDistillMode(on) {
 	renderMain();
 }
 
+/** 对话栏打开或蒸馏模式开启时显示勾选列。 */
+function selectMode() {
+	return state.chatOpen || state.distillMode;
+}
+
 function updateCropButton() {
 	const btn = el("crop-btn");
 	btn.setAttribute("aria-pressed", String(state.cropMode));
@@ -748,10 +755,15 @@ function toggleRoundSelected(index) {
 	const ids = (q?.events ?? []).map((ev) => ev.id);
 	if (!ids.length) return;
 	const all = ids.every((id) => state.selectedEvs.has(id));
-	for (const id of ids) {
-		if (all) state.selectedEvs.delete(id);
-		else state.selectedEvs.add(id);
+	if (all) {
+		for (const id of ids) state.selectedEvs.delete(id);
+	} else if (!addSelectedIds(ids)) {
+		// 超过上限：整轮不动，只提示
+		renderMain();
+		return;
 	}
+	saveChatContext();
+	chat.onSelectionChanged();
 	renderMain();
 	updateDistillButton();
 }
@@ -851,8 +863,8 @@ function renderEvent(ev, terms = [], cropped = false) {
 	if (cropped) classes.push("is-cropped");
 	// 非裁剪模式不渲染行级剪刀，网格少一列（见 .ev.no-crop）
 	if (!state.cropMode) classes.push("no-crop");
-	// 非蒸馏模式不渲染 checkbox，网格同样少一列（见 .ev.no-distill）
-	if (!state.distillMode) classes.push("no-distill");
+	// 非选择模式（对话栏/蒸馏都关）不渲染 checkbox，网格同样少一列（见 .ev.no-select）
+	if (!selectMode()) classes.push("no-select");
 	if (ev.id === state.openId) classes.push("is-open");
 	const deriveName = state.deriveNames.get(ev.id);
 	const deriveTarget = state.deriveTargets.get(ev.id);
@@ -881,7 +893,7 @@ function renderEvent(ev, terms = [], cropped = false) {
 	}
 	const dataset = { eid: ev.id };
 	if (deriveTarget) dataset.derive = deriveTarget;
-	// 行级控件：剪刀（仅裁剪模式）与 checkbox（仅蒸馏模式，两套业务互不相干）
+	// 行级控件：剪刀（仅裁剪模式）与 checkbox（对话/蒸馏选择模式）
 	const controls = [];
 	if (state.cropMode) {
 		controls.push(
@@ -899,7 +911,7 @@ function renderEvent(ev, terms = [], cropped = false) {
 			),
 		);
 	}
-	if (state.distillMode) {
+	if (selectMode()) {
 		controls.push(
 			h("input", {
 				class: "ev-check",
@@ -975,7 +987,7 @@ function renderMain() {
 					),
 				);
 			}
-			if (state.distillMode) {
+			if (selectMode()) {
 				headerControls.push(
 					h("input", {
 						class: "q-check",
@@ -1329,6 +1341,66 @@ function closePanel() {
 // ---------------------------------------------------------------------------
 
 const CHAT_INPUT_MAX_H = 132; // 与 CSS .chat-input max-height 同步（约 6 行封顶后内部滚动）
+const CHAT_CTX_KEY = "tw.chatCtx";
+const CHAT_CTX_LIMIT = 50;
+
+function currentChatKey() {
+	return `${state.source}:${state.selectedId ?? ""}`;
+}
+
+function loadChatCtxMap() {
+	try {
+		const parsed = JSON.parse(localStorage.getItem(CHAT_CTX_KEY) || "{}");
+		return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+	} catch {
+		return {};
+	}
+}
+
+/** 把当前选中集写入 tw.chatCtx（不删旧 key）。 */
+function saveChatContext() {
+	try {
+		const map = mergeContextIds(loadChatCtxMap(), currentChatKey(), [...state.selectedEvs], CHAT_CTX_LIMIT);
+		localStorage.setItem(CHAT_CTX_KEY, JSON.stringify(map));
+	} catch {
+		/* 无痕模式等场景忽略 */
+	}
+}
+
+/** 剪掉投影里已不存在的事件 id；返回是否有变化。 */
+function pruneChatContext() {
+	if (!state.data) return false;
+	const valid = new Set();
+	for (const q of state.data.questions ?? []) for (const ev of q.events ?? []) valid.add(ev.id);
+	const kept = pruneContextIds([...state.selectedEvs], valid);
+	const changed = kept.length !== state.selectedEvs.size;
+	if (changed) {
+		state.selectedEvs = new Set(kept);
+		saveChatContext();
+	}
+	return changed;
+}
+
+/** 从 tw.chatCtx 恢复当前 source:session 的选中集（有投影时顺带 prune）。 */
+function restoreChatContext() {
+	const key = currentChatKey();
+	const map = loadChatCtxMap();
+	const ids = normalizeContextIds(map, state.source, state.selectedId ?? "", CHAT_CTX_LIMIT);
+	state.selectedEvs = new Set(ids);
+	state.chatCtxKey = key;
+	pruneChatContext();
+}
+
+function addSelectedIds(ids) {
+	const toAdd = [...new Set(ids)].filter((id) => !state.selectedEvs.has(id));
+	const room = CHAT_CTX_LIMIT - state.selectedEvs.size;
+	if (toAdd.length > room) {
+		setSync(`上下文最多选择 ${CHAT_CTX_LIMIT} 条`, "warn");
+		return false;
+	}
+	for (const id of toAdd) state.selectedEvs.add(id);
+	return true;
+}
 
 function autoGrowChatInput() {
 	// 手动拖过高度时交给 CSS 撑满，不再按内容改 height（否则会把拖拽结果覆盖掉）
@@ -1343,6 +1415,8 @@ function autoGrowChatInput() {
 // ---------------------------------------------------------------------------
 
 function setChatOpen(open) {
+	if (open) restoreChatContext();
+	else saveChatContext();
 	state.chatOpen = open;
 	el("chat-drawer").hidden = !open;
 	const btn = el("chat-btn");
@@ -1356,6 +1430,8 @@ function setChatOpen(open) {
 		/* 无痕模式等场景忽略 */
 	}
 	chat.setOpen(open);
+	renderMain();
+	updateDistillButton();
 }
 
 // ---------------------------------------------------------------------------
@@ -1609,6 +1685,7 @@ function renderRail() {
 /** 切换轨迹源：每源独立的选中会话与折叠状态（分桶保存/恢复），临时态清空重拉。 */
 function switchSource(id) {
 	if (id === state.source || !id) return;
+	saveChatContext();
 	state.sourceSel[state.source] = state.selectedId;
 	state.source = id;
 	state.selectedId = state.sourceSel[id] ?? null;
@@ -1619,6 +1696,7 @@ function switchSource(id) {
 	state.folded = new Set();
 	state.hiddenQs = new Set();
 	state.selectedEvs = new Set();
+	state.chatCtxKey = null;
 	state.croppedEntries = new Set();
 	state.canContextEdit = false;
 	state.canCropEntry = false;
@@ -1629,6 +1707,7 @@ function switchSource(id) {
 	state.toolNames = [];
 	state.searchIndex = new TrajectorySearchIndex();
 	closePanel();
+	restoreChatContext();
 	renderRail();
 	renderTopbar();
 	renderSessions();
@@ -1900,6 +1979,7 @@ async function pollSessions(force = false) {
 		if (!state.selectedId && (j.current || j.sessions?.[0])) {
 			state.selectedId = j.current ?? j.sessions[0].id;
 			renderSessions();
+			restoreChatContext();
 			chat.onSessionChanged();
 		}
 	} catch {
@@ -1922,6 +2002,9 @@ async function pollSession(force = false) {
 			state.selectedId = null;
 			state.data = null;
 			state.etag = null;
+			state.selectedEvs = new Set();
+			state.chatCtxKey = null;
+			saveChatContext();
 			pendingOpen = null;
 			writeViewHash();
 			renderMain();
@@ -1938,6 +2021,10 @@ async function pollSession(force = false) {
 			return;
 		}
 		state.data = { meta: j.meta, questions: j.questions };
+		// 首次投影/切换会话后恢复 tw.chatCtx 并剪掉失效 id
+		if (state.chatCtxKey !== currentChatKey()) restoreChatContext();
+		else pruneChatContext();
+		chat.onTrajectoryChanged();
 		state.canContextEdit = j.contextEdit === true;
 		state.canCropEntry = j.cropEdit === true;
 		state.croppedEntries = new Set(Array.isArray(j.croppedEntryIds) ? j.croppedEntryIds : []);
@@ -2132,6 +2219,7 @@ sessionList.addEventListener("click", (e) => {
 /** 切换选中会话（列表点击 / 派生行跳转共用）：重置临时态并拉新数据。from 记录从哪条派生行跳来。 */
 function selectSession(id, from = null) {
 	if (!id || id === state.selectedId) return;
+	saveChatContext();
 	state.selectedId = id;
 	state.deriveFrom = from;
 	state.revealEid = null;
@@ -2140,6 +2228,7 @@ function selectSession(id, from = null) {
 	state.folded = new Set();
 	state.hiddenQs = new Set();
 	state.selectedEvs = new Set();
+	state.chatCtxKey = null;
 	state.croppedEntries = new Set();
 	state.canContextEdit = false;
 	state.canCropEntry = false;
@@ -2153,6 +2242,7 @@ function selectSession(id, from = null) {
 	setMenuOpen(false);
 	el("search").value = "";
 	closePanel();
+	restoreChatContext();
 	renderSessions();
 	renderTopbar();
 	renderMain();
@@ -2184,9 +2274,16 @@ mainInner.addEventListener("click", (e) => {
 		// 阻止原生勾选，统一从 state 渲染（同轮次头复选框）
 		e.preventDefault();
 		const id = evCheck.dataset.echeck;
-		if (state.selectedEvs.has(id)) state.selectedEvs.delete(id);
-		else state.selectedEvs.add(id);
+		if (state.selectedEvs.has(id)) {
+			state.selectedEvs.delete(id);
+		} else if (!addSelectedIds([id])) {
+			renderMain();
+			return;
+		}
+		saveChatContext();
+		chat.onSelectionChanged();
 		renderMain();
+		updateDistillButton();
 		return;
 	}
 	const eye = e.target.closest(".q-eye");
@@ -2355,6 +2452,27 @@ const chat = initChatPanel({
 			selectedId: state.selectedId,
 			sessions: state.sessions,
 		}),
+	getSelectedIds: () => [...state.selectedEvs],
+	setSelectedIds: (ids, { silent = false } = {}) => {
+		const unique = [];
+		for (const id of Array.isArray(ids) ? ids : []) {
+			if (typeof id === "string" && id && !unique.includes(id)) unique.push(id);
+			if (unique.length >= CHAT_CTX_LIMIT) break;
+		}
+		state.selectedEvs = new Set(unique);
+		saveChatContext();
+		renderMain();
+		updateDistillButton();
+		if (!silent) chat.onSelectionChanged();
+	},
+	getEventRefs: (ids) =>
+		(Array.isArray(ids) ? ids : []).map((id) => {
+			const ev = findEvent(id);
+			return ev
+				? { id, kind: ev.kind, label: eventTagLabel(ev), preview: ev.preview ?? "" }
+				: { id, kind: "unknown", label: "失效条目", preview: "", invalid: true };
+		}),
+	openEvent: (id) => openPanel(id),
 	autoGrowInput: autoGrowChatInput,
 });
 loadChatWidth();

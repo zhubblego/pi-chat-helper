@@ -837,12 +837,12 @@ body[data-ds-dark-theme] .ev-check:indeterminate {
 	grid-template-columns: 13px 60px 1fr auto;
 }
 
-/* 非蒸馏模式不渲染 checkbox：同样收一列；两者都关时只剩标签/预览/元信息 */
-.ev.no-distill {
+/* 非选择模式（对话栏/蒸馏都关）不渲染 checkbox：同样收一列；两者都关时只剩标签/预览/元信息 */
+.ev.no-select {
 	grid-template-columns: 18px 60px 1fr auto;
 }
 
-.ev.no-crop.no-distill {
+.ev.no-crop.no-select {
 	grid-template-columns: 60px 1fr auto;
 }
 
@@ -1590,9 +1590,103 @@ mark.ev-hit {
 /* 占位：上下文 chips / 斜杠面板 / 技能 chip（T5/T6 接入，先占好定位与视觉） */
 .chat-context {
 	display: flex;
-	flex-wrap: wrap;
+	align-items: center;
+	flex-wrap: nowrap;
 	gap: 6px;
 	margin-bottom: 8px;
+	overflow-x: auto;
+	padding-bottom: 2px;
+	scrollbar-width: thin;
+}
+
+.chat-ctx-label {
+	flex: none;
+	color: var(--dsw-alias-label-caption);
+	font: var(--dsw-font-xxs-strong-12);
+}
+
+.chat-ctx-chip {
+	display: inline-flex;
+	align-items: center;
+	flex: none;
+	max-width: 220px;
+	overflow: hidden;
+	border: 1px solid var(--dsw-alias-border-l1);
+	border-radius: 999px;
+	background: var(--dsw-alias-bg-layer-2);
+}
+
+.chat-ctx-chip.is-invalid {
+	border-color: var(--dsw-alias-state-error-primary);
+	opacity: 0.75;
+}
+
+.chat-ctx-main {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 4px;
+	min-width: 0;
+	padding: 2px 4px 2px 8px;
+	border: 0;
+	background: transparent;
+	color: var(--dsw-alias-label-primary);
+	font: var(--dsw-font-xxs-12);
+	cursor: pointer;
+}
+
+.chat-ctx-tag {
+	flex: none;
+	color: var(--dsw-alias-label-secondary);
+}
+
+.chat-ctx-preview {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--dsw-alias-label-caption);
+}
+
+.chat-ctx-remove {
+	display: grid;
+	place-items: center;
+	width: 18px;
+	height: 18px;
+	flex: none;
+	border: 0;
+	border-radius: 50%;
+	background: transparent;
+	color: var(--dsw-alias-label-tertiary);
+	font-size: 12px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.chat-ctx-clear,
+.chat-ctx-new {
+	flex: none;
+	padding: 2px 4px;
+	border: 0;
+	border-radius: var(--dsw-radius-sm);
+	background: transparent;
+	color: var(--dsw-alias-link);
+	font: var(--dsw-font-xxs-12);
+	cursor: pointer;
+}
+
+.chat-ctx-hint {
+	flex: none;
+	color: var(--dsw-alias-label-caption);
+	font: var(--dsw-font-xxxs-11);
+	white-space: nowrap;
+}
+
+@media (hover: hover) {
+	.chat-ctx-remove:hover,
+	.chat-ctx-clear:hover,
+	.chat-ctx-new:hover {
+		background: var(--dsw-alias-interactive-bg-hover);
+	}
 }
 
 .chat-palette {

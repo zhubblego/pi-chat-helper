@@ -8,5 +8,10 @@
 		"skipLibCheck": true,
 		"types": ["node"]
 	},
-	"files": ["index.ts", "question-panel.ts", "trajectory-web/index.ts"]
+	"files": [
+		"index.ts",
+		"question-panel.ts",
+		"trajectory-web/index.ts",
+		"trajectory-web/chat-trajectory-tool.ts"
+	]
 }
