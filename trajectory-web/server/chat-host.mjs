@@ -9,9 +9,20 @@
  * 本文件不 import pi SDK；子进程用 CLI 启动。
  */
 import { spawn } from "node:child_process";
-import { accessSync, constants, mkdirSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { buildProjection } from "./session.mjs";
+import { buildSystemPrompt } from "./chat-prompt.mjs";
+import {
+	chatSessionDirs,
+	findThreadFile,
+	isSafeThreadId,
+	latestThreadFile,
+	parseThreadProjection,
+	readSessionId,
+	readTurns,
+} from "./chat-session.mjs";
 import { MIN_PI_VERSION_TEXT, parsePiVersion, piRpcArgs, probeFirstPi, probePi, versionAtLeast } from "./pi-binary.mjs";
 
 const CAP_TTL_MS = 30_000;
@@ -260,6 +271,9 @@ function disabledCapabilities(chatDir, reason) {
  *   hostExecPath?: string,
  *   probeTimeoutMs?: number,
  *   sessionRoots?: string[],
+ *   readSessions?: (source: string) => object[],
+ *   resolveSession?: (sessions: object[], id: string) => object | null,
+ *   availableSources?: () => Array<{id: string, label: string}>,
  *   log?: (message:string)=>void,
  * }} [deps]
  */
@@ -268,8 +282,9 @@ export function createChatHost(deps = {}) {
 	const log = deps.log ?? (() => {});
 	const chatDir = resolve(deps.chatDir ?? join(deps.agentDir ?? resolveAgentDir(env), "pi-chat-helper", "chats"));
 	const sessionRoots = (deps.sessionRoots ?? []).filter(Boolean).map((root) => resolve(root));
-	/** @type {Map<string, RpcChild>} */
+	/** @type {Map<string, object>} */
 	const children = new Map();
+	let resolvedPi = deps.pi ?? null;
 	let capCache = null;
 
 	function remember(value) {
@@ -326,6 +341,7 @@ export function createChatHost(deps = {}) {
 			);
 		}
 
+		resolvedPi = pi;
 		const value = {
 			enabled: true,
 			backend: "pi-rpc",
@@ -347,6 +363,246 @@ export function createChatHost(deps = {}) {
 		return remember(value);
 	}
 
+	function httpError(status, message) {
+		const error = new Error(message);
+		error.status = status;
+		return error;
+	}
+
+	function resolveTarget(source, sessionId) {
+		if (typeof deps.readSessions !== "function" || typeof deps.resolveSession !== "function") {
+			throw httpError(501, "对话缺少会话解析依赖");
+		}
+		if (!source) throw httpError(400, "缺少 source");
+		const sources = typeof deps.availableSources === "function" ? deps.availableSources() : null;
+		if (sources && !sources.some((item) => item.id === source)) {
+			throw httpError(400, `不支持的轨迹源：${source}`);
+		}
+		if (!sessionId) throw httpError(400, "缺少 session");
+		const sessions = deps.readSessions(source);
+		const session = deps.resolveSession(sessions, sessionId);
+		if (!session) throw httpError(404, "会话不存在（可能已被删除或列表已刷新）");
+		return { source, sessionId: session.id, session };
+	}
+
+	function profileArgs(profile) {
+		if (profile === "no-tools") return ["--no-builtin-tools"];
+		if (profile === "full") return ["--tools", "read,write,edit,bash"];
+		return ["--tools", "read,grep,ls"];
+	}
+
+	function spawnArgs({ sessionsDir, profile, threadFile, threadId }) {
+		const args = [
+			"--session-dir",
+			sessionsDir,
+			"--no-extensions",
+			"--no-context-files",
+			"--system-prompt",
+			buildSystemPrompt({ hasTrajectoryTool: false }),
+			...profileArgs(profile),
+			"-na",
+		];
+		if (threadFile) args.push("--session", threadFile);
+		else if (threadId) args.push("--session-id", threadId);
+		return args;
+	}
+
+	async function requirePi() {
+		const cap = await capabilities();
+		if (!cap.enabled) throw httpError(501, cap.reason ?? "对话未启用");
+		if (!resolvedPi) throw httpError(501, "pi 可执行文件未解析");
+		return resolvedPi;
+	}
+
+	function modelOfState(model) {
+		if (!model) return null;
+		return { provider: model.provider ?? null, id: model.id ?? null, name: model.name ?? model.id ?? null };
+	}
+
+	function virtualThread(source, sessionId, id, warnings = []) {
+		return {
+			thread: {
+				id: id ?? null,
+				exists: false,
+				source,
+				sessionId,
+				sessionFile: null,
+				cwd: null,
+				createdAt: null,
+				updatedAt: null,
+				model: null,
+				profile: DEFAULT_PROFILE,
+				messages: [],
+			},
+			pending: false,
+			warnings,
+		};
+	}
+
+	function threadPayload({ source, sessionId, fileRecord, target, record, profile }) {
+		let projection;
+		try {
+			projection = buildProjection(fileRecord.file);
+		} catch (err) {
+			throw httpError(500, `线程文件解析失败：${err.message}`);
+		}
+		const dirs = chatSessionDirs(chatDir, source, sessionId);
+		const turns = readTurns(dirs.metaDir);
+		const mapped = parseThreadProjection(projection, turns);
+		const id = mapped.id ?? readSessionId(fileRecord.file) ?? null;
+		const pending = Boolean(record?.currentTurn) && (!id || record.piSessionId === id);
+		return {
+			thread: {
+				id,
+				exists: true,
+				source,
+				sessionId,
+				sessionFile: fileRecord.file,
+				cwd: mapped.cwd ?? target.session.projectPath ?? target.session.cwd ?? null,
+				createdAt: mapped.createdAt ?? null,
+				updatedAt: mapped.updatedAt ?? null,
+				model: mapped.model,
+				profile,
+				messages: mapped.messages,
+			},
+			pending,
+			warnings: [],
+		};
+	}
+
+	async function ensureChild(source, sessionId, options = {}) {
+		const key = `${source}:${sessionId}`;
+		const existing = children.get(key);
+		if (existing && existing.state !== "dead") return existing;
+
+		const target = options.target ?? resolveTarget(source, sessionId);
+		const pi = await requirePi();
+		const dirs = chatSessionDirs(chatDir, source, sessionId);
+		mkdirSync(dirs.sessionsDir, { recursive: true, mode: 0o700 });
+		mkdirSync(dirs.metaDir, { recursive: true, mode: 0o700 });
+
+		const profile = DEFAULT_PROFILE;
+		const sessionCwd = target.session.projectPath ?? target.session.cwd ?? null;
+		// 历史会话的项目目录可能已被删除；不存在时退回服务进程 cwd，避免 spawn 报误导性的 ENOENT。
+		const cwd = sessionCwd && existsSync(sessionCwd) ? sessionCwd : process.cwd();
+		let threadFile = null;
+		if (options.threadId) {
+			if (!isSafeThreadId(options.threadId)) throw httpError(400, "非法线程 id");
+			threadFile = findThreadFile(dirs.sessionsDir, options.threadId)?.file ?? null;
+		}
+		const args = spawnArgs({
+			sessionsDir: dirs.sessionsDir,
+			profile,
+			threadFile,
+			threadId: options.threadId && !threadFile ? options.threadId : null,
+		});
+		const record = {
+			key,
+			source,
+			sessionId,
+			projectPath: cwd,
+			sessionsDir: dirs.sessionsDir,
+			metaDir: dirs.metaDir,
+			profile,
+			child: null,
+			state: "starting",
+			piSessionId: null,
+			sessionFile: null,
+			currentTurn: null,
+			lastUsedAt: Date.now(),
+		};
+		const child = new RpcChild({ pi, args, cwd: record.projectPath, env, log, name: key });
+		record.child = child;
+		children.set(key, record);
+		child.onEvent((event) => {
+			if (event.type !== "child_exit") return;
+			record.state = "dead";
+			if (children.get(key) === record) children.delete(key);
+		});
+		child.start();
+		try {
+			const state = await child.send({ type: "get_state" }, { timeoutMs: 15_000 });
+			record.piSessionId = state.data?.sessionId ?? null;
+			record.sessionFile = state.data?.sessionFile ?? null;
+			record.state = "idle";
+			return record;
+		} catch (err) {
+			record.state = "dead";
+			children.delete(key);
+			await child.close({ graceMs: 500 });
+			throw httpError(502, `pi 子进程启动失败：${err.message}`);
+		}
+	}
+
+	async function handleGetThread(url, res, sendJson) {
+		const cap = await capabilities();
+		if (!cap.enabled) throw httpError(501, cap.reason ?? "对话未启用");
+		const target = resolveTarget(url.searchParams.get("source"), url.searchParams.get("session"));
+		const dirs = chatSessionDirs(chatDir, target.source, target.sessionId);
+		const requested = url.searchParams.get("thread");
+		if (requested !== null && !isSafeThreadId(requested)) throw httpError(400, "非法线程 id");
+
+		const key = `${target.source}:${target.sessionId}`;
+		const record = children.get(key) ?? null;
+		const fileRecord = requested ? findThreadFile(dirs.sessionsDir, requested) : latestThreadFile(dirs.sessionsDir);
+		let threadId = requested ?? null;
+		if (!requested && fileRecord) threadId = readSessionId(fileRecord.file) ?? null;
+		if (!requested && !fileRecord) threadId = record?.piSessionId ?? null;
+
+		if (!fileRecord) {
+			const warnings = requested ? [`线程 ${requested} 的文件不存在；发送第一条消息时会新建。`] : [];
+			sendJson(res, 200, virtualThread(target.source, target.sessionId, threadId, warnings));
+			return;
+		}
+		sendJson(
+			res,
+			200,
+			threadPayload({
+				source: target.source,
+				sessionId: target.sessionId,
+				fileRecord,
+				target,
+				record,
+				profile: DEFAULT_PROFILE,
+			}),
+		);
+	}
+
+	async function handlePostThread(rawBody, res, sendJson) {
+		let payload;
+		try {
+			payload = JSON.parse(rawBody || "{}");
+		} catch {
+			throw httpError(400, "请求体不是合法 JSON");
+		}
+		const target = resolveTarget(payload.source, payload.session);
+		const record = await ensureChild(target.source, target.sessionId, { target });
+		if (record.currentTurn) throw httpError(409, "回复中，先停止再新建对话");
+		const created = await record.child.send({ type: "new_session" }, { timeoutMs: 15_000 });
+		if (created.data?.cancelled) throw httpError(409, "新建会话被取消");
+		const state = await record.child.send({ type: "get_state" }, { timeoutMs: 15_000 });
+		record.piSessionId = state.data?.sessionId ?? record.piSessionId;
+		record.sessionFile = state.data?.sessionFile ?? null;
+		record.lastUsedAt = Date.now();
+		sendJson(res, 200, {
+			thread: {
+				id: record.piSessionId,
+				exists: false,
+				source: target.source,
+				sessionId: target.sessionId,
+				sessionFile: record.sessionFile,
+				cwd: target.session.projectPath ?? target.session.cwd ?? record.projectPath ?? null,
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				model: modelOfState(state.data?.model),
+				profile: record.profile,
+				messages: [],
+			},
+			pending: false,
+			warnings: [],
+		});
+	}
+
 	/**
 	 * 路由分发；返回 true 表示已处理。
 	 * @param {import("node:http").IncomingMessage} req
@@ -356,19 +612,37 @@ export function createChatHost(deps = {}) {
 	 * @param {(res:import("node:http").ServerResponse,status:number,body:unknown)=>void} sendJson
 	 */
 	async function handle(req, res, url, body, sendJson) {
-		void body; // T2+ 的 POST 路由使用；T1 只有 GET capabilities
-		if (url.pathname !== "/api/chat/capabilities") return false;
-		if (req.method !== "GET") {
-			sendJson(res, 405, { error: "method not allowed" });
+		try {
+			if (url.pathname === "/api/chat/capabilities") {
+				if (req.method !== "GET") {
+					sendJson(res, 405, { error: "method not allowed" });
+					return true;
+				}
+				const value = await capabilities(url.searchParams.get("refresh") === "1");
+				sendJson(res, 200, value);
+				return true;
+			}
+			if (url.pathname === "/api/chat/thread") {
+				if (req.method === "GET") {
+					await handleGetThread(url, res, sendJson);
+					return true;
+				}
+				if (req.method === "POST") {
+					await handlePostThread(body, res, sendJson);
+					return true;
+				}
+				sendJson(res, 405, { error: "method not allowed" });
+				return true;
+			}
+			return false;
+		} catch (err) {
+			sendJson(res, err.status ?? 500, { error: err.message });
 			return true;
 		}
-		const value = await capabilities(url.searchParams.get("refresh") === "1");
-		sendJson(res, 200, value);
-		return true;
 	}
 
 	async function close() {
-		await Promise.allSettled([...children.values()].map((child) => child.close()));
+		await Promise.allSettled([...children.values()].map((record) => record.child?.close()));
 		children.clear();
 	}
 

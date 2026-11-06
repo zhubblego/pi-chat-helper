@@ -31,9 +31,73 @@ function waitFor(checkFn, timeoutMs = 3000, label = "等待事件") {
 	});
 }
 
+/** 写一个最小 pi session 文件（header + model_change + user + tool + answer）。 */
+function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复" }) {
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	const lines = [
+		{ type: "session", version: 3, id, timestamp: "2026-01-01T00:00:00.000Z", cwd },
+		{ type: "model_change", id: "m1", parentId: null, timestamp: "2026-01-01T00:00:00.100Z", provider: "fake", modelId: "fake-1" },
+		{
+			type: "message",
+			id: "u1",
+			parentId: "m1",
+			timestamp: "2026-01-01T00:00:01.000Z",
+			message: { role: "user", content: [{ type: "text", text: userText }], timestamp: 1 },
+		},
+		{
+			type: "message",
+			id: "a1",
+			parentId: "u1",
+			timestamp: "2026-01-01T00:00:02.000Z",
+			message: {
+				role: "assistant",
+				provider: "fake",
+				model: "fake-1",
+				api: "openai-completions",
+				stopReason: "toolUse",
+				usage: { input: 1, output: 2, totalTokens: 3 },
+				content: [{ type: "toolCall", id: "t1", name: "read_trajectory", arguments: { ids: ["a1:p2"] } }],
+				timestamp: 2,
+			},
+		},
+		{
+			type: "message",
+			id: "r1",
+			parentId: "a1",
+			timestamp: "2026-01-01T00:00:03.000Z",
+			message: {
+				role: "toolResult",
+				toolCallId: "t1",
+				toolName: "read_trajectory",
+				content: [{ type: "text", text: "工具结果" }],
+				isError: false,
+			},
+		},
+		{
+			type: "message",
+			id: "a2",
+			parentId: "r1",
+			timestamp: "2026-01-01T00:00:04.000Z",
+			message: {
+				role: "assistant",
+				provider: "fake",
+				model: "fake-1",
+				api: "openai-completions",
+				stopReason: "stop",
+				usage: { input: 3, output: 4, totalTokens: 7 },
+				content: [{ type: "text", text: assistantText }],
+				timestamp: 4,
+			},
+		},
+	];
+	fs.writeFileSync(file, lines.map((line) => JSON.stringify(line)).join("\n") + "\n");
+}
+
 (async () => {
 	const { parsePiVersion, versionAtLeast, resolvePiCandidates, piRpcArgs, probeFirstPi } = await import(urlOf("trajectory-web/server/pi-binary.mjs"));
 	const { RpcChild, createChatHost, checkChatDir, isPathInside, resolveAgentDir } = await import(urlOf("trajectory-web/server/chat-host.mjs"));
+	const chatSession = await import(urlOf("trajectory-web/server/chat-session.mjs"));
+	const { buildProjection } = await import(urlOf("trajectory-web/server/session.mjs"));
 
 	// ---- 版本解析 ----
 	check("parsePiVersion：纯版本号", (() => {
@@ -81,6 +145,79 @@ function waitFor(checkFn, timeoutMs = 3000, label = "等待事件") {
 	const checkOk = checkChatDir(path.join(tmp, "chat-ok"), []);
 	check("chatDir：正常目录可创建", checkOk.ok === true && fs.existsSync(checkOk.dir));
 	check("resolveAgentDir：尊重环境变量", resolveAgentDir({ PI_CODING_AGENT_DIR: "/tmp/x-agent" }) === path.resolve("/tmp/x-agent"));
+
+	// ---- chat-session 纯函数 ----
+	const sanitized = chatSession.sanitizeSegment("../etc/passwd");
+	check("sanitizeSegment：无路径分隔符", !sanitized.includes("/") && !sanitized.includes("\\") && sanitized !== "..", sanitized);
+	check("sanitizeSegment：合法值原样", chatSession.sanitizeSegment("ext-1") === "ext-1");
+	check("sanitizeSegment：稳定", chatSession.sanitizeSegment("a/b") === chatSession.sanitizeSegment("a/b"));
+	check("sanitizeSegment：.. 不保留", chatSession.sanitizeSegment("..") !== "..");
+	const dirsA = chatSession.chatSessionDirs(path.join(tmp, "chat-unit"), "pi", "ext-1");
+	check(
+		"chatSessionDirs：sessions/meta",
+		dirsA.sessionsDir.endsWith(path.join("pi", "ext-1", "sessions")) && dirsA.metaDir.endsWith(path.join("pi", "ext-1", "meta")),
+	);
+	check(
+		"isSafeThreadId：合法/非法",
+		chatSession.isSafeThreadId("thread-a") &&
+			!chatSession.isSafeThreadId("..") &&
+			!chatSession.isSafeThreadId(".a") &&
+			!chatSession.isSafeThreadId("a."),
+	);
+
+	const sessionsUnit = path.join(tmp, "unit-sessions");
+	fs.mkdirSync(sessionsUnit, { recursive: true });
+	fs.writeFileSync(path.join(sessionsUnit, "a.jsonl"), "{}\n");
+	fs.writeFileSync(path.join(sessionsUnit, "b.jsonl"), "{}\n");
+	const nowSec = Date.now() / 1000;
+	fs.utimesSync(path.join(sessionsUnit, "a.jsonl"), nowSec - 5, nowSec - 5);
+	fs.utimesSync(path.join(sessionsUnit, "b.jsonl"), nowSec, nowSec);
+	check("latestThreadFile：取 mtime 最新", chatSession.latestThreadFile(sessionsUnit)?.name === "b.jsonl");
+	fs.utimesSync(path.join(sessionsUnit, "a.jsonl"), nowSec, nowSec);
+	check("latestThreadFile：mtime 相同按文件名倒序", chatSession.latestThreadFile(sessionsUnit)?.name === "b.jsonl");
+
+	const metaUnit = path.join(tmp, "unit-meta");
+	chatSession.appendTurn(metaUnit, { ordinal: 2, displayText: "二" });
+	chatSession.appendTurn(metaUnit, { ordinal: 1, displayText: "一" });
+	fs.appendFileSync(path.join(metaUnit, "turns.jsonl"), "not-json\n");
+	check("turns：排序 + 忽略坏行", chatSession.readTurns(metaUnit).map((t) => t.ordinal).join(",") === "1,2");
+
+	chatSession.writeContextNext(metaUnit, { items: [{ id: "a1:p2" }] });
+	const activeContext = chatSession.promoteContext(metaUnit);
+	check("context：next 提升为 active", activeContext.items?.[0]?.id === "a1:p2");
+	check(
+		"stripInjectedBlocks：去掉 index/delta",
+		chatSession.stripInjectedBlocks(
+			"<trajectory_index>x</trajectory_index><trajectory_index_delta>y</trajectory_index_delta>\n问题",
+		) === "问题",
+	);
+
+	const projFile = path.join(tmp, "proj-chat", "2026-01-01T00-00-00-000Z_thread-a.jsonl");
+	writePiSessionFile(projFile, {
+		id: "thread-a",
+		cwd: "/tmp/projA",
+		userText: "<trajectory_index>x</trajectory_index>\n问题 A",
+	});
+	const projection = buildProjection(projFile);
+	const mappedThread = chatSession.parseThreadProjection(projection, [
+		{ ordinal: 1, displayText: "问题 A", contextRefs: [{ id: "a1:p2", kind: "tool", label: "工具", preview: "bash" }] },
+	]);
+	check(
+		"投影：user displayText/context 来自 turns",
+		mappedThread.messages[0]?.role === "user" &&
+			mappedThread.messages[0].displayText === "问题 A" &&
+			mappedThread.messages[0].context.length === 1,
+	);
+	check(
+		"投影：tool + assistant",
+		mappedThread.messages.some((m) => m.role === "tool" && m.toolName === "read_trajectory") &&
+			mappedThread.messages.some((m) => m.role === "assistant" && m.text === "答复"),
+	);
+	check("投影：model 从 model_change", mappedThread.model?.provider === "fake" && mappedThread.model?.id === "fake-1");
+	check(
+		"投影：无 turns 时剥离注入块",
+		chatSession.parseThreadProjection(projection, []).messages[0]?.displayText === "问题 A",
+	);
 
 	// ---- RpcChild（fake pi） ----
 	const fakePi = { cmd: process.execPath, argsPrefix: [FIXTURE], mode: false, display: "fake-pi" };
@@ -140,6 +277,28 @@ function waitFor(checkFn, timeoutMs = 3000, label = "等待事件") {
 	const codexRoot = path.join(tmp, "codex-http");
 	fs.mkdirSync(sessionsRoot, { recursive: true });
 	fs.mkdirSync(codexRoot, { recursive: true });
+
+	// 轨迹会话 fixture（让 resolveSession 能找到）
+	writePiSessionFile(path.join(sessionsRoot, "--projA--", "2026-01-01T00-00-00-000Z_chat-sess-1.jsonl"), {
+		id: "chat-sess-1",
+		cwd: "/tmp/projA",
+		userText: "轨迹问题",
+		assistantText: "轨迹回答",
+	});
+	// 对话线程 fixture（chatDir 下）
+	const chatHttpDir = path.join(tmp, "chat-http");
+	writePiSessionFile(path.join(chatHttpDir, "pi", "chat-sess-1", "sessions", "2026-01-01T00-00-00-000Z_thread-a.jsonl"), {
+		id: "thread-a",
+		cwd: "/tmp/projA",
+		userText: "<trajectory_index>x</trajectory_index>\n问题 A",
+		assistantText: "答复 A",
+	});
+	fs.mkdirSync(path.join(chatHttpDir, "pi", "chat-sess-1", "meta"), { recursive: true });
+	fs.writeFileSync(
+		path.join(chatHttpDir, "pi", "chat-sess-1", "meta", "turns.jsonl"),
+		JSON.stringify({ ordinal: 1, displayText: "问题 A", contextRefs: [{ id: "a1:p2", kind: "tool", label: "工具", preview: "bash" }] }) + "\n",
+	);
+
 	const handle = await createTrajectoryServer({
 		scope: "all",
 		webDir: WEB,
@@ -147,7 +306,7 @@ function waitFor(checkFn, timeoutMs = 3000, label = "等待事件") {
 		codexRoot,
 		port: 0,
 		chat: true,
-		chatDir: path.join(tmp, "chat-http"),
+		chatDir: chatHttpDir,
 		piBin: fakePi,
 	});
 	const capHttp = await (await fetch(`${handle.url}api/chat/capabilities`)).json();
@@ -155,6 +314,67 @@ function waitFor(checkFn, timeoutMs = 3000, label = "等待事件") {
 	const health = await (await fetch(`${handle.url}api/health`)).json();
 	check("HTTP：轨迹 health 不受影响", health.ok === true && health.scope === "all");
 	check("HTTP：未实现的 chat 路由 501", (await fetch(`${handle.url}api/chat/models`)).status === 501);
+
+	const threadUrl = (thread) =>
+		`${handle.url}api/chat/thread?source=pi&session=chat-sess-1${thread ? `&thread=${encodeURIComponent(thread)}` : ""}`;
+	const threadLatest = await (await fetch(threadUrl())).json();
+	check(
+		"HTTP：GET thread 取最新",
+		threadLatest.thread?.id === "thread-a" && threadLatest.thread.exists === true,
+		JSON.stringify(threadLatest).slice(0, 300),
+	);
+	check(
+		"HTTP：thread 消息映射",
+		threadLatest.thread.messages.map((m) => m.role).join(",") === "user,tool,assistant",
+		JSON.stringify(threadLatest.thread.messages.map((m) => m.role)),
+	);
+	check(
+		"HTTP：displayText/context 来自 turns",
+		threadLatest.thread.messages[0].displayText === "问题 A" && threadLatest.thread.messages[0].context.length === 1,
+	);
+	const threadExplicit = await (await fetch(threadUrl("thread-a"))).json();
+	check("HTTP：GET thread 按 id", threadExplicit.thread?.id === "thread-a" && threadExplicit.thread.exists === true);
+	const threadMissing = await (await fetch(threadUrl("missing-1"))).json();
+	check(
+		"HTTP：不存在的 thread 返回 exists=false + warnings",
+		threadMissing.thread?.exists === false && threadMissing.warnings.length === 1,
+		JSON.stringify(threadMissing).slice(0, 200),
+	);
+	check("HTTP：非法 thread 400", (await fetch(threadUrl("../x"))).status === 400);
+	check("HTTP：缺 source 400", (await fetch(`${handle.url}api/chat/thread?session=chat-sess-1`)).status === 400);
+	check("HTTP：未知 session 404", (await fetch(`${handle.url}api/chat/thread?source=pi&session=nope`)).status === 404);
+
+	const postThread = await fetch(`${handle.url}api/chat/thread`, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ source: "pi", session: "chat-sess-1" }),
+	});
+	const postThreadBody = await postThread.json();
+	check(
+		"HTTP：POST thread 返回 pi session id",
+		postThread.ok && typeof postThreadBody.thread?.id === "string" && postThreadBody.thread.exists === false,
+		JSON.stringify(postThreadBody).slice(0, 300),
+	);
+	const afterPost = await (await fetch(threadUrl(postThreadBody.thread.id))).json();
+	check("HTTP：新线程文件未生成时 exists=false", afterPost.thread?.exists === false && afterPost.thread.id === postThreadBody.thread.id);
+	check(
+		"HTTP：POST thread 非法 JSON 400",
+		(
+			await fetch(`${handle.url}api/chat/thread`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: "{",
+			})
+		).status === 400,
+	);
+
+	const listingPi = await (await fetch(`${handle.url}api/sessions?source=pi`)).json();
+	check(
+		"HTTP：/api/sessions 不含 chat 文件",
+		listingPi.sessions.length === 1 && !listingPi.sessions.some((item) => item.id === "thread-a"),
+		JSON.stringify(listingPi.sessions.map((item) => item.id)),
+	);
+
 	await handle.close();
 
 	const noChat = await createTrajectoryServer({
@@ -208,5 +428,5 @@ function waitFor(checkFn, timeoutMs = 3000, label = "等待事件") {
 	process.exitCode = failed ? 1 : 0;
 })().catch((err) => {
 	console.error("测试异常：", err);
-	process.exitCode = 1;
+	process.exit(1);
 });

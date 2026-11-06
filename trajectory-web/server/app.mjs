@@ -313,6 +313,9 @@ export function createTrajectoryServer(options) {
 				hostEntry: options.hostEntry,
 				hostExecPath: options.hostExecPath,
 				sessionRoots: [sessionsRoot, codexRoot],
+				readSessions,
+				resolveSession,
+				availableSources,
 				log,
 			})
 		: null;
