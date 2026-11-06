@@ -10,11 +10,18 @@
  * 本文件不 import pi SDK；子进程用 CLI 启动。
  */
 import { spawn } from "node:child_process";
-import { accessSync, constants, existsSync, mkdirSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { buildProjection } from "./session.mjs";
 import { buildSystemPrompt } from "./chat-prompt.mjs";
+import {
+	CHAT_PROFILES,
+	DEFAULT_PROFILE,
+	projectSettings,
+	readSettings,
+	updateProjectSettings,
+} from "./chat-settings.mjs";
 import {
 	chatSessionDirs,
 	findThreadFile,
@@ -24,6 +31,7 @@ import {
 	readSessionId,
 	readSessionModel,
 	readTurns,
+	upsertTurn,
 } from "./chat-session.mjs";
 import { MIN_PI_VERSION_TEXT, parsePiVersion, piRpcArgs, probeFirstPi, probePi, versionAtLeast } from "./pi-binary.mjs";
 
@@ -32,6 +40,11 @@ const STDERR_LIMIT = 8 * 1024;
 const PROMPT_MAX_CHARS = 32_000;
 const SSE_PING_MS = 15_000;
 const PREVIEW_CHARS = 400;
+const SKILLS_TTL_MS = 60_000;
+const SKILL_WARN_CHARS = 32_000;
+const SKILL_MAX_CHARS = 200_000;
+
+export { CHAT_PROFILES, DEFAULT_PROFILE };
 
 const SSE_HEADERS = {
 	"content-type": "text/event-stream; charset=utf-8",
@@ -39,9 +52,6 @@ const SSE_HEADERS = {
 	connection: "keep-alive",
 	"x-accel-buffering": "no",
 };
-
-export const CHAT_PROFILES = ["no-tools", "read-only", "full"];
-export const DEFAULT_PROFILE = "read-only";
 
 /** agentDir：尊重 PI_CODING_AGENT_DIR，否则 ~/.pi/agent。 */
 export function resolveAgentDir(env = process.env) {
@@ -411,6 +421,7 @@ function disabledCapabilities(chatDir, reason) {
  *   hostExecPath?: string,
  *   probeTimeoutMs?: number,
  *   sessionRoots?: string[],
+ *   settingsPath?: string,
  *   readSessions?: (source: string) => object[],
  *   resolveSession?: (sessions: object[], id: string) => object | null,
  *   availableSources?: () => Array<{id: string, label: string}>,
@@ -422,6 +433,7 @@ export function createChatHost(deps = {}) {
 	const env = deps.env ?? process.env;
 	const log = deps.log ?? (() => {});
 	const chatDir = resolve(deps.chatDir ?? join(deps.agentDir ?? resolveAgentDir(env), "pi-chat-helper", "chats"));
+	const settingsPath = resolve(deps.settingsPath ?? join(chatDir, "settings.json"));
 	const sessionRoots = (deps.sessionRoots ?? []).filter(Boolean).map((root) => resolve(root));
 	/** @type {Map<string, object>} */
 	const children = new Map();
@@ -435,6 +447,8 @@ export function createChatHost(deps = {}) {
 	// 模型列表缓存（host 级）：pi 的可用模型由全局 auth/models 配置决定，与轨迹会话无关；
 	// refresh=1 失败时回退到这里保留的 last-good。
 	let modelsCache = null;
+	// 技能列表缓存（按 source:sessionId，60s；refresh=1 绕过并重启 child）。
+	const skillsCache = new Map();
 
 	function remember(value) {
 		capCache = { at: Date.now(), value };
@@ -540,7 +554,7 @@ export function createChatHost(deps = {}) {
 		return ["--tools", "read,grep,ls"];
 	}
 
-	function spawnArgs({ sessionsDir, profile, threadFile, threadId }) {
+	function spawnArgs({ sessionsDir, profile, threadFile, threadId, projectSkills = false, projectPath = null }) {
 		const args = [
 			"--session-dir",
 			sessionsDir,
@@ -551,6 +565,11 @@ export function createChatHost(deps = {}) {
 			...profileArgs(profile),
 			"-na",
 		];
+		if (projectSkills && projectPath) {
+			for (const dir of [join(projectPath, ".pi", "skills"), join(projectPath, ".agents", "skills")]) {
+				if (existsSync(dir)) args.push("--skill", dir);
+			}
+		}
 		if (threadFile) args.push("--session", threadFile);
 		else if (threadId) args.push("--session-id", threadId);
 		return args;
@@ -566,6 +585,98 @@ export function createChatHost(deps = {}) {
 	function modelOfState(model) {
 		if (!model) return null;
 		return { provider: model.provider ?? null, id: model.id ?? null, name: model.name ?? model.id ?? null };
+	}
+
+	/** 设置键使用的项目路径：优先会话自带的 projectPath/cwd，其次是 child 的 cwd 兑底。 */
+	function targetProjectPath(target, record) {
+		return target?.session?.projectPath ?? target?.session?.cwd ?? record?.projectPath ?? null;
+	}
+
+	function projectOf(target, record) {
+		return projectSettings(readSettings(settingsPath), target.source, targetProjectPath(target, record));
+	}
+
+	/** get_commands 里的技能（去 skill: 前缀，sourceInfo 平坦化）。 */
+	async function getSkillCommands(record) {
+		const response = await record.child.send({ type: "get_commands" }, { timeoutMs: 20_000 });
+		const commands = Array.isArray(response.data?.commands) ? response.data.commands : [];
+		return commands
+			.filter((command) => command?.source === "skill" && typeof command.name === "string")
+			.map((command) => {
+				const info = command.sourceInfo ?? {};
+				const filePath = typeof info.path === "string" && info.path ? info.path : null;
+				return {
+					name: command.name.replace(/^skill:/, ""),
+					description: typeof command.description === "string" ? command.description : "",
+					filePath,
+					baseDir: typeof info.baseDir === "string" && info.baseDir ? info.baseDir : filePath ? dirname(filePath) : null,
+					scope: typeof info.scope === "string" ? info.scope : null,
+					origin: typeof info.origin === "string" ? info.origin : null,
+					source: typeof info.source === "string" ? info.source : null,
+				};
+			});
+	}
+
+	/** 读技能文件：chars=字符数（不是字节），顺带解析 disable-model-invocation。 */
+	function readSkillFile(filePath) {
+		if (!filePath) return { chars: null, disableModelInvocation: false, error: "技能没有文件路径" };
+		try {
+			const text = readFileSync(filePath, "utf8");
+			const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? "";
+			return {
+				chars: text.length,
+				disableModelInvocation: /^disable-model-invocation:\s*(?:true|"true"|'true')\s*$/m.test(frontmatter),
+				error: null,
+			};
+		} catch (err) {
+			return { chars: null, disableModelInvocation: false, error: err.message };
+		}
+	}
+
+	/** 技能列表载荷：字符数、仅手动、读失败诊断。 */
+	async function buildSkillsPayload(record, target) {
+		const project = projectOf(target, record);
+		const commands = await getSkillCommands(record);
+		const diagnostics = [];
+		const skills = commands.map((command) => {
+			const file = readSkillFile(command.filePath);
+			if (file.error) {
+				diagnostics.push({ type: "warning", message: `技能 ${command.name}：${file.error}`, path: command.filePath });
+			}
+			return {
+				name: command.name,
+				description: command.description,
+				filePath: command.filePath,
+				baseDir: command.baseDir,
+				scope: command.scope,
+				origin: command.origin,
+				source: command.source,
+				disableModelInvocation: file.disableModelInvocation,
+				chars: file.chars,
+			};
+		});
+		return {
+			cwd: record.projectPath ?? targetProjectPath(target, record),
+			projectSkills: project.projectSkills,
+			skills,
+			diagnostics,
+			error: null,
+		};
+	}
+
+	/** 当前会话用户轮数（按投影 user 事件），+1 得到本轮 ordinal；文件不存在则 1。 */
+	function countUserOrdinal(record) {
+		const file = record.sessionFile && existsSync(record.sessionFile) ? record.sessionFile : null;
+		if (!file) return 1;
+		try {
+			const projection = buildProjection(file);
+			const mapped = parseThreadProjection(projection, []);
+			return mapped.messages.filter((message) => message.role === "user").length + 1;
+		} catch {
+			// 文件正在写/损坏：退到 turns 的最大 ordinal + 1，避免重复覆盖
+			const turns = readTurns(record.metaDir);
+			return Math.max(0, ...turns.map((turn) => Number(turn.ordinal) || 0)) + 1;
+		}
 	}
 
 	function virtualThread(source, sessionId, id, warnings = []) {
@@ -642,7 +753,9 @@ export function createChatHost(deps = {}) {
 		mkdirSync(dirs.sessionsDir, { recursive: true, mode: 0o700 });
 		mkdirSync(dirs.metaDir, { recursive: true, mode: 0o700 });
 
-		const profile = DEFAULT_PROFILE;
+		const project = projectOf(target, null);
+		const profile = project.profile;
+		const projectPath = targetProjectPath(target, null);
 		const sessionCwd = target.session.projectPath ?? target.session.cwd ?? null;
 		// 历史会话的项目目录可能已被删除；不存在时退回服务进程 cwd，避免 spawn 报误导性的 ENOENT。
 		const cwd = sessionCwd && existsSync(sessionCwd) ? sessionCwd : process.cwd();
@@ -656,6 +769,8 @@ export function createChatHost(deps = {}) {
 			profile,
 			threadFile,
 			threadId: options.threadId && !threadFile ? options.threadId : null,
+			projectSkills: project.projectSkills,
+			projectPath,
 		});
 		const record = {
 			key,
@@ -665,6 +780,7 @@ export function createChatHost(deps = {}) {
 			sessionsDir: dirs.sessionsDir,
 			metaDir: dirs.metaDir,
 			profile,
+			projectSkills: project.projectSkills,
 			child: null,
 			state: "starting",
 			piSessionId: null,
@@ -703,6 +819,13 @@ export function createChatHost(deps = {}) {
 		await record.child.close({ graceMs: 800 });
 	}
 
+	/** 重启 child 并保留当前线程（文件存在走 --session，不存在走 --session-id）。 */
+	async function restartChildKeepThread(record) {
+		const threadId = record.piSessionId ?? null;
+		await restartChild(record);
+		return await ensureChild(record.source, record.sessionId, { threadId: threadId ?? undefined });
+	}
+
 	/** 让 child 切到指定线程（文件必须已存在）；返回最新 get_state。 */
 	async function switchThread(record, file) {
 		const switched = await record.child.send({ type: "switch_session", sessionPath: file.file }, { timeoutMs: 20_000 });
@@ -716,6 +839,130 @@ export function createChatHost(deps = {}) {
 		record.sessionFile = state.data?.sessionFile ?? null;
 		record.lastUsedAt = Date.now();
 		return state;
+	}
+
+	async function handleGetSettings(url, res, sendJson) {
+		const cap = await capabilities();
+		if (!cap.enabled) throw httpError(501, cap.reason ?? "对话未启用");
+		const target = resolveTarget(url.searchParams.get("source"), url.searchParams.get("session"));
+		const record = children.get(`${target.source}:${target.sessionId}`) ?? null;
+		const project = projectOf(target, record);
+		sendJson(res, 200, { profile: project.profile, projectSkills: project.projectSkills, approvalAllow: [] });
+	}
+
+	async function handlePostSettings(rawBody, res, sendJson) {
+		let payload;
+		try {
+			payload = JSON.parse(rawBody || "{}");
+		} catch {
+			throw httpError(400, "请求体不是合法 JSON");
+		}
+		const target = resolveTarget(payload.source, payload.session);
+		const patch = {};
+		if (payload.profile !== undefined) {
+			if (!CHAT_PROFILES.includes(payload.profile)) throw httpError(400, `非法 profile：${payload.profile}`);
+			patch.profile = payload.profile;
+		}
+		if (payload.projectSkills !== undefined) {
+			if (typeof payload.projectSkills !== "boolean") throw httpError(400, "projectSkills 需为布尔值");
+			patch.projectSkills = payload.projectSkills;
+		}
+		if (Object.keys(patch).length === 0) throw httpError(400, "没有可修改的设置");
+
+		const cap = await capabilities();
+		if (!cap.enabled) throw httpError(501, cap.reason ?? "对话未启用");
+
+		const key = `${target.source}:${target.sessionId}`;
+		const record = children.get(key) ?? null;
+		if (record?.currentTurn) throw httpError(409, "回复中，先停止再修改设置");
+		const next = updateProjectSettings(settingsPath, {
+			source: target.source,
+			projectPath: targetProjectPath(target, record),
+			patch,
+		});
+		skillsCache.delete(key);
+		if (record) await restartChild(record);
+		sendJson(res, 200, { ok: true, profile: next.profile, projectSkills: next.projectSkills, restart: true });
+	}
+
+	async function handleGetSkills(url, res, sendJson) {
+		const cap = await capabilities();
+		if (!cap.enabled) throw httpError(501, cap.reason ?? "对话未启用");
+		const target = resolveTarget(url.searchParams.get("source"), url.searchParams.get("session"));
+		const refresh = url.searchParams.get("refresh") === "1";
+		const key = `${target.source}:${target.sessionId}`;
+		let record = children.get(key) ?? null;
+		if (refresh) {
+			if (record?.currentTurn) throw httpError(409, "回复中，先停止再刷新技能");
+			// 已有 child 才重启；首次打开直接按当前设置 spawn，避免白起一次
+			if (record && record.state !== "dead") record = await restartChildKeepThread(record);
+			// 不先删缓存：refresh 失败时要返回 last-good
+		}
+		if (!record || record.state === "dead") {
+			record = await ensureChild(target.source, target.sessionId, { target });
+		}
+		let project = projectOf(target, record);
+
+		if (!refresh && record.projectSkills !== project.projectSkills && !record.currentTurn) {
+			// 同项目其它会话改了开关：本会话查询时应用新 spawn 参数
+			record = await restartChildKeepThread(record);
+			project = projectOf(target, record);
+			skillsCache.delete(key);
+		}
+
+		const cached = skillsCache.get(key);
+		if (!refresh && cached && Date.now() - cached.at < SKILLS_TTL_MS && cached.payload.projectSkills === project.projectSkills) {
+			sendJson(res, 200, cached.payload);
+			return;
+		}
+		try {
+			const payload = await buildSkillsPayload(record, target);
+			skillsCache.set(key, { at: Date.now(), payload });
+			sendJson(res, 200, payload);
+		} catch (err) {
+			if (cached?.payload) {
+				sendJson(res, 200, { ...cached.payload, error: errorText(err) });
+				return;
+			}
+			sendJson(res, 200, {
+				cwd: record.projectPath ?? targetProjectPath(target, record),
+				projectSkills: project.projectSkills,
+				skills: [],
+				diagnostics: [],
+				error: errorText(err),
+			});
+		}
+	}
+
+	/** 解析本轮技能：body.skill 或 prompt 开头的 /skill:name；返回发送文本与 meta.skill。 */
+	async function resolveSkillForSend(record, selectedSkill, prompt) {
+		const promptMatch = /^\/skill:([^\s]+)/.exec(prompt);
+		let name = promptMatch ? promptMatch[1] : "";
+		const fromPrompt = Boolean(promptMatch);
+		if (!name && typeof selectedSkill === "string" && selectedSkill.trim()) {
+			name = selectedSkill.trim().replace(/^\/?skill:/, "");
+		}
+		if (!name) return { userText: prompt, skill: null, displayText: prompt };
+
+		let commands;
+		try {
+			commands = await getSkillCommands(record);
+		} catch (err) {
+			if (fromPrompt) return { userText: prompt, skill: { name, chars: null, warning: false }, displayText: prompt };
+			throw httpError(502, `读取技能列表失败：${err.message}`);
+		}
+		const found = commands.find((command) => command.name === name);
+		if (!found) {
+			// 直输不存在的技能：按 pi 行为原样透传
+			if (fromPrompt) return { userText: prompt, skill: { name, chars: null, warning: false }, displayText: prompt };
+			throw httpError(400, `技能不存在：${name}`);
+		}
+		const file = readSkillFile(found.filePath);
+		if (file.chars !== null && file.chars > SKILL_MAX_CHARS) {
+			throw httpError(400, "技能正文过大，请在 SKILL.md 里拆分或精简");
+		}
+		const skill = { name: found.name, chars: file.chars, warning: file.chars !== null && file.chars > SKILL_WARN_CHARS };
+		return { userText: fromPrompt ? prompt : `/skill:${found.name}\n\n${prompt}`, skill, displayText: prompt };
 	}
 
 	function writeSse(res, event, data) {
@@ -740,6 +987,9 @@ export function createChatHost(deps = {}) {
 		const prompt = typeof payload.prompt === "string" ? payload.prompt.trim() : "";
 		if (!prompt) throw httpError(400, "prompt 不能为空");
 		if (prompt.length > PROMPT_MAX_CHARS) throw httpError(400, `prompt 超过 ${PROMPT_MAX_CHARS} 字符`);
+		if (payload.skill !== undefined && payload.skill !== null && typeof payload.skill !== "string") {
+			throw httpError(400, "skill 需为字符串");
+		}
 		const requestedThread = payload.threadId ?? null;
 		if (requestedThread !== null && !isSafeThreadId(requestedThread)) throw httpError(400, "非法线程 id");
 
@@ -787,12 +1037,31 @@ export function createChatHost(deps = {}) {
 			}
 			const state = await readChildState(record);
 
+			// 技能：body.skill 拼 /skill: 前缀；直输 /skill:name 原样透传并做大小守卫。
+			const resolved = await resolveSkillForSend(record, payload.skill, prompt);
+			const userOrdinal = countUserOrdinal(record);
+			// 先写 sidecar 再 prompt：显示文本/技能/模型由它保存；写失败只记日志，不阻断对话。
+			try {
+				upsertTurn(record.metaDir, {
+					ordinal: userOrdinal,
+					displayText: resolved.displayText,
+					contextRefs: [],
+					skill: resolved.skill,
+					profile: record.profile,
+					model: modelOfState(state.data?.model),
+				});
+			} catch (err) {
+				log(`[chat] turns 写入失败：${err.message}`);
+			}
+
 			res.writeHead(200, SSE_HEADERS);
 			headersSent = true;
 			writeSse(res, "meta", {
 				threadId: record.piSessionId,
+				userOrdinal,
 				model: modelOfState(state.data?.model),
 				profile: record.profile,
+				skill: resolved.skill,
 			});
 
 			turn.ping = setInterval(() => {
@@ -882,7 +1151,7 @@ export function createChatHost(deps = {}) {
 			};
 			res.on("close", onClose);
 
-			const accepted = await record.child.send({ type: "prompt", message: prompt }, { timeoutMs: 30_000 });
+			const accepted = await record.child.send({ type: "prompt", message: resolved.userText }, { timeoutMs: 30_000 });
 			if (accepted.data?.disposition === "handled") {
 				// 扩展命令/输入处理器消费了 prompt：不会再有 agent_end，直接收尾。
 				finish("done", { stopReason: "stop", usage: null, durationMs: null });
@@ -961,7 +1230,7 @@ export function createChatHost(deps = {}) {
 				fileRecord,
 				target,
 				record,
-				profile: DEFAULT_PROFILE,
+				profile: record?.profile ?? projectOf(target, record).profile,
 			}),
 		);
 	}
@@ -1138,6 +1407,26 @@ export function createChatHost(deps = {}) {
 					return true;
 				}
 				sendJson(res, 405, { error: "method not allowed" });
+				return true;
+			}
+			if (url.pathname === "/api/chat/settings") {
+				if (req.method === "GET") {
+					await handleGetSettings(url, res, sendJson);
+					return true;
+				}
+				if (req.method === "POST") {
+					await handlePostSettings(body, res, sendJson);
+					return true;
+				}
+				sendJson(res, 405, { error: "method not allowed" });
+				return true;
+			}
+			if (url.pathname === "/api/chat/skills") {
+				if (req.method !== "GET") {
+					sendJson(res, 405, { error: "method not allowed" });
+					return true;
+				}
+				await handleGetSkills(url, res, sendJson);
 				return true;
 			}
 			if (url.pathname === "/api/chat/models") {

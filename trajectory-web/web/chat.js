@@ -5,15 +5,20 @@
  *       GET /api/chat/thread、GET /api/chat/capabilities。
  * 本阶段（T3）只做流式与消息渲染；模型/技能/上下文/审批在后续阶段接入。
  */
-import { filterPaletteItems, formatContextWindow, isCurrentTurn, modelLabel, parseSseChunk, parseSseData } from "./chat-lib.js";
+import { filterPaletteItems, formatChars, formatContextWindow, isCurrentTurn, modelLabel, parseSseChunk, parseSseData } from "./chat-lib.js";
 import { fmtTokens } from "./lib.js";
 
 const PROMPT_MAX = 32000;
 const RENDER_MIN_MS = 80;
 const MODELS_TTL_MS = 5000;
+const SKILL_WARN_CHARS = 32_000;
+const SKILL_MAX_CHARS = 200_000;
 const PROFILE_LABEL = { "no-tools": "仅轨迹工具", "read-only": "只读", full: "全量工具" };
+const SKILL_SCOPE_LABEL = { user: "全局技能", project: "项目技能", temporary: "临时技能", path: "路径技能" };
+const SKILL_SCOPE_ORDER = { user: 0, project: 1, temporary: 2, path: 3 };
 const COMMAND_ITEMS = Object.freeze([
 	{ id: "model", label: "模型", hint: "选择当前线程的模型", group: "命令", search: "model 模型" },
+	{ id: "skill", label: "技能", hint: "选择技能（发送时由 pi 展开）", group: "命令", search: "skill 技能" },
 ]);
 
 /** 对话栏。deps: {el,h,mdNode,getSession,autoGrowInput}（后续阶段再扩）。 */
@@ -56,6 +61,14 @@ export function initChatPanel(deps) {
 		modelsAt: 0,
 		modelsError: null,
 		palette: null,
+		// 设置与技能
+		settings: { profile: "read-only", projectSkills: false },
+		settingsBusy: false,
+		skills: [],
+		skillsKey: null,
+		skillsError: null,
+		skillsDiagnostics: [],
+		skill: null,
 	};
 
 	const localId = (kind) => `local-${kind}-${++localSeq}`;
@@ -162,7 +175,76 @@ export function initChatPanel(deps) {
 		if (!state.open) return;
 		if (state.enabled === null) await loadCapabilities();
 		if (state.enabled === false) return;
+		await loadSettings();
 		await loadThread();
+	}
+
+	/** 当前项目的 profile / projectSkills。 */
+	async function loadSettings() {
+		const session = currentSession();
+		if (!session || state.enabled === false) return;
+		try {
+			const params = new URLSearchParams({ source: session.source, session: session.id });
+			const res = await fetch(`/api/chat/settings?${params}`);
+			if (!res.ok) return;
+			const data = await res.json();
+			state.settings = { profile: data.profile ?? "read-only", projectSkills: data.projectSkills === true };
+			state.profile = state.settings.profile;
+			renderHead();
+		} catch {
+			/* 读失败保留默认值 */
+		}
+	}
+
+	/** 技能列表；refresh 会重启 child 重新发现（服务端 60s 缓存，refresh 绕过）。 */
+	async function loadSkills({ refresh = false } = {}) {
+		const session = currentSession();
+		if (!session || state.enabled !== true) return null;
+		const key = currentKey();
+		const palette = state.palette;
+		if (palette) {
+			if (palette.loading) return null;
+			palette.loading = true;
+			palette.error = null;
+			palette.confirm = null;
+			renderPalette();
+		}
+		try {
+			const params = new URLSearchParams({ source: session.source, session: session.id });
+			if (refresh) params.set("refresh", "1");
+			const res = await fetch(`/api/chat/skills?${params}`);
+			if (!res.ok) {
+				let message = `HTTP ${res.status}`;
+				try {
+					message = (await res.json())?.error ?? message;
+				} catch {
+					/* 非 JSON 错误体 */
+				}
+				throw new Error(message);
+			}
+			const data = await res.json();
+			if (currentKey() !== key) return null;
+			state.skills = Array.isArray(data.skills) ? data.skills : [];
+			state.skillsKey = key;
+			state.skillsError = typeof data.error === "string" && data.error ? data.error : null;
+			state.skillsDiagnostics = Array.isArray(data.diagnostics) ? data.diagnostics : [];
+			state.settings.projectSkills = data.projectSkills === true;
+			if (palette) {
+				palette.loading = false;
+				palette.error = null;
+			}
+			renderPalette();
+			return state.skills;
+		} catch (err) {
+			if (currentKey() !== key) return null;
+			state.skillsError = err.message;
+			if (palette) {
+				palette.loading = false;
+				palette.error = `读取技能失败：${err.message}`;
+			}
+			renderPalette();
+			return null;
+		}
 	}
 
 	/** 模型列表：5 秒缓存；打开面板时传 refresh=1（服务端走 pi 的可用性检查，失败保留 last-good）。 */
@@ -274,7 +356,10 @@ export function initChatPanel(deps) {
 	function userMeta(message) {
 		const parts = [];
 		if (Array.isArray(message.context) && message.context.length) parts.push(`上下文 ${message.context.length}`);
-		if (message.skill) parts.push(`技能 ${message.skill}`);
+		if (message.skill) {
+			const name = typeof message.skill === "string" ? message.skill : message.skill.name;
+			if (name) parts.push(`技能 ${name}`);
+		}
 		return parts.join(" · ");
 	}
 
@@ -363,6 +448,7 @@ export function initChatPanel(deps) {
 		renderHead();
 		renderMessages();
 		renderComposer();
+		renderSkillChip();
 		updateSendButton();
 		updateA11y();
 		renderPalette();
@@ -418,11 +504,15 @@ export function initChatPanel(deps) {
 	}
 
 	// ------------------------------------------------------------------
-	// 斜杠面板：command 层（模型）→ model 层
+	// 斜杠面板：command 层 → 模型 / 技能层
 	// ------------------------------------------------------------------
 
 	function commandQuery() {
 		return String(input?.value ?? "").replace(/^\//, "");
+	}
+
+	function skillScopeLabel(scope) {
+		return SKILL_SCOPE_LABEL[scope] ?? "其它技能";
 	}
 
 	function paletteModelItems() {
@@ -446,7 +536,35 @@ export function initChatPanel(deps) {
 	function paletteItems() {
 		if (!state.palette) return [];
 		if (state.palette.layer === "command") return filterPaletteItems(COMMAND_ITEMS, commandQuery());
+		if (state.palette.layer === "skill") return filterPaletteItems(paletteSkillItems(), input?.value ?? "");
 		return filterPaletteItems(paletteModelItems(), input?.value ?? "");
+	}
+
+	function paletteSkillItems() {
+		return state.skills
+			.map((skill) => {
+				const chars = Number.isFinite(skill.chars) ? skill.chars : null;
+				const warning = chars !== null && chars > SKILL_WARN_CHARS;
+				const disabled = chars !== null && chars > SKILL_MAX_CHARS;
+				return {
+					kind: "skill",
+					name: skill.name,
+					label: skill.name,
+					scope: skill.scope ?? null,
+					group: skillScopeLabel(skill.scope),
+					search: [skill.name, skill.description, skill.scope, skill.source].filter(Boolean).join(" "),
+					description: typeof skill.description === "string" ? skill.description : "",
+					chars,
+					warning,
+					disabled,
+					disableModelInvocation: skill.disableModelInvocation === true,
+					skill,
+				};
+			})
+			.sort(
+				(a, b) =>
+					(SKILL_SCOPE_ORDER[a.scope] ?? 9) - (SKILL_SCOPE_ORDER[b.scope] ?? 9) || a.label.localeCompare(b.label),
+			);
 	}
 
 	function renderPalette() {
@@ -458,20 +576,64 @@ export function initChatPanel(deps) {
 		}
 		paletteEl.hidden = false;
 		const layer = state.palette.layer;
-		paletteEl.setAttribute("aria-label", layer === "model" ? "选择模型" : "斜杠命令");
+		paletteEl.setAttribute("aria-label", layer === "model" ? "选择模型" : layer === "skill" ? "选择技能" : "斜杠命令");
+		const nodes = [];
+
+		if (layer === "skill" && state.palette.confirm) {
+			const item = state.palette.confirm;
+			nodes.push(
+				h(
+					"div",
+					{ class: "chat-palette-confirm" },
+					h("div", { class: "chat-palette-confirm-text", text: `技能正文 ${formatChars(item.chars)} 字符，可能超出上下文，仍要发送？` }),
+					h(
+						"div",
+						{ class: "chat-palette-confirm-actions" },
+						h("button", { class: "chat-palette-confirm-yes", type: "button", dataset: { skillConfirm: "yes" }, text: "仍要使用" }),
+						h("button", { class: "chat-palette-confirm-no", type: "button", dataset: { skillConfirm: "no" }, text: "取消" }),
+					),
+				),
+			);
+			paletteEl.replaceChildren(...nodes);
+			return;
+		}
+
+		if (layer === "skill") {
+			const toggle = h(
+				"button",
+				{
+					class: `chat-palette-switch${state.settings.projectSkills ? " is-on" : ""}`,
+					type: "button",
+					role: "switch",
+					"aria-checked": String(state.settings.projectSkills),
+					dataset: { settingsToggle: "projectSkills" },
+					title: "会加载该项目的技能文件，可能包含第三方提示词",
+				},
+				h("span", { class: "chat-palette-switch-label", text: "使用本项目技能" }),
+				h("span", { class: "chat-palette-switch-track", "aria-hidden": "true" }, h("span", { class: "chat-palette-switch-thumb" })),
+			);
+			if (state.settingsBusy) toggle.disabled = true;
+			nodes.push(toggle);
+		}
+
 		const items = paletteItems();
 		if (state.palette.index >= items.length) state.palette.index = Math.max(0, items.length - 1);
-		const nodes = [];
 		if (layer === "model" && state.palette.loading) nodes.push(h("div", { class: "chat-palette-loading", text: "正在加载模型…" }));
-		if (layer === "model" && state.palette.error) nodes.push(h("div", { class: "chat-palette-error", text: state.palette.error }));
+		if (layer === "skill" && state.palette.loading) nodes.push(h("div", { class: "chat-palette-loading", text: "正在加载技能…" }));
+		if (state.palette.error) nodes.push(h("div", { class: "chat-palette-error", text: state.palette.error }));
 		if (layer === "model" && state.modelsError) nodes.push(h("div", { class: "chat-palette-error", text: `模型刷新失败：${state.modelsError}` }));
-		if (!items.length && !(layer === "model" && state.palette.loading)) {
+		if (layer === "skill" && state.skillsError) nodes.push(h("div", { class: "chat-palette-error", text: `技能刷新失败：${state.skillsError}` }));
+		if (!items.length && !state.palette.loading) {
 			const text =
 				layer === "model"
 					? state.models.length || state.modelsError
 						? "没有匹配的模型"
 						: "pi 没有可用模型，先在 models.json / 登录里配置"
-					: "没有匹配的命令";
+					: layer === "skill"
+						? state.skills.length || state.skillsError
+							? "没有匹配的技能"
+							: "pi 没有发现技能（检查 ~/.pi/agent/skills 或项目 .pi/skills）"
+						: "没有匹配的命令";
 			nodes.push(h("div", { class: "chat-palette-empty", text }));
 		}
 		let group = null;
@@ -480,6 +642,33 @@ export function initChatPanel(deps) {
 			if (item.group !== group) {
 				nodes.push(h("div", { class: "chat-palette-group", text: item.group }));
 				group = item.group;
+			}
+			if (layer === "skill") {
+				const current = state.skill?.name === item.name;
+				const title = item.disabled
+					? `技能正文 ${formatChars(item.chars)} 字符 > 200k，请在 SKILL.md 里拆分或精简`
+					: item.description || item.name;
+				nodes.push(
+					h(
+						"button",
+						{
+							class: `chat-palette-item${index === state.palette.index ? " is-active" : ""}${item.disabled ? " is-disabled" : ""}`,
+							type: "button",
+							role: "option",
+							"aria-selected": String(index === state.palette.index),
+							"aria-disabled": item.disabled ? "true" : undefined,
+							disabled: item.disabled,
+							title,
+							dataset: { paletteIndex: String(index) },
+						},
+						h("span", { class: "chat-palette-check", "aria-hidden": "true", text: current ? "✓" : "" }),
+						h("span", { class: "chat-palette-label", text: item.label }),
+						item.disableModelInvocation ? h("span", { class: "chat-palette-badge", text: "仅手动" }) : null,
+						item.chars !== null ? h("span", { class: `chat-palette-hint${item.warning ? " is-warn" : ""}`, text: formatChars(item.chars) }) : null,
+					),
+				);
+				index++;
+				continue;
 			}
 			const current = layer === "model" && state.model && item.provider === state.model.provider && item.id === state.model.id;
 			nodes.push(
@@ -505,11 +694,18 @@ export function initChatPanel(deps) {
 	function openPalette(layer, { draft = null } = {}) {
 		if (!currentSession() || state.enabled !== true) return;
 		const previousDraft = draft ?? state.palette?.draft ?? input?.value ?? "";
-		state.palette = { layer, index: 0, draft: previousDraft, loading: false, error: null, busy: false };
-		if (layer === "model" && input) {
-			input.value = "";
-			deps.autoGrowInput?.();
-			void loadModels({ refresh: true });
+		state.palette = { layer, index: 0, draft: previousDraft, loading: false, error: null, busy: false, confirm: null };
+		if (layer === "model" || layer === "skill") {
+			if (input) {
+				input.value = "";
+				deps.autoGrowInput?.();
+			}
+			if (layer === "model") void loadModels({ refresh: true });
+			else {
+				// 首次/切会话带 refresh=1（重新发现技能）；同一会话用服务端 60s 缓存
+				const first = state.skillsKey !== currentKey();
+				void loadSkills({ refresh: first });
+			}
 		}
 		renderPalette();
 		updateSendButton();
@@ -544,11 +740,17 @@ export function initChatPanel(deps) {
 
 	function paletteEscape() {
 		if (!state.palette) return;
-		if (state.palette.layer === "model") backToCommandLayer();
+		if (state.palette.confirm) {
+			state.palette.confirm = null;
+			renderPalette();
+			return;
+		}
+		if (state.palette.layer !== "command") backToCommandLayer();
 		else closePalette({ restore: true });
 	}
 
 	function movePalette(delta) {
+		if (state.palette?.confirm) return;
 		const items = paletteItems();
 		if (!state.palette || !items.length) return;
 		state.palette.index = (state.palette.index + delta + items.length) % items.length;
@@ -557,14 +759,120 @@ export function initChatPanel(deps) {
 
 	async function activatePalette() {
 		if (!state.palette || state.palette.busy) return;
+		if (state.palette.confirm) {
+			applySkill(state.palette.confirm);
+			return;
+		}
 		const items = paletteItems();
 		if (!items.length) return;
 		const item = items[state.palette.index] ?? items[0];
 		if (state.palette.layer === "command") {
 			if (item.id === "model") openPalette("model", { draft: state.palette.draft });
+			else if (item.id === "skill") openPalette("skill", { draft: state.palette.draft });
+			return;
+		}
+		if (state.palette.layer === "skill") {
+			pickSkill(item);
 			return;
 		}
 		await selectModel(item.model);
+	}
+
+	function pickSkill(item) {
+		if (!state.palette || !item) return;
+		if (item.disabled) {
+			state.palette.error = "技能正文过大，请在 SKILL.md 里拆分或精简";
+			renderPalette();
+			return;
+		}
+		if (item.warning) {
+			state.palette.confirm = item;
+			renderPalette();
+			return;
+		}
+		applySkill(item);
+	}
+
+	function applySkill(item) {
+		if (!item) return;
+		state.skill = { name: item.name, chars: item.chars ?? null, warning: item.warning === true };
+		closePalette({ clearInput: true });
+		renderSkillChip();
+		updateSendButton();
+	}
+
+	async function toggleProjectSkills() {
+		if (!state.palette || state.settingsBusy) return;
+		if (state.streaming) {
+			pushNotice("回复中，先停止", "warn");
+			flushRender();
+			return;
+		}
+		const session = currentSession();
+		if (!session) return;
+		const next = !state.settings.projectSkills;
+		state.settingsBusy = true;
+		renderPalette();
+		try {
+			const res = await fetch("/api/chat/settings", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ source: session.source, session: session.id, profile: state.settings.profile, projectSkills: next }),
+			});
+			if (!res.ok) {
+				let message = `HTTP ${res.status}`;
+				try {
+					message = (await res.json())?.error ?? message;
+				} catch {
+					/* 非 JSON 错误体 */
+				}
+				throw new Error(message);
+			}
+			const data = await res.json();
+			state.settings = { profile: data.profile ?? state.settings.profile, projectSkills: data.projectSkills === true };
+			state.profile = state.settings.profile;
+			pushNotice("对话进程已重启");
+			const skills = await loadSkills({ refresh: true });
+			if (state.skill && Array.isArray(skills) && !skills.some((item) => item.name === state.skill.name)) {
+				state.skill = null;
+				renderSkillChip();
+			}
+			renderHead();
+			flushRender();
+		} catch (err) {
+			if (state.palette) state.palette.error = `切换项目技能失败：${err.message}`;
+			renderPalette();
+		} finally {
+			state.settingsBusy = false;
+			renderPalette();
+		}
+	}
+
+	function renderSkillChip() {
+		const box = el("chat-skill");
+		if (!box) return;
+		if (!state.skill) {
+			box.hidden = true;
+			box.replaceChildren();
+			return;
+		}
+		box.hidden = false;
+		const remove = h("button", {
+			class: "chat-skill-remove",
+			type: "button",
+			title: "移除技能",
+			"aria-label": `移除技能 ${state.skill.name}`,
+			text: "×",
+		});
+		remove.addEventListener("click", () => {
+			state.skill = null;
+			renderSkillChip();
+			updateSendButton();
+		});
+		box.replaceChildren(
+			h("span", { class: "chat-skill-label", text: `技能：${state.skill.name}${state.skill.warning ? "（较大）" : ""}` }),
+			remove,
+		);
 	}
 
 	async function selectModel(model) {
@@ -789,6 +1097,13 @@ export function initChatPanel(deps) {
 				if (data.threadId) state.threadId = data.threadId;
 				if (data.model) state.model = data.model;
 				if (data.profile) state.profile = data.profile;
+				const user = state.messages.find((message) => turn.ids.has(message.id) && message.role === "user");
+				if (user && "skill" in data) user.skill = data.skill ?? null;
+				// 发送被 pi 接受：技能 chip 清除（失败在 meta 之前，会保留）
+				if (state.skill) {
+					state.skill = null;
+					renderSkillChip();
+				}
 				const assistant = ensureAssistant(turn);
 				assistant.model = state.model;
 				renderHead();
@@ -885,7 +1200,13 @@ export function initChatPanel(deps) {
 		const assistantId = localId("a");
 		turn.ids.add(userId);
 		turn.ids.add(assistantId);
-		state.messages.push({ id: userId, role: "user", displayText: text, ts: new Date().toISOString() });
+		state.messages.push({
+			id: userId,
+			role: "user",
+			displayText: text,
+			ts: new Date().toISOString(),
+			skill: state.skill ? { name: state.skill.name, chars: state.skill.chars, warning: state.skill.warning } : null,
+		});
 		state.messages.push({
 			id: assistantId,
 			role: "assistant",
@@ -910,6 +1231,7 @@ export function initChatPanel(deps) {
 					session: session.id,
 					threadId: state.threadId ?? null,
 					prompt: text,
+					skill: state.skill?.name ?? undefined,
 				}),
 				signal: controller.signal,
 			});
@@ -970,7 +1292,7 @@ export function initChatPanel(deps) {
 			deps.autoGrowInput?.();
 			updateSendButton();
 			const value = input.value;
-			if (state.palette?.layer === "model") {
+			if (state.palette?.layer === "model" || state.palette?.layer === "skill") {
 				state.palette.index = 0;
 				renderPalette();
 				return;
@@ -1023,6 +1345,20 @@ export function initChatPanel(deps) {
 	}
 	if (paletteEl) {
 		paletteEl.addEventListener("click", (e) => {
+			const toggle = e.target.closest?.("[data-settings-toggle]");
+			if (toggle) {
+				void toggleProjectSkills();
+				return;
+			}
+			const confirm = e.target.closest?.("[data-skill-confirm]");
+			if (confirm) {
+				if (confirm.dataset.skillConfirm === "yes" && state.palette?.confirm) applySkill(state.palette.confirm);
+				else if (state.palette) {
+					state.palette.confirm = null;
+					renderPalette();
+				}
+				return;
+			}
 			const row = e.target.closest?.("[data-palette-index]");
 			if (!row || !state.palette) return;
 			state.palette.index = Number(row.dataset.paletteIndex) || 0;
@@ -1071,6 +1407,13 @@ export function initChatPanel(deps) {
 			state.models = [];
 			state.modelsAt = 0;
 			state.modelsError = null;
+			state.settings = { profile: "read-only", projectSkills: false };
+			state.settingsBusy = false;
+			state.skills = [];
+			state.skillsKey = null;
+			state.skillsError = null;
+			state.skillsDiagnostics = [];
+			state.skill = null;
 			state.thread = null;
 			state.threadId = null;
 			state.model = null;

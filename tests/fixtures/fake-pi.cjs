@@ -39,6 +39,8 @@ const sessionIdArg = args.indexOf("--session-id");
 const sessionFileArg = args.indexOf("--session");
 if (sessionIdArg >= 0 && args[sessionIdArg + 1]) sessionId = args[sessionIdArg + 1];
 else if (sessionFileArg >= 0 && args[sessionFileArg + 1]) sessionId = sessionIdFromFile(args[sessionFileArg + 1]);
+// get_state().sessionFile：`--session` 时指向真实文件（供 host 统计投影），否则给一个不存在的占位路径。
+let sessionFile = sessionFileArg >= 0 && args[sessionFileArg + 1] ? args[sessionFileArg + 1] : `/tmp/fake-chat/${sessionId}.jsonl`;
 
 /** 测试用 trace：switch_session / set_model / get_available_models 写入指定文件。 */
 function trace(line) {
@@ -50,6 +52,15 @@ function trace(line) {
 		/* trace 失败不影响 RPC */
 	}
 }
+
+trace(`spawn:${args.join(" ")}`);
+
+/** 测试技能目录：FAKE_PI_SKILL_DIR 下按 name/SKILL.md 布局。 */
+const skillRoot = process.env.FAKE_PI_SKILL_DIR ?? "/tmp/fake-skills";
+const skillInfo = (name, scope) => {
+	const baseDir = path.join(skillRoot, name);
+	return { path: path.join(baseDir, "SKILL.md"), baseDir, scope, origin: "top-level", source: "local" };
+};
 
 /** 两个模型 + 故意混入敏感字段，用于验证服务端 allowlist 裁剪。 */
 const models = [
@@ -111,7 +122,7 @@ function state() {
 		steeringMode: "all",
 		followUpMode: "all",
 		sessionId,
-		sessionFile: `/tmp/fake-chat/${sessionId}.jsonl`,
+		sessionFile,
 		sessionName: undefined,
 		autoCompactionEnabled: true,
 		messageCount: 0,
@@ -221,13 +232,29 @@ rl.on("line", (line) => {
 			reply(command, { models });
 			break;
 		case "get_commands":
+			if (process.env.FAKE_PI_COMMANDS_FAIL && fs.existsSync(process.env.FAKE_PI_COMMANDS_FAIL)) {
+				fail(command, "commands failed");
+				break;
+			}
 			reply(command, {
 				commands: [
 					{
 						name: "skill:demo",
 						description: "demo skill",
 						source: "skill",
-						sourceInfo: { path: "/tmp/fake-skills/demo/SKILL.md", scope: "user", origin: "top-level", baseDir: "/tmp/fake-skills/demo", source: "local" },
+						sourceInfo: skillInfo("demo", "user"),
+					},
+					{
+						name: "skill:big",
+						description: "big skill",
+						source: "skill",
+						sourceInfo: skillInfo("big", "project"),
+					},
+					{
+						name: "skill:huge",
+						description: "huge skill",
+						source: "skill",
+						sourceInfo: skillInfo("huge", "project"),
 					},
 					{
 						name: "hello",
@@ -247,10 +274,12 @@ rl.on("line", (line) => {
 		}
 		case "new_session":
 			sessionId = `fake-session-${++sessionSeq + 1}`;
+			sessionFile = `/tmp/fake-chat/${sessionId}.jsonl`;
 			reply(command, { cancelled: false });
 			break;
 		case "switch_session":
 			sessionId = sessionIdFromFile(String(command.sessionPath ?? "")) || sessionId;
+			sessionFile = typeof command.sessionPath === "string" && command.sessionPath ? command.sessionPath : sessionFile;
 			trace(`switch_session:${command.sessionPath}`);
 			reply(command, {});
 			break;
@@ -259,6 +288,7 @@ rl.on("line", (line) => {
 				fail(command, "agent is already processing");
 				break;
 			}
+			trace(`prompt:${JSON.stringify(String(command.message ?? ""))}`);
 			reply(command, { disposition: "started" });
 			streamPrompt(command);
 			break;

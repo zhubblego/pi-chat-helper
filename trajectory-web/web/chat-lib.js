@@ -131,3 +131,13 @@ export function filterPaletteItems(items, query) {
 		return terms.every((term) => hay.includes(term));
 	});
 }
+
+/** 技能字符数展示：900 / 1.8k / 236k / 1.2M。 */
+export function formatChars(n) {
+	if (n === null || n === undefined || n === "") return "";
+	const value = Number(n);
+	if (!Number.isFinite(value) || value < 0) return "";
+	if (value < 1000) return String(Math.round(value));
+	if (value < 1_000_000) return `${Number((value / 1000).toFixed(1))}k`;
+	return `${Number((value / 1_000_000).toFixed(1))}M`;
+}

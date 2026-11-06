@@ -14,7 +14,7 @@ const check = (label, cond, extra = "") => {
 	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, buildAgentTree, deriveInfo, deriveTargets, deriveTaskName, DERIVE_TOOL, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments, hitSnippet } = lib;
 
 	// ---- SSE 解析（chat-lib.js） ----
-	const { parseSseChunk, parseSseData, chatSessionRef, isCurrentTurn, modelLabel, formatContextWindow, filterPaletteItems } = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "chat-lib.js")).href);
+	const { parseSseChunk, parseSseData, chatSessionRef, isCurrentTurn, modelLabel, formatChars, formatContextWindow, filterPaletteItems } = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "chat-lib.js")).href);
 	const sseOne = parseSseChunk('event: meta\ndata: {"a":1}\n\n');
 	check("SSE：单事件", sseOne.events.length === 1 && sseOne.events[0].event === "meta" && sseOne.rest === "", JSON.stringify(sseOne));
 	check("SSE：data 可 JSON 解析", parseSseData(sseOne.events[0])?.a === 1);
@@ -89,6 +89,15 @@ const check = (label, cond, extra = "") => {
 			filterPaletteItems(paletteItems, "claude-sonnet").length === 1,
 	);
 	check("filterPaletteItems：无匹配空数组", filterPaletteItems(paletteItems, "zzz").length === 0);
+	check(
+		"formatChars：900 / 1.8k / 236k / 1.2M / 空值",
+		formatChars(900) === "900" &&
+			formatChars(1800) === "1.8k" &&
+			formatChars(236000) === "236k" &&
+			formatChars(1200000) === "1.2M" &&
+			formatChars(null) === "" &&
+			formatChars(NaN) === "",
+	);
 
 	// ---- 搜索高亮切分 ----
 	check("高亮：单词命中切分", JSON.stringify(highlightSegments("hello world npm", ["npm"])) === JSON.stringify([{ text: "hello world ", hit: false }, { text: "npm", hit: true }]));
@@ -440,6 +449,43 @@ const check = (label, cond, extra = "") => {
 			styleSource.includes(".chat-palette-item.is-active") &&
 			styleSource.includes(".chat-model::before") &&
 			styleSource.includes(".chat-model.is-reasoning::before"),
+	);
+	check(
+		"技能面板接线：command 技能项 / skill 层 / 开关 / 大小守卫",
+		chatSource.includes('id: "skill"') &&
+			chatSource.includes('openPalette("skill"') &&
+			chatSource.includes("function paletteSkillItems") &&
+			chatSource.includes("function toggleProjectSkills") &&
+			chatSource.includes("SKILL_WARN_CHARS") &&
+			chatSource.includes("SKILL_MAX_CHARS") &&
+			chatSource.includes('dataset: { settingsToggle: "projectSkills" }') &&
+			chatSource.includes("function pickSkill") &&
+			chatSource.includes("data-skill-confirm") &&
+			!chatSource.includes("window.confirm") &&
+			!chatSource.includes("globalThis.confirm"),
+	);
+	check(
+		"技能设置接口接线：GET/POST settings + GET skills refresh",
+		chatSource.includes("/api/chat/settings?") &&
+			chatSource.includes('fetch("/api/chat/settings"') &&
+			chatSource.includes("/api/chat/skills?") &&
+			chatSource.includes("refresh: first") &&
+			chatSource.includes('params.set("refresh", "1")'),
+	);
+	check(
+		"技能 chip：选中/移除/发送 body.skill/meta 更新",
+		indexSource.includes('id="chat-skill"') &&
+			chatSource.includes("function renderSkillChip") &&
+			chatSource.includes("chat-skill-remove") &&
+			chatSource.includes("skill: state.skill?.name ?? undefined") &&
+			chatSource.includes('"skill" in data') &&
+			chatSource.includes("user.skill = data.skill ?? null"),
+	);
+	check(
+		"技能/开关样式就位",
+		[".chat-palette-switch", ".chat-palette-switch.is-on", ".chat-palette-badge", ".chat-palette-item.is-disabled", ".chat-palette-hint.is-warn", ".chat-palette-confirm", ".chat-skill-remove"].every(
+			(sel) => styleSource.includes(sel),
+		),
 	);
 	check("对话头/上下文/面板/技能占位就位", ["chat-head", "chat-model", "chat-profile", "chat-context", "chat-palette", "chat-skill"].every((id) => indexSource.includes(`id="${id}"`)));
 	check("对话栏消息仍走 markdown 渲染", chatSource.includes("mdNode(String(message.text))"));

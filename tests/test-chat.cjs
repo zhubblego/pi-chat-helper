@@ -16,6 +16,19 @@ const WEB = path.join(ROOT, "trajectory-web", "web");
 const urlOf = (rel) => pathToFileURL(path.join(ROOT, rel)).href;
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tw-chat-"));
 
+// 技能夹具：demo（小 + 仅手动）、big（33k）、huge（200001）。
+const skillRoot = path.join(tmp, "skill-fixtures");
+const skillFile = (name, content) => {
+	const dir = path.join(skillRoot, name);
+	fs.mkdirSync(dir, { recursive: true });
+	fs.writeFileSync(path.join(dir, "SKILL.md"), content);
+	return dir;
+};
+skillFile("demo", "---\nname: demo\ndescription: demo skill\ndisable-model-invocation: true\n---\n\n# Demo\n短技能。\n");
+skillFile("big", `---\nname: big\ndescription: big skill\n---\n\n${"x".repeat(33000)}`);
+skillFile("huge", `---\nname: huge\ndescription: huge skill\n---\n\n${"x".repeat(200001)}`);
+process.env.FAKE_PI_SKILL_DIR = skillRoot;
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function postJson(url, body) {
@@ -133,6 +146,7 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 	const { parsePiVersion, versionAtLeast, resolvePiCandidates, piRpcArgs, probeFirstPi } = await import(urlOf("trajectory-web/server/pi-binary.mjs"));
 	const { RpcChild, createChatHost, checkChatDir, isPathInside, resolveAgentDir, sanitizeModel, providerNameOf } = await import(urlOf("trajectory-web/server/chat-host.mjs"));
 	const chatSession = await import(urlOf("trajectory-web/server/chat-session.mjs"));
+	const chatSettings = await import(urlOf("trajectory-web/server/chat-settings.mjs"));
 	const { buildProjection } = await import(urlOf("trajectory-web/server/session.mjs"));
 
 	// ---- 版本解析 ----
@@ -274,6 +288,37 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 	);
 	check("readSessionModel：缺失文件返回 null", chatSession.readSessionModel(path.join(tmp, "no-session.jsonl")) === null);
 
+	// ---- 设置：默认值 / 损坏回退 / 按项目分键 / 原子写 ----
+	const settingsFile = path.join(tmp, "settings-unit.json");
+	const defaults = chatSettings.projectSettings(chatSettings.readSettings(settingsFile), "pi", "/tmp/proj");
+	check("settings：文件缺失时默认 read-only/false", defaults.profile === "read-only" && defaults.projectSkills === false, JSON.stringify(defaults));
+	fs.writeFileSync(settingsFile, "{not-json");
+	const corrupt = chatSettings.projectSettings(chatSettings.readSettings(settingsFile), "pi", "/tmp/proj");
+	check("settings：损坏 JSON 回退默认", corrupt.profile === "read-only" && corrupt.projectSkills === false);
+	chatSettings.updateProjectSettings(settingsFile, { source: "pi", projectPath: "/tmp/proj", patch: { profile: "full", projectSkills: true } });
+	const saved = chatSettings.projectSettings(chatSettings.readSettings(settingsFile), "pi", "/tmp/proj");
+	check("settings：按项目键写入并读回", saved.profile === "full" && saved.projectSkills === true, JSON.stringify(saved));
+	chatSettings.updateProjectSettings(settingsFile, { source: "pi", projectPath: "/tmp/proj", patch: { projectSkills: false } });
+	const merged = chatSettings.projectSettings(chatSettings.readSettings(settingsFile), "pi", "/tmp/proj");
+	check("settings：patch 未提供的字段保留", merged.profile === "full" && merged.projectSkills === false, JSON.stringify(merged));
+	check("settings：非法 profile 读回时归一", chatSettings.readSettings((() => {
+		const bad = path.join(tmp, "settings-bad-profile.json");
+		fs.writeFileSync(bad, JSON.stringify({ version: 1, projects: { "pi:/tmp/proj": { profile: "bogus", projectSkills: "yes" } } }));
+		return bad;
+	})()).projects["pi:/tmp/proj"].profile === "read-only");
+
+	// ---- turns：同 ordinal 覆盖（后写胜） ----
+	const upsertDir = path.join(tmp, "turns-upsert");
+	chatSession.appendTurn(upsertDir, { ordinal: 1, displayText: "旧" });
+	chatSession.upsertTurn(upsertDir, { ordinal: 1, displayText: "新" });
+	chatSession.upsertTurn(upsertDir, { ordinal: 2, displayText: "二" });
+	const upserted = chatSession.readTurns(upsertDir);
+	check(
+		"upsertTurn：同 ordinal 覆盖且保持排序",
+		upserted.length === 2 && upserted[0].displayText === "新" && upserted[1].ordinal === 2,
+		JSON.stringify(upserted),
+	);
+
 	const projFile = path.join(tmp, "proj-chat", "2026-01-01T00-00-00-000Z_thread-a.jsonl");
 	writePiSessionFile(projFile, {
 		id: "thread-a",
@@ -398,7 +443,7 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 	check("HTTP：capabilities 200 且 enabled", capHttp.enabled === true && capHttp.piVersion === "1.5.0", JSON.stringify(capHttp));
 	const health = await (await fetch(`${handle.url}api/health`)).json();
 	check("HTTP：轨迹 health 不受影响", health.ok === true && health.scope === "all");
-	check("HTTP：未实现的 chat 路由 501", (await fetch(`${handle.url}api/chat/skills?source=pi&session=chat-sess-1`)).status === 501);
+	check("HTTP：未实现的 chat 路由 501", (await fetch(`${handle.url}api/chat/approval?source=pi&session=chat-sess-1`)).status === 501);
 
 	const threadUrl = (thread) =>
 		`${handle.url}api/chat/thread?source=pi&session=chat-sess-1${thread ? `&thread=${encodeURIComponent(thread)}` : ""}`;
@@ -629,6 +674,59 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 	check("POST model：活动 turn 409", conflictModel.status === 409, String(conflictModel.status));
 	await postJson(`${handle.url}api/chat/stop`, { source: "pi", session: "chat-sess-1" });
 	await slowModelRead;
+
+	// ---- T5：技能选择 / 大小守卫 / 直输 / ordinal / turns ----
+	const skillMetaDir = path.join(chatHttpDir, "pi", "chat-sess-1", "meta");
+	chatSession.upsertTurn(skillMetaDir, { ordinal: 5, displayText: "占位" });
+	const traceBeforeSkill = fs.readFileSync(traceFile, "utf8");
+	const bigSkill = await readSse(await send("hi", { threadId: "thread-b", skill: "big" }));
+	const bigMeta = bigSkill.events.find((e) => e.event === "meta")?.data ?? {};
+	check(
+		"send skill：meta.userOrdinal 按投影 user 数（旧线程无 turns）",
+		bigMeta.userOrdinal === 2,
+		JSON.stringify(bigMeta),
+	);
+	check(
+		"send skill：>32k 仅 warning 不拒绝",
+		bigMeta.skill?.name === "big" && bigMeta.skill?.warning === true && bigMeta.skill?.chars > 32000,
+		JSON.stringify(bigMeta.skill),
+	);
+	const traceAfterBig = fs.readFileSync(traceFile, "utf8").slice(traceBeforeSkill.length);
+	check("send skill：prompt 拼 /skill:name 前缀", traceAfterBig.includes('prompt:"/skill:big\\n\\nhi"'), traceAfterBig);
+	const bigTurn = chatSession.readTurns(skillMetaDir).find((turn) => turn.ordinal === 2);
+	check(
+		"send skill：upsertTurn 写 displayText/skill/contextRefs",
+		bigTurn?.displayText === "hi" && bigTurn?.skill?.name === "big" && Array.isArray(bigTurn?.contextRefs) && bigTurn?.profile === "read-only",
+		JSON.stringify(bigTurn),
+	);
+	const hugeRes = await postJson(`${handle.url}api/chat/send`, { source: "pi", session: "chat-sess-1", threadId: "thread-b", prompt: "hi", skill: "huge" });
+	check("send skill：>200k 拒绝 400", hugeRes.status === 400, String(hugeRes.status));
+	const unknownRes = await postJson(`${handle.url}api/chat/send`, { source: "pi", session: "chat-sess-1", threadId: "thread-b", prompt: "hi", skill: "nope" });
+	check("send skill：未知技能 400", unknownRes.status === 400, String(unknownRes.status));
+
+	const traceBeforeDirect = fs.readFileSync(traceFile, "utf8");
+	const directSkill = await readSse(await send("/skill:demo 你好", { threadId: "thread-b" }));
+	const directMeta = directSkill.events.find((e) => e.event === "meta")?.data ?? {};
+	check(
+		"直输 /skill: 解析并透传（不重复加前缀）",
+		directMeta.skill?.name === "demo" && directMeta.skill?.chars > 0,
+		JSON.stringify(directMeta.skill),
+	);
+	const directTrace = fs.readFileSync(traceFile, "utf8").slice(traceBeforeDirect.length);
+	check(
+		"直输 /skill: 原样发送且只出现一次前缀",
+		directTrace.includes('prompt:"/skill:demo 你好"') && (directTrace.match(/\/skill:demo/g) ?? []).length === 1,
+		directTrace,
+	);
+	const traceBeforeUnknownDirect = fs.readFileSync(traceFile, "utf8");
+	const unknownDirect = await readSse(await send("/skill:nope 你好", { threadId: "thread-b" }));
+	const unknownMeta = unknownDirect.events.find((e) => e.event === "meta")?.data ?? {};
+	const unknownTrace = fs.readFileSync(traceFile, "utf8").slice(traceBeforeUnknownDirect.length);
+	check(
+		"直输未知技能：pi 行为透传（200 + 原文）",
+		unknownMeta.skill?.name === "nope" && unknownMeta.skill?.chars === null && unknownTrace.includes('prompt:"/skill:nope 你好"'),
+		JSON.stringify(unknownMeta.skill),
+	);
 
 	const crash = await readSse(await send("exit"));
 	check(

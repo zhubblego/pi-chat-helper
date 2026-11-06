@@ -154,6 +154,23 @@ export function appendTurn(metaDir, record) {
 	appendFileSync(join(metaDir, "turns.jsonl"), JSON.stringify(record) + "\n", { encoding: "utf8", mode: 0o600 });
 }
 
+/**
+ * 写一轮元数据：同 ordinal 覆盖（后写胜），其余保留，原子替换。
+ * 重复发送/失败重试不会让 turns.jsonl 无限长出重复行。
+ */
+export function upsertTurn(metaDir, record) {
+	const ordinal = Number(record?.ordinal);
+	if (!Number.isInteger(ordinal)) throw new Error("ordinal 需为整数");
+	const kept = readTurns(metaDir).filter((item) => Number(item.ordinal) !== ordinal);
+	kept.push({ ...record, ordinal });
+	kept.sort((a, b) => Number(a.ordinal) - Number(b.ordinal));
+	mkdirSync(metaDir, { recursive: true, mode: 0o700 });
+	const file = join(metaDir, "turns.jsonl");
+	const tmp = `${file}.tmp`;
+	writeFileSync(tmp, kept.map((item) => JSON.stringify(item)).join("\n") + "\n", { encoding: "utf8", mode: 0o600 });
+	renameSync(tmp, file);
+}
+
 /** 读当前生效的选中集快照；缺失/损坏返回空清单。 */
 export function readContext(metaDir) {
 	try {

@@ -26,6 +26,15 @@ fs.writeFileSync(
 );
 const sessionFile = path.join(tmp, "2026-01-01T00-00-00-000Z_ext-1.jsonl");
 const line = (o) => JSON.stringify(o);
+
+// 真 pi 技能夹具：全局（agentDir/skills）与项目（cwd/.pi/skills）
+const globalSkillDir = path.join(tmp, ".pi", "agent", "skills", "global-demo");
+fs.mkdirSync(globalSkillDir, { recursive: true });
+fs.writeFileSync(path.join(globalSkillDir, "SKILL.md"), "---\nname: global-demo\ndescription: 全局演示技能\n---\n\n# Global Demo\n");
+const projectSkillDir = path.join(tmp, ".pi", "skills", "project-demo");
+fs.mkdirSync(projectSkillDir, { recursive: true });
+fs.writeFileSync(path.join(projectSkillDir, "SKILL.md"), "---\nname: project-demo\ndescription: 项目演示技能\n---\n\n# Project Demo\n");
+
 // 会话条目（fake sessionManager 与文件内容一致；assistant 使轮 0 有完整可隐藏内容）
 const fakeEntries = [
 	{ type: "message", id: "u1", parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: "测试", timestamp: 1000 } },
@@ -175,6 +184,40 @@ function freePort() {
 			check("真 pi 模型列表非空", false, chatCap.reason);
 			check("真 pi 模型列表无密钥字段", false, chatCap.reason);
 			check("真 pi current 有 provider/id", false, chatCap.reason);
+		}
+
+		// ---- T5：真 pi 技能列表 + 项目技能开关 ----
+		if (chatCap.enabled) {
+			const skillsBefore = await (await fetch(`${url}api/chat/skills?source=pi&session=ext-1`)).json();
+			check(
+				"真 pi 技能列表非空（全局）",
+				Array.isArray(skillsBefore.skills) && skillsBefore.skills.some((skill) => skill.name === "global-demo"),
+				JSON.stringify(skillsBefore).slice(0, 400),
+			);
+			check(
+				"真 pi 默认不加载项目技能",
+				skillsBefore.projectSkills === false && !skillsBefore.skills.some((skill) => skill.name === "project-demo"),
+				JSON.stringify(skillsBefore.skills?.map((skill) => skill.name)),
+			);
+			const toggleOn = await (
+				await fetch(`${url}api/chat/settings`, {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ source: "pi", session: "ext-1", projectSkills: true }),
+				})
+			).json();
+			check("真 pi 项目技能开关写入成功", toggleOn.ok === true && toggleOn.projectSkills === true, JSON.stringify(toggleOn));
+			const skillsAfter = await (await fetch(`${url}api/chat/skills?source=pi&session=ext-1&refresh=1`)).json();
+			check(
+				"真 pi 开关后出现项目技能",
+				skillsAfter.projectSkills === true && skillsAfter.skills.some((skill) => skill.name === "project-demo"),
+				JSON.stringify(skillsAfter.skills?.map((skill) => skill.name)),
+			);
+			await fetch(`${url}api/chat/settings`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ source: "pi", session: "ext-1", projectSkills: false }),
+			});
 		}
 
 		// ---- 精确工具归属（模式 A：来自 pi.getAllTools().sourceInfo） ----

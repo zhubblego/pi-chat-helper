@@ -1674,6 +1674,121 @@ mark.ev-hit {
 	color: var(--dsw-alias-state-error-primary);
 }
 
+.chat-palette-item.is-disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.chat-palette-item.is-disabled.is-active {
+	background: transparent;
+}
+
+.chat-palette-hint.is-warn {
+	color: var(--dsw-alias-state-warn-label);
+}
+
+.chat-palette-badge {
+	flex: none;
+	padding: 0 6px;
+	border-radius: 999px;
+	background: var(--dsw-alias-bg-layer-2);
+	color: var(--dsw-alias-label-tertiary);
+	font: var(--dsw-font-xxxs-11);
+	line-height: 18px;
+}
+
+/* 技能面板顶部：使用本项目技能 */
+.chat-palette-switch {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 8px 10px;
+	border: 0;
+	border-bottom: 1px solid var(--dsw-alias-border-l1);
+	background: transparent;
+	color: var(--dsw-alias-label-primary);
+	font: var(--dsw-font-xs-13);
+	text-align: left;
+	cursor: pointer;
+}
+
+.chat-palette-switch:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.chat-palette-switch-label {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.chat-palette-switch-track {
+	position: relative;
+	width: 30px;
+	height: 18px;
+	flex: none;
+	border-radius: 999px;
+	background: var(--dsw-alias-bg-layer-3);
+	transition: background 120ms var(--ds-ease-in-out);
+}
+
+.chat-palette-switch-thumb {
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 14px;
+	height: 14px;
+	border-radius: 50%;
+	background: var(--dsw-alias-switch-thumb);
+	transition: transform 120ms var(--ds-ease-in-out);
+}
+
+.chat-palette-switch.is-on .chat-palette-switch-track {
+	background: var(--dsw-alias-state-business-primary);
+}
+
+.chat-palette-switch.is-on .chat-palette-switch-thumb {
+	transform: translateX(12px);
+}
+
+/* >32k 技能的内联确认 */
+.chat-palette-confirm {
+	padding: 10px;
+}
+
+.chat-palette-confirm-text {
+	color: var(--dsw-alias-label-primary);
+	font: var(--dsw-font-xs-13);
+	line-height: 20px;
+}
+
+.chat-palette-confirm-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 10px;
+}
+
+.chat-palette-confirm-yes,
+.chat-palette-confirm-no {
+	border: 0;
+	border-radius: var(--dsw-radius-md);
+	padding: 4px 10px;
+	font: var(--dsw-font-xs-13);
+	cursor: pointer;
+}
+
+.chat-palette-confirm-yes {
+	background: var(--dsw-alias-button-primary-fill);
+	color: var(--dsw-alias-label-primary-inverted);
+}
+
+.chat-palette-confirm-no {
+	background: var(--dsw-alias-bg-layer-2);
+	color: var(--dsw-alias-label-secondary);
+}
+
 .chat-skill {
 	display: flex;
 	align-items: center;
@@ -1681,6 +1796,35 @@ mark.ev-hit {
 	padding: 6px 10px 0;
 	color: var(--dsw-alias-label-secondary);
 	font: var(--dsw-font-xs-13);
+}
+
+.chat-skill-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.chat-skill-remove {
+	display: grid;
+	place-items: center;
+	width: 18px;
+	height: 18px;
+	flex: none;
+	border: 0;
+	border-radius: 50%;
+	background: transparent;
+	color: var(--dsw-alias-label-tertiary);
+	font-size: 14px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+@media (hover: hover) {
+	.chat-skill-remove:hover {
+		background: var(--dsw-alias-interactive-bg-hover);
+		color: var(--dsw-alias-label-primary);
+	}
 }
 
 .chat-card {

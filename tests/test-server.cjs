@@ -285,6 +285,21 @@ async function stopServer(child) {
 		writeSession(path.join(chatSessions, "--c1--"), { id: "cs-1", cwd: chatProject, first: "对话一" });
 		writeSession(path.join(chatSessions, "--c1--"), { id: "cs-2", cwd: chatProject, first: "对话二" });
 		writeSession(path.join(chatSessions, "--c2--"), { id: "cs-3", cwd: otherProject, first: "对话三" });
+		writeSession(path.join(chatSessions, "--c2--"), { id: "cs-4", cwd: otherProject, first: "对话四" });
+
+		// 技能夹具：demo（仅手动）/ big（33k）/ huge（200001）
+		const skillRoot = path.join(tmp, "chat-skill-fixtures");
+		const writeSkill = (name, content) => {
+			const dir = path.join(skillRoot, name);
+			fs.mkdirSync(dir, { recursive: true });
+			fs.writeFileSync(path.join(dir, "SKILL.md"), content);
+		};
+		writeSkill("demo", "---\nname: demo\ndescription: demo skill\ndisable-model-invocation: true\n---\n\n# Demo\n短技能。\n");
+		writeSkill("big", `---\nname: big\ndescription: big skill\n---\n\n${"x".repeat(33000)}`);
+		writeSkill("huge", `---\nname: huge\ndescription: huge skill\n---\n\n${"x".repeat(200001)}`);
+		process.env.FAKE_PI_SKILL_DIR = skillRoot;
+		fs.mkdirSync(path.join(otherProject, ".pi", "skills"), { recursive: true });
+		fs.mkdirSync(path.join(otherProject, ".agents", "skills"), { recursive: true });
 
 		// 线程文件（模型 current 从文件读；不依赖 fake child 写盘）
 		const chatDir = path.join(tmp, "chat-srv-dir");
@@ -302,11 +317,30 @@ async function stopServer(child) {
 		writeModelThread("cs-2", "thread-c2", "other", "fake-2");
 		writeModelThread("cs-3", "thread-c3", "fake", "fake-1");
 
+		// 带 1 条 user 事件的线程（用于校验 ordinal 从投影数、refresh 保留 --session）
+		const writeUserThread = (session, id) => {
+			const file = path.join(chatDir, "pi", session, "sessions", `2026-01-01T00-00-00-000Z_${id}.jsonl`);
+			fs.mkdirSync(path.dirname(file), { recursive: true });
+			fs.writeFileSync(
+				file,
+				[
+					JSON.stringify({ type: "session", version: 3, id, timestamp: H, cwd: otherProject }),
+					JSON.stringify({ type: "model_change", id: "m1", parentId: null, timestamp: H, provider: "fake", modelId: "fake-1" }),
+					JSON.stringify({ type: "message", id: "u1", parentId: "m1", timestamp: H, message: { role: "user", content: [{ type: "text", text: "旧问题" }], timestamp: 1 } }),
+				].join("\n") + "\n",
+			);
+		};
+		writeUserThread("cs-4", "thread-s4");
+		writeUserThread("cs-4", "thread-ord");
+
 		const chatTrace = path.join(tmp, "chat-pi-trace.log");
 		const modelsFailFile = path.join(tmp, "models-fail.flag");
+		const commandsFailFile = path.join(tmp, "commands-fail.flag");
 		process.env.FAKE_PI_TRACE = chatTrace;
 		process.env.FAKE_PI_MODELS_FAIL = modelsFailFile;
+		process.env.FAKE_PI_COMMANDS_FAIL = commandsFailFile;
 		fs.rmSync(modelsFailFile, { force: true });
+		fs.rmSync(commandsFailFile, { force: true });
 
 		const chatServer = await createTrajectoryServer({
 			scope: "all",
@@ -394,6 +428,162 @@ async function stopServer(child) {
 		check("POST model：GET /api/chat/model 405", (await fetch(`${chatBase}api/chat/model`)).status === 405);
 		check("POST model：POST /api/chat/models 405", (await postJson(`${chatBase}api/chat/models`, { source: "pi", session: "cs-3" })).status === 405);
 
+		// ---- T5：设置读写 ----
+		const settingsUrl = (session = "cs-4") => `${chatBase}api/chat/settings?source=pi&session=${session}`;
+		const settingsDefault = await (await fetch(settingsUrl())).json();
+		check(
+			"settings：默认 read-only + projectSkills=false",
+			settingsDefault.profile === "read-only" && settingsDefault.projectSkills === false && Array.isArray(settingsDefault.approvalAllow),
+			JSON.stringify(settingsDefault),
+		);
+		check("settings：缺 source 400", (await fetch(`${chatBase}api/chat/settings?session=cs-4`)).status === 400);
+		check("settings：未知 session 404", (await fetch(`${chatBase}api/chat/settings?source=pi&session=nope`)).status === 404);
+		check(
+			"settings：非法 profile 400",
+			(await postJson(`${chatBase}api/chat/settings`, { source: "pi", session: "cs-4", profile: "bogus" })).status === 400,
+		);
+		check(
+			"settings：projectSkills 非布尔 400",
+			(await postJson(`${chatBase}api/chat/settings`, { source: "pi", session: "cs-4", projectSkills: "yes" })).status === 400,
+		);
+		check("settings：无可修改字段 400", (await postJson(`${chatBase}api/chat/settings`, { source: "pi", session: "cs-4" })).status === 400);
+		check("settings：POST /api/chat/skills 405", (await postJson(`${chatBase}api/chat/skills`, { source: "pi", session: "cs-4" })).status === 405);
+
+		// ---- T5：技能列表 ----
+		const skillsUrl = (session = "cs-4", extra = "") => `${chatBase}api/chat/skills?source=pi&session=${session}${extra}`;
+		const skillsList = await (await fetch(skillsUrl())).json();
+		const skillByName = (payload, name) => payload.skills?.find((skill) => skill.name === name);
+		check(
+			"skills：过滤 source=skill 并去 skill: 前缀",
+			Array.isArray(skillsList.skills) && skillsList.skills.length === 3 && ["demo", "big", "huge"].every((name) => skillByName(skillsList, name)),
+			JSON.stringify(skillsList).slice(0, 400),
+		);
+		check(
+			"skills：chars 按字符数、scope/sourceInfo 映射",
+			skillByName(skillsList, "big")?.chars === 33042 &&
+				skillByName(skillsList, "big")?.scope === "project" &&
+				skillByName(skillsList, "demo")?.scope === "user" &&
+				skillByName(skillsList, "demo")?.disableModelInvocation === true &&
+				skillByName(skillsList, "demo")?.filePath === path.join(skillRoot, "demo", "SKILL.md"),
+			JSON.stringify(skillByName(skillsList, "big")),
+		);
+		check("skills：projectSkills 默认 false", skillsList.projectSkills === false && skillsList.error === null, JSON.stringify(skillsList.projectSkills));
+		check("skills：未知 session 404", (await fetch(skillsUrl("nope"))).status === 404);
+
+		// refresh 失败：保留 last-good + error
+		fs.writeFileSync(commandsFailFile, "1");
+		const skillsRefreshFail = await (await fetch(skillsUrl("cs-4", "&refresh=1"))).json();
+		check(
+			"skills：refresh 失败保留 last-good 并返回 error",
+			typeof skillsRefreshFail.error === "string" && skillsRefreshFail.error.length > 0 && skillsRefreshFail.skills?.length === 3,
+			JSON.stringify(skillsRefreshFail).slice(0, 300),
+		);
+		fs.rmSync(commandsFailFile, { force: true });
+
+		// ---- T5：项目技能开关 → spawn --skill ----
+		const traceBeforeProjectSkills = fs.existsSync(chatTrace) ? fs.readFileSync(chatTrace, "utf8") : "";
+		const enableProject = await postJson(`${chatBase}api/chat/settings`, { source: "pi", session: "cs-4", projectSkills: true });
+		const enableBody = await enableProject.json();
+		check(
+			"settings：切 projectSkills 返回 restart",
+			enableProject.ok && enableBody.ok === true && enableBody.projectSkills === true && enableBody.restart === true,
+			JSON.stringify(enableBody),
+		);
+		const settingsOn = await (await fetch(settingsUrl())).json();
+		check("settings：projectSkills 持久化", settingsOn.projectSkills === true, JSON.stringify(settingsOn));
+		check("settings：落盘到 chatDir/settings.json", fs.existsSync(path.join(chatDir, "settings.json")));
+		const skillsOn = await (await fetch(skillsUrl("cs-4", "&refresh=1"))).json();
+		const traceAfterProjectSkills = fs.readFileSync(chatTrace, "utf8").slice(traceBeforeProjectSkills.length);
+		check(
+			"settings：projectSkills=true 时 spawn 追加两个 --skill 目录",
+			traceAfterProjectSkills.includes(`--skill ${path.join(otherProject, ".pi", "skills")}`) &&
+				traceAfterProjectSkills.includes(`--skill ${path.join(otherProject, ".agents", "skills")}`),
+			traceAfterProjectSkills.slice(-600),
+		);
+		check("skills：开关后仍能取列表", Array.isArray(skillsOn.skills) && skillsOn.projectSkills === true, JSON.stringify(skillsOn).slice(0, 200));
+		await postJson(`${chatBase}api/chat/settings`, { source: "pi", session: "cs-4", projectSkills: false });
+
+		// ---- T5：refresh=1 重启保留线程（--session） ----
+		await readSse(await send("cs-4", "hi", { threadId: "thread-s4" }));
+		const traceBeforeSkillRefresh = fs.readFileSync(chatTrace, "utf8");
+		await (await fetch(skillsUrl("cs-4", "&refresh=1"))).json();
+		const traceAfterSkillRefresh = fs.readFileSync(chatTrace, "utf8").slice(traceBeforeSkillRefresh.length);
+		check(
+			"skills：refresh=1 重启保留线程（--session 文件）",
+			traceAfterSkillRefresh.includes("spawn:") &&
+				traceAfterSkillRefresh.includes(`--session ${path.join(chatDir, "pi", "cs-4", "sessions", "2026-01-01T00-00-00-000Z_thread-s4.jsonl")}`) &&
+				!traceAfterSkillRefresh.includes("--session-id thread-s4"),
+			traceAfterSkillRefresh.slice(-600),
+		);
+
+		// ---- T5：settings 活动 turn 409 ----
+		const slowSettingsRes = await send("cs-4", "slow");
+		const slowSettingsRead = readSse(slowSettingsRes);
+		await sleep(120);
+		const settingsConflict = await postJson(`${chatBase}api/chat/settings`, { source: "pi", session: "cs-4", projectSkills: false });
+		check("settings：活动 turn 409", settingsConflict.status === 409, String(settingsConflict.status));
+		await postJson(`${chatBase}api/chat/stop`, { source: "pi", session: "cs-4" });
+		await slowSettingsRead;
+
+		// ---- T5：发送技能（前缀 / meta / turns / 直输） ----
+		const traceBeforeSkillSend = fs.readFileSync(chatTrace, "utf8");
+		const demoSkill = await readSse(await send("cs-4", "你好", { threadId: "thread-ord", skill: "demo" }));
+		const demoMeta = demoSkill.events.find((event) => event.event === "meta")?.data ?? {};
+		check(
+			"send skill：meta.userOrdinal 按投影 user 数（thread 只有 1 条 user）",
+			demoMeta.userOrdinal === 2,
+			JSON.stringify(demoMeta),
+		);
+		check(
+			"send skill：meta.skill 含 name/chars/warning",
+			demoMeta.skill?.name === "demo" && Number.isInteger(demoMeta.skill?.chars) && demoMeta.skill.warning === false,
+			JSON.stringify(demoMeta.skill),
+		);
+		const traceAfterSkillSend = fs.readFileSync(chatTrace, "utf8").slice(traceBeforeSkillSend.length);
+		check("send skill：prompt 拼 /skill:name 前缀", traceAfterSkillSend.includes('prompt:"/skill:demo\\n\\n你好"'), traceAfterSkillSend);
+		const turnLines = fs
+			.readFileSync(path.join(chatDir, "pi", "cs-4", "meta", "turns.jsonl"), "utf8")
+			.split("\n")
+			.filter(Boolean)
+			.map((line) => JSON.parse(line));
+		const turn2 = turnLines.find((turn) => turn.ordinal === 2);
+		check(
+			"send skill：turns.jsonl 写 displayText/skill/contextRefs/profile",
+			turn2?.displayText === "你好" &&
+				turn2?.skill?.name === "demo" &&
+				Array.isArray(turn2?.contextRefs) &&
+				turn2?.profile === "read-only" &&
+				turn2?.model?.id === "fake-1",
+			JSON.stringify(turn2),
+		);
+		const bigSkill = await readSse(await send("cs-4", "你好", { threadId: "thread-ord", skill: "big" }));
+		const bigMeta = bigSkill.events.find((event) => event.event === "meta")?.data ?? {};
+		check("send skill：>32k 仅 warning 仍发送", bigMeta.skill?.name === "big" && bigMeta.skill?.warning === true && bigMeta.skill?.chars > 32000, JSON.stringify(bigMeta.skill));
+		check(
+			"send skill：>200k 400",
+			(await postJson(`${chatBase}api/chat/send`, { source: "pi", session: "cs-4", threadId: "thread-ord", prompt: "hi", skill: "huge" })).status === 400,
+		);
+		check(
+			"send skill：未知技能 400",
+			(await postJson(`${chatBase}api/chat/send`, { source: "pi", session: "cs-4", threadId: "thread-ord", prompt: "hi", skill: "nope" })).status === 400,
+		);
+		const traceBeforeDirect = fs.readFileSync(chatTrace, "utf8");
+		const directSkill = await readSse(await send("cs-4", "/skill:demo 你好", { threadId: "thread-ord" }));
+		const directMeta = directSkill.events.find((event) => event.event === "meta")?.data ?? {};
+		const directTrace = fs.readFileSync(chatTrace, "utf8").slice(traceBeforeDirect.length);
+		check(
+			"直输 /skill:demo：解析 + 原样透传（只一次前缀）",
+			directMeta.skill?.name === "demo" && directTrace.includes('prompt:"/skill:demo 你好"') && (directTrace.match(/\/skill:demo/g) ?? []).length === 1,
+			directTrace,
+		);
+		const unknownDirect = await readSse(await send("cs-4", "/skill:nope 你好", { threadId: "thread-ord" }));
+		const unknownDirectMeta = unknownDirect.events.find((event) => event.event === "meta")?.data ?? {};
+		check(
+			"直输未知技能：pi 透传（200 + 原文）",
+			unknownDirectMeta.skill?.name === "nope" && unknownDirectMeta.skill?.chars === null,
+			JSON.stringify(unknownDirectMeta.skill),
+		);
+
 		const toolStream = await readSse(await send("cs-1", "think tool"));
 		const order = toolStream.events.map((e) => e.event);
 		check(
@@ -455,6 +645,7 @@ async function stopServer(child) {
 		await chatServer.close();
 		delete process.env.FAKE_PI_TRACE;
 		delete process.env.FAKE_PI_MODELS_FAIL;
+		delete process.env.FAKE_PI_COMMANDS_FAIL;
 		let residual = "";
 		try {
 			residual = execFileSync("pgrep", ["-f", FAKE], { encoding: "utf8" }).trim();
