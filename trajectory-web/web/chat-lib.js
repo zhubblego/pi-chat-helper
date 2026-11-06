@@ -63,3 +63,30 @@ export function parseSseData(event) {
 		return null;
 	}
 }
+
+/**
+ * 会话引用：只要 selectedId 存在就返回对象。
+ * 切源时 state.sessions 会先清空，此时 find 必然未命中；不能因此把当前会话当成不存在。
+ * @param {{source?: string, selectedId?: string|null, sessions?: Array<object>}} input
+ */
+export function chatSessionRef(input = {}) {
+	const selectedId = input.selectedId ?? null;
+	if (!selectedId) return null;
+	const found = Array.isArray(input.sessions) ? input.sessions.find((item) => item?.id === selectedId) : undefined;
+	return {
+		source: input.source ?? "pi",
+		id: selectedId,
+		name: found?.name ?? null,
+		projectPath: found?.projectPath ?? null,
+	};
+}
+
+/**
+ * SSE 回调守卫：本 turn 未结束且仍属于当前会话时才允许写 UI。
+ * 切会话后旧流可能还会到几个 chunk，必须丢弃，不能写进新会话。
+ * @param {{key?: string, settled?: boolean}|null|undefined} turn
+ * @param {string} currentKey
+ */
+export function isCurrentTurn(turn, currentKey) {
+	return Boolean(turn && turn.settled !== true && currentKey && turn.key === currentKey);
+}

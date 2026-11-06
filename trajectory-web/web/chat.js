@@ -5,7 +5,7 @@
  *       GET /api/chat/thread、GET /api/chat/capabilities。
  * 本阶段（T3）只做流式与消息渲染；模型/技能/上下文/审批在后续阶段接入。
  */
-import { parseSseChunk, parseSseData } from "./chat-lib.js";
+import { isCurrentTurn, parseSseChunk, parseSseData } from "./chat-lib.js";
 import { fmtTokens } from "./lib.js";
 
 const PROMPT_MAX = 32000;
@@ -20,6 +20,7 @@ export function initChatPanel(deps) {
 	const list = el("chat-list");
 	const input = el("chat-input");
 	const sendBtn = el("chat-send");
+	const announcer = el("chat-announcer");
 	const sendIcon = sendBtn?.firstElementChild?.cloneNode(true) ?? null;
 	let localSeq = 0;
 	let renderTimer = 0;
@@ -43,6 +44,8 @@ export function initChatPanel(deps) {
 		controller: null,
 		status: null,
 		lastRenderAt: 0,
+		// 收尾/整表替换期间短暂关闭 aria-live，避免屏幕阅读器把整张表重读一遍
+		a11yHold: false,
 	};
 
 	const localId = (kind) => `local-${kind}-${++localSeq}`;
@@ -59,6 +62,11 @@ export function initChatPanel(deps) {
 
 	function sessionKeyOf(session) {
 		return session ? `${session.source}:${session.id}` : "";
+	}
+
+	/** SSE 回调只允许写当前会话、且属于当前 turn。state.turn 防止已收尾的旧流回写。 */
+	function isTurnActive(turn) {
+		return state.turn === turn && isCurrentTurn(turn, sessionKeyOf(currentSession()));
 	}
 
 	// ------------------------------------------------------------------
@@ -282,6 +290,19 @@ export function initChatPanel(deps) {
 		renderMessages();
 		renderComposer();
 		updateSendButton();
+		updateA11y();
+	}
+
+	/** 流式中 aria-live=off（避免逐字朗读）；收尾时短暂 hold，只让 #chat-announcer 播报最后一条。 */
+	function updateA11y() {
+		if (!list) return;
+		list.setAttribute("aria-busy", state.streaming ? "true" : "false");
+		list.setAttribute("aria-live", state.streaming || state.a11yHold ? "off" : "polite");
+	}
+
+	function announce(text) {
+		if (!announcer) return;
+		announcer.textContent = String(text ?? "").trim().slice(0, 500);
 	}
 
 	function scheduleRender() {
@@ -394,6 +415,18 @@ export function initChatPanel(deps) {
 		state.status = null;
 	}
 
+	/** 收尾统一入口：关闭 live 播报 → 最终渲染 → 只播报最后一条 → 恢复 aria-live=polite。 */
+	function endStreamingUi(spoken) {
+		state.a11yHold = true;
+		resetStreamState();
+		flushRender();
+		announce(spoken);
+		setTimeout(() => {
+			state.a11yHold = false;
+			updateA11y();
+		}, 0);
+	}
+
 	function finishTurn(turn, outcome = {}) {
 		if (!turn || turn.settled) return;
 		turn.settled = true;
@@ -415,8 +448,12 @@ export function initChatPanel(deps) {
 		} else if (error) {
 			pushNotice(error, "error");
 		}
-		resetStreamState();
-		flushRender();
+		const spoken = error
+			? lastAssistant?.text
+				? `${lastAssistant.text}\n生成中断：${error}`
+				: `生成中断：${error}`
+			: lastAssistant?.text || (aborted ? "已停止" : "");
+		endStreamingUi(spoken);
 		if (turn.metaReceived) void syncFromServer(turn);
 	}
 
@@ -435,7 +472,13 @@ export function initChatPanel(deps) {
 				state.threadId = data.thread?.id ?? state.threadId;
 				state.model = data.thread?.model ?? state.model;
 				setMessages(messages);
+				// 服务端最终投影整表替换：同样不触发 live 重读
+				state.a11yHold = true;
 				flushRender();
+				setTimeout(() => {
+					state.a11yHold = false;
+					updateA11y();
+				}, 0);
 			}
 		} catch {
 			/* 读取失败：保留本地流式结果 */
@@ -443,6 +486,7 @@ export function initChatPanel(deps) {
 	}
 
 	function handleSseEvent(event, turn) {
+		if (!isTurnActive(turn)) return;
 		const data = parseSseData(event);
 		if (!data) return;
 		switch (event.event) {
@@ -510,15 +554,19 @@ export function initChatPanel(deps) {
 			buffer = parsed.rest;
 			for (const event of parsed.events) {
 				if (turn.settled) return;
+				if (!isTurnActive(turn)) {
+					await reader.cancel().catch(() => {});
+					return;
+				}
 				handleSseEvent(event, turn);
 			}
 		}
 		buffer += decoder.decode();
-		if (buffer.trim() && !turn.settled) {
+		if (buffer.trim() && isTurnActive(turn)) {
 			const parsed = parseSseChunk(`${buffer}\n\n`);
 			for (const event of parsed.events) handleSseEvent(event, turn);
 		}
-		if (!turn.settled) finishTurn(turn, { error: "连接中断" });
+		if (isTurnActive(turn)) finishTurn(turn, { error: "连接中断" });
 	}
 
 	async function send() {
@@ -555,6 +603,7 @@ export function initChatPanel(deps) {
 		});
 		input.value = "";
 		deps.autoGrowInput?.();
+		announce("");
 		flushRender();
 		input.focus?.();
 
@@ -592,8 +641,7 @@ export function initChatPanel(deps) {
 				deps.autoGrowInput?.();
 				pushNotice(aborted ? "已停止" : `发送失败：${err?.message ?? err}`, "error");
 				turn.settled = true;
-				resetStreamState();
-				flushRender();
+				endStreamingUi(aborted ? "已停止" : `发送失败：${err?.message ?? err}`);
 				return;
 			}
 			finishTurn(turn, { aborted, error: aborted ? null : `连接中断：${err?.message ?? err}` });
@@ -656,6 +704,16 @@ export function initChatPanel(deps) {
 			return true;
 		},
 		onSessionChanged() {
+			// 流式中切会话：先收掉旧 turn（abort 触发服务端 res.close → abort child），再清 UI；
+			// 否则旧 SSE 的 delta/tool 会追加到新会话消息流里。
+			if (state.streaming || state.turn) {
+				const turn = state.turn;
+				if (turn) {
+					turn.settled = true;
+					turn.controller?.abort();
+				}
+				resetStreamState();
+			}
 			state.thread = null;
 			state.threadId = null;
 			state.model = null;

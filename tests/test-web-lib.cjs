@@ -14,7 +14,7 @@ const check = (label, cond, extra = "") => {
 	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, buildAgentTree, deriveInfo, deriveTargets, deriveTaskName, DERIVE_TOOL, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments, hitSnippet } = lib;
 
 	// ---- SSE 解析（chat-lib.js） ----
-	const { parseSseChunk, parseSseData } = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "chat-lib.js")).href);
+	const { parseSseChunk, parseSseData, chatSessionRef, isCurrentTurn } = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "chat-lib.js")).href);
 	const sseOne = parseSseChunk('event: meta\ndata: {"a":1}\n\n');
 	check("SSE：单事件", sseOne.events.length === 1 && sseOne.events[0].event === "meta" && sseOne.rest === "", JSON.stringify(sseOne));
 	check("SSE：data 可 JSON 解析", parseSseData(sseOne.events[0])?.a === 1);
@@ -33,6 +33,27 @@ const check = (label, cond, extra = "") => {
 	check("SSE：注释不产生事件", sseComment.events.length === 1 && sseComment.events[0].event === "done", JSON.stringify(sseComment));
 	check("SSE：坏 JSON 返回 null", parseSseData({ data: "{bad" }) === null);
 	check("SSE：空 data 返回 null", parseSseData({ data: "" }) === null);
+
+	// ---- 会话引用（切源时 sessions 会先清空，不能因此把当前会话当不存在） ----
+	const refRemembered = chatSessionRef({ source: "pi", selectedId: "s-1", sessions: [] });
+	check(
+		"会话引用：sessions 未命中仍返回选中会话",
+		refRemembered?.id === "s-1" && refRemembered.source === "pi" && refRemembered.projectPath === null && refRemembered.name === null,
+		JSON.stringify(refRemembered),
+	);
+	const refFound = chatSessionRef({ source: "codex", selectedId: "c-1", sessions: [{ id: "c-1", name: "任务", projectPath: "/tmp/p" }] });
+	check("会话引用：命中时带 name/projectPath", refFound?.name === "任务" && refFound.projectPath === "/tmp/p" && refFound.source === "codex");
+	check("会话引用：无 selectedId 返回 null", chatSessionRef({ source: "pi", selectedId: null, sessions: [] }) === null);
+
+	// ---- SSE 回调守卫（切会话后旧流不能写新会话） ----
+	check("turn 守卫：当前 key 且未收尾通过", isCurrentTurn({ key: "pi:s-1", settled: false }, "pi:s-1") === true);
+	check(
+		"turn 守卫：settled/key 不同/空 key 均拒绝",
+		isCurrentTurn({ key: "pi:s-1", settled: true }, "pi:s-1") === false &&
+			isCurrentTurn({ key: "pi:s-1" }, "pi:s-2") === false &&
+			isCurrentTurn({ key: "pi:s-1" }, "") === false &&
+			isCurrentTurn(null, "pi:s-1") === false,
+	);
 
 	// ---- 搜索高亮切分 ----
 	check("高亮：单词命中切分", JSON.stringify(highlightSegments("hello world npm", ["npm"])) === JSON.stringify([{ text: "hello world ", hit: false }, { text: "npm", hit: true }]));
@@ -328,6 +349,28 @@ const check = (label, cond, extra = "") => {
 	check("对话前端接线：send/stop/SSE 解析/response.ok", chatSource.includes("/api/chat/send") && chatSource.includes("/api/chat/stop") && chatSource.includes("/api/chat/thread") && chatSource.includes("parseSseChunk") && chatSource.includes("response.ok"));
 	check("流式解码必须是 TextDecoder + {stream:true}", chatSource.includes('new TextDecoder("utf-8")') && chatSource.includes("stream: true"));
 	check("app.js 已移交对话：initChatPanel + 移除本地消息流", appSource.includes("initChatPanel") && !appSource.includes("state.chat.push") && !appSource.includes("function sendChat") && !appSource.includes("function renderChat") && !appSource.includes("syncChatSend"));
+	check("getSession 走 chatSessionRef（切源时 sessions 未命中也保留 selectedId）", appSource.includes("chatSessionRef({") && appSource.includes("sessions: state.sessions"));
+	check(
+		"流式切会话：先 settled 再 abort 并清 streaming",
+		/if \(state\.streaming \|\| state\.turn\) \{[\s\S]*?turn\.settled = true;[\s\S]*?turn\.controller\?\.abort\(\);[\s\S]*?resetStreamState\(\);/.test(chatSource),
+	);
+	check(
+		"SSE 回调按当前 turn + 会话 key 守卫",
+		chatSource.includes("function isTurnActive(turn)") &&
+			chatSource.includes("state.turn === turn") &&
+			chatSource.includes("isCurrentTurn(turn, sessionKeyOf(currentSession()))") &&
+			chatSource.includes("if (!isTurnActive(turn)) return;") &&
+			chatSource.includes("await reader.cancel()"),
+	);
+	check(
+		"流式可访问性：aria-busy/live 切换 + 独立播报区只读最后一条",
+		chatSource.includes('setAttribute("aria-busy"') &&
+			chatSource.includes('setAttribute("aria-live"') &&
+			chatSource.includes("chat-announcer") &&
+			indexSource.includes('id="chat-announcer"') &&
+			indexSource.includes('aria-live="polite"') &&
+			styleSource.includes(".chat-sr-only"),
+	);
 	check("对话头/上下文/面板/技能占位就位", ["chat-head", "chat-model", "chat-profile", "chat-context", "chat-palette", "chat-skill"].every((id) => indexSource.includes(`id="${id}"`)));
 	check("对话栏消息仍走 markdown 渲染", chatSource.includes("mdNode(String(message.text))"));
 	check("流式/工具/错误/空态样式就位", [".chat-head", ".chat-tool", ".chat-msg.ai.is-streaming", ".chat-stream-cursor", ".chat-notice", ".chat-msg-error", ".chat-empty", ".chat-skeleton"].every((sel) => styleSource.includes(sel)));

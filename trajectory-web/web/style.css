@@ -1358,6 +1358,20 @@ mark.ev-hit {
 	line-height: 20px;
 }
 
+/* 只给屏幕阅读器的播报区：流式结束后只读最后一条，不重读整张消息表 */
+.chat-sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	border: 0;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
 /* 加载线程：三条骨架气泡，不转圈遮住整个抽屉 */
 .chat-skeleton {
 	height: 44px;

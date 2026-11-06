@@ -40,6 +40,7 @@ import {
 	renderMarkdown,
 	taskShort,
 } from "./lib.js";
+import { chatSessionRef } from "./chat-lib.js";
 import { initChatPanel } from "./chat.js";
 
 const LS_FILTERS = "tw.filters";
@@ -2348,11 +2349,12 @@ const chat = initChatPanel({
 	el,
 	h,
 	mdNode,
-	getSession: () => {
-		if (!state.selectedId) return null;
-		const session = state.sessions.find((item) => item.id === state.selectedId);
-		return { source: state.source, id: state.selectedId, name: session?.name ?? null, projectPath: session?.projectPath ?? null };
-	},
+	getSession: () =>
+		chatSessionRef({
+			source: state.source,
+			selectedId: state.selectedId,
+			sessions: state.sessions,
+		}),
 	autoGrowInput: autoGrowChatInput,
 });
 loadChatWidth();
