@@ -2,6 +2,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const http = require("node:http");
 const { spawn, execFileSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 
@@ -15,6 +16,31 @@ const ROOT = path.join(__dirname, "..");
 const SERVER = path.join(ROOT, "trajectory-web", "server", "main.mjs");
 const WEB = path.join(ROOT, "trajectory-web", "web");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** 原始 HTTP 请求：测试 Host/Origin/OPTIONS 等 fetch 不方便设置的头。 */
+function rawRequest(baseUrl, { method = "GET", pathname = "/", headers = {}, body = null } = {}) {
+	const target = new URL(baseUrl);
+	return new Promise((resolve, reject) => {
+		const req = http.request(
+			{
+				host: target.hostname,
+				port: target.port,
+				method,
+				path: pathname,
+				headers: { host: `${target.hostname}:${target.port}`, ...headers },
+			},
+			(response) => {
+				const chunks = [];
+				response.on("data", (chunk) => chunks.push(chunk));
+				response.on("end", () =>
+					resolve({ status: response.statusCode, headers: response.headers, body: Buffer.concat(chunks).toString("utf8") }),
+				);
+			},
+		);
+		req.on("error", reject);
+		req.end(body ?? undefined);
+	});
+}
 
 /** 读完一条 SSE 流，按事件块解析成 {event,data} 数组（原始文本保留给保活断言）。 */
 async function readSse(response, onEvent = null) {
@@ -367,6 +393,190 @@ async function stopServer(child) {
 			});
 		const postJson = (url, body) =>
 			fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+		// ---- T9：Host / Origin / Content-Type / 大小 / 路径 ----
+		const chatPort = new URL(chatBase).port;
+		const chatOrigin = new URL(chatBase).origin;
+		const securityTraceStart = fs.existsSync(chatTrace) ? fs.readFileSync(chatTrace, "utf8") : "";
+		const securityTraceNow = () => (fs.existsSync(chatTrace) ? fs.readFileSync(chatTrace, "utf8") : "");
+		const secCurl = await rawRequest(chatBase, { pathname: "/api/chat/capabilities" });
+		check("安全：无 Origin 的 curl 200", secCurl.status === 200, String(secCurl.status));
+		const secOrigin = await rawRequest(chatBase, { pathname: "/api/chat/capabilities", headers: { origin: chatOrigin } });
+		check("安全：同源 Origin 200", secOrigin.status === 200, String(secOrigin.status));
+		const secCrossLoopback = await rawRequest(chatBase, {
+			pathname: "/api/chat/capabilities",
+			headers: { origin: `http://localhost:${chatPort}` },
+		});
+		check("安全：localhost/127.0.0.1 互通 Origin 200", secCrossLoopback.status === 200, String(secCrossLoopback.status));
+		const secBadOrigin = await rawRequest(chatBase, {
+			pathname: "/api/chat/models?source=pi&session=cs-1",
+			headers: { origin: `http://evil.example:${chatPort}` },
+		});
+		check("安全：错误 Origin 403", secBadOrigin.status === 403 && !secBadOrigin.headers["access-control-allow-origin"], String(secBadOrigin.status));
+		const secNullOrigin = await rawRequest(chatBase, {
+			pathname: "/api/chat/models?source=pi&session=cs-1",
+			headers: { origin: "null" },
+		});
+		check("安全：Origin null 403", secNullOrigin.status === 403, String(secNullOrigin.status));
+		const secPortMismatch = await rawRequest(chatBase, {
+			pathname: "/api/chat/models?source=pi&session=cs-1",
+			headers: { origin: `http://127.0.0.1:${Number(chatPort) === 65535 ? 1 : Number(chatPort) + 1}` },
+		});
+		check("安全：Origin 端口不一致 403", secPortMismatch.status === 403, String(secPortMismatch.status));
+		const secEvilHost = await rawRequest(chatBase, {
+			pathname: "/api/chat/models?source=pi&session=cs-1",
+			headers: { host: "evil.example" },
+		});
+		check("安全：evil Host 403", secEvilHost.status === 403, String(secEvilHost.status));
+		const secOptions = await rawRequest(chatBase, { method: "OPTIONS", pathname: "/api/chat/send" });
+		check(
+			"安全：OPTIONS 405 且无 CORS 头",
+			secOptions.status === 405 && !secOptions.headers["access-control-allow-origin"] && !secOptions.headers["access-control-allow-methods"],
+			String(secOptions.status),
+		);
+		const sendJsonBody = JSON.stringify({ source: "pi", session: "cs-1", prompt: "x" });
+		const secText = await rawRequest(chatBase, {
+			method: "POST",
+			pathname: "/api/chat/send",
+			headers: { "content-type": "text/plain" },
+			body: sendJsonBody,
+		});
+		check("安全：text/plain 403", secText.status === 403, String(secText.status));
+		const secMissingType = await rawRequest(chatBase, {
+			method: "POST",
+			pathname: "/api/chat/send",
+			body: sendJsonBody,
+		});
+		check("安全：缺 Content-Type 403", secMissingType.status === 403, String(secMissingType.status));
+		const secTranslateOrigin = await rawRequest(chatBase, {
+			method: "POST",
+			pathname: "/api/translate",
+			headers: { "content-type": "application/json", origin: "http://evil.example" },
+			body: "{}",
+		});
+		check("安全：非 chat POST 也校验 Origin", secTranslateOrigin.status === 403, String(secTranslateOrigin.status));
+		const secCharset = await rawRequest(chatBase, {
+			method: "POST",
+			pathname: "/api/chat/stop",
+			headers: { "content-type": "application/json; charset=utf-8" },
+			body: JSON.stringify({ source: "pi", session: "cs-1" }),
+		});
+		check("安全：application/json 带 charset 允许", secCharset.status === 200, String(secCharset.status));
+		const secBig = await rawRequest(chatBase, {
+			method: "POST",
+			pathname: "/api/chat/send",
+			headers: { "content-type": "application/json" },
+			body: "x".repeat((1 << 20) + 16),
+		});
+		check("安全：请求体 >1MB 413", secBig.status === 413, String(secBig.status));
+		const secBigTranslate = await rawRequest(chatBase, {
+			method: "POST",
+			pathname: "/api/translate",
+			headers: { "content-type": "application/json" },
+			body: "x".repeat((1 << 20) + 16),
+		});
+		check("安全：非 chat POST 请求体 >1MB 也 413", secBigTranslate.status === 413, String(secBigTranslate.status));
+		const securityTrace = securityTraceNow().slice(securityTraceStart.length);
+		check("安全：拒绝请求未 spawn chat child", !securityTrace.includes("--mode rpc"), securityTrace.slice(-400));
+
+		// 大线程：stat 前置拒绝，不解析 32MB 文件。
+		writeSession(path.join(chatSessions, "--c1--"), { id: "cs-large", cwd: chatProject, first: "大线程" });
+		const largeThreadId = "thread-large";
+		const largeThreadFile = path.join(chatDir, "pi", "cs-large", "sessions", `2026-01-01T00-00-00-000Z_${largeThreadId}.jsonl`);
+		fs.mkdirSync(path.dirname(largeThreadFile), { recursive: true });
+		fs.writeFileSync(largeThreadFile, `${JSON.stringify({ type: "session", version: 3, id: largeThreadId, timestamp: H, cwd: chatProject })}\n`);
+		fs.truncateSync(largeThreadFile, 32 * 1024 * 1024 + 1);
+		const largeThread = await rawRequest(chatBase, {
+			pathname: `/api/chat/thread?source=pi&session=cs-large&thread=${largeThreadId}`,
+		});
+		check("安全：线程文件 >32MB 400", largeThread.status === 400, String(largeThread.status));
+		const largeModelsBefore = securityTraceNow().length;
+		const largeModels = await rawRequest(chatBase, {
+			pathname: `/api/chat/models?source=pi&session=cs-large&thread=${largeThreadId}`,
+		});
+		check(
+			"安全：大线程 models 400 且未 spawn",
+			largeModels.status === 400 && !securityTraceNow().slice(largeModelsBefore).includes("--mode rpc"),
+			String(largeModels.status),
+		);
+		const largeSendBefore = securityTraceNow().length;
+		const largeSend = await rawRequest(chatBase, {
+			method: "POST",
+			pathname: "/api/chat/send",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ source: "pi", session: "cs-large", threadId: largeThreadId, prompt: "x" }),
+		});
+		check(
+			"安全：大线程 send 400 且未 spawn",
+			largeSend.status === 400 && !securityTraceNow().slice(largeSendBefore).includes("--mode rpc"),
+			String(largeSend.status),
+		);
+		const traversal = await rawRequest(chatBase, {
+			pathname: "/api/chat/thread?source=pi&session=cs-large&thread=..%2Fevil",
+		});
+		check("安全：threadId 路径穿越 400", traversal.status === 400, String(traversal.status));
+
+		// chatDir 位于轨迹目录下 / 非回环监听：对话禁用。
+		const insideChat = await createTrajectoryServer({
+			scope: "all",
+			webDir: WEB,
+			sessionsRoot: chatSessions,
+			port: 0,
+			chat: true,
+			chatDir: path.join(chatSessions, "inside-chat"),
+			piBin: { cmd: process.execPath, argsPrefix: [FAKE], mode: false, display: "fake-pi" },
+		});
+		const insideCap = await (await fetch(`${insideChat.url}api/chat/capabilities`)).json();
+		check("安全：chatDir 在 sessions 下禁用", insideCap.enabled === false, JSON.stringify(insideCap).slice(0, 300));
+		await insideChat.close();
+		const nonLoop = await createTrajectoryServer({
+			scope: "all",
+			webDir: WEB,
+			sessionsRoot: chatSessions,
+			host: "0.0.0.0",
+			port: 0,
+			chat: true,
+			chatDir: path.join(tmp, "nonloop-chat"),
+			piBin: { cmd: process.execPath, argsPrefix: [FAKE], mode: false, display: "fake-pi" },
+		});
+		const nonLoopCap = await (await fetch(`http://127.0.0.1:${nonLoop.port}/api/chat/capabilities`)).json();
+		check(
+			"安全：非回环监听时 chat 禁用",
+			nonLoopCap.enabled === false && String(nonLoopCap.reason).includes("非回环"),
+			JSON.stringify(nonLoopCap).slice(0, 300),
+		);
+		await nonLoop.close();
+
+		// 轨迹文件 >32MB：send 带上下文时在 spawn 前 400。
+		const largeTrajSessions = path.join(tmp, "t9-large-sessions");
+		const largeTrajProject = path.join(tmp, "t9-large-project");
+		fs.mkdirSync(path.join(largeTrajSessions, "--x--"), { recursive: true });
+		fs.mkdirSync(largeTrajProject, { recursive: true });
+		writeSession(path.join(largeTrajSessions, "--x--"), { id: "t9-large-traj", cwd: largeTrajProject, first: "大轨迹" });
+		const largeTrajFile = path.join(largeTrajSessions, "--x--", "2026-01-01T00-00-00-000Z_t9-large-traj.jsonl");
+		fs.truncateSync(largeTrajFile, 32 * 1024 * 1024 + 1);
+		const largeTrajServer = await createTrajectoryServer({
+			scope: "all",
+			webDir: WEB,
+			sessionsRoot: largeTrajSessions,
+			port: 0,
+			chat: true,
+			chatDir: path.join(tmp, "t9-large-chat"),
+			piBin: { cmd: process.execPath, argsPrefix: [FAKE], mode: false, display: "fake-pi" },
+		});
+		const largeTrajTraceStart = securityTraceNow().length;
+		const largeTrajSend = await fetch(`${largeTrajServer.url}api/chat/send`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ source: "pi", session: "t9-large-traj", prompt: "x", contextIds: ["x"] }),
+		});
+		await largeTrajSend.text();
+		check(
+			"安全：轨迹文件 >32MB 400 且未 spawn",
+			largeTrajSend.status === 400 && !securityTraceNow().slice(largeTrajTraceStart).includes("--mode rpc"),
+			String(largeTrajSend.status),
+		);
+		await largeTrajServer.close();
 
 		check("chat：静态 /chat.js 200", (await fetch(`${chatBase}chat.js`)).status === 200);
 		check("chat：静态 /chat-lib.js 200", (await fetch(`${chatBase}chat-lib.js`)).status === 200);

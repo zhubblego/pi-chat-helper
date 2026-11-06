@@ -21,6 +21,9 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 
+/** 单个线程文件读取上限；超过由调用方返回 400，不解析。 */
+export const THREAD_MAX_BYTES = 32 * 1024 * 1024;
+
 /** 只保留 [A-Za-z0-9._-]；发生替换/过长/空/`.`/`..` 时追加 sha1 前缀，避免碰撞与逃逸。 */
 export function sanitizeSegment(value) {
 	const raw = String(value ?? "");
@@ -61,7 +64,7 @@ export function listThreadFiles(sessionsDir) {
 		try {
 			const stat = statSync(file);
 			if (!stat.isFile()) continue;
-			files.push({ file, name, mtimeMs: stat.mtimeMs });
+			files.push({ file, name, mtimeMs: stat.mtimeMs, size: stat.size });
 		} catch {
 			/* 文件在扫描期间被删 */
 		}
@@ -82,6 +85,7 @@ export function latestThreadFile(sessionsDir) {
 /** 读 pi session 文件第一行的 id；失败返回 null。 */
 export function readSessionId(file) {
 	try {
+		if (statSync(file).size > THREAD_MAX_BYTES) return null;
 		const first = readFileSync(file, "utf8").split("\n", 1)[0];
 		const header = JSON.parse(first);
 		return typeof header?.id === "string" ? header.id : null;
@@ -94,6 +98,7 @@ export function readSessionId(file) {
 export function readSessionModel(file) {
 	let text;
 	try {
+		if (statSync(file).size > THREAD_MAX_BYTES) return null;
 		text = readFileSync(file, "utf8");
 	} catch {
 		return null;

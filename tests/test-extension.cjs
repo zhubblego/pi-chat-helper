@@ -168,6 +168,11 @@ function freePort() {
 		// ---- T4：真 pi 模型列表（进程内 chat host） ----
 		const chatCap = await (await fetch(`${url}api/chat/capabilities`)).json();
 		check("模式 A 对话 enabled（PATH pi 1.5.0）", chatCap.enabled === true, JSON.stringify(chatCap).slice(0, 300));
+		const realOrigin = new URL(url).origin;
+		const sameOrigin = await fetch(`${url}api/chat/capabilities`, { headers: { Origin: realOrigin } });
+		check("模式 A 同源 Origin（真实端口）200", sameOrigin.status === 200, String(sameOrigin.status));
+		const evilOrigin = await fetch(`${url}api/chat/capabilities`, { headers: { Origin: "http://evil.example" } });
+		check("模式 A 错误 Origin 403", evilOrigin.status === 403, String(evilOrigin.status));
 		if (chatCap.enabled) {
 			const modelsRes = await (await fetch(`${url}api/chat/models?source=pi&session=ext-1`)).json();
 			check("真 pi 模型列表非空", Array.isArray(modelsRes.models) && modelsRes.models.length > 0, JSON.stringify(modelsRes).slice(0, 300));

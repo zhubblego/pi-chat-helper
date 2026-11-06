@@ -11,7 +11,7 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import {
 	CONTEXT_SINGLE_LIMIT,
 	CONTEXT_TOTAL_LIMIT,
@@ -35,6 +35,19 @@ interface ActiveSnapshot {
 	source?: string;
 	sessionId?: string;
 	items?: ActiveItem[];
+}
+
+const MAX_TRAJECTORY_BYTES = 32 * 1024 * 1024;
+
+/** 轨迹文件过大时拒绝读取，避免把整份投影塞进模型上下文。 */
+function assertTrajectorySize(file: string) {
+	try {
+		const size = statSync(file).size;
+		if (size > MAX_TRAJECTORY_BYTES) throw new Error("read_trajectory：轨迹文件超过 32MB，请手动清理或裁剪后再用");
+	} catch (err) {
+		if (String((err as Error)?.message ?? err).includes("超过 32MB")) throw err;
+		/* 文件缺失/权限问题交给后续读取报错 */
+	}
 }
 
 interface ToolDetails {
@@ -120,6 +133,7 @@ export default function (pi: ExtensionAPI) {
 		async execute(_toolCallId, params): Promise<{ content: Array<{ type: "text"; text: string }>; details: ToolDetails }> {
 			const config = envConfig();
 			const { items } = readActive();
+			assertTrajectorySize(config.trajectoryFile);
 			assertTrajectoryIdentity(config);
 			if (params.action === "list") {
 				if (!items.length) {

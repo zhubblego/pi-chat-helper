@@ -10,7 +10,7 @@
  * 本文件不 import pi SDK；子进程用 CLI 启动。
  */
 import { spawn } from "node:child_process";
-import { accessSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +43,7 @@ import {
 	readSessionModel,
 	readTurns,
 	selectionDelta,
+	THREAD_MAX_BYTES,
 	upsertTurn,
 	writeContextNext,
 } from "./chat-session.mjs";
@@ -94,14 +95,14 @@ export function checkChatDir(chatDir, sessionRoots = []) {
 	for (const root of sessionRoots) {
 		if (!root) continue;
 		if (isPathInside(resolve(root), dir)) {
-			return { ok: false, dir, reason: `chatDir 不能位于轨迹会话目录内：${dir}` };
+			return { ok: false, dir, reason: "chatDir 不能位于轨迹会话目录内" };
 		}
 	}
 	try {
 		mkdirSync(dir, { recursive: true, mode: 0o700 });
 		accessSync(dir, constants.W_OK | constants.X_OK);
 	} catch (err) {
-		return { ok: false, dir, reason: `chatDir 不可写：${err.message}` };
+		return { ok: false, dir, reason: `chatDir 不可写：${err.code ?? "unknown"}` };
 	}
 	return { ok: true, dir };
 }
@@ -433,7 +434,7 @@ function disabledCapabilities(chatDir, reason) {
 			approval: false,
 			streaming: false,
 		},
-		reason,
+		reason: typeof reason === "string" ? reason.slice(0, 500) : reason,
 	};
 }
 
@@ -656,6 +657,19 @@ export function createChatHost(deps = {}) {
 		if (record && record.state !== "dead") record.lastUsedAt = Date.now();
 	}
 
+	function assertThreadFileSize(fileRecord) {
+		if (fileRecord?.size > THREAD_MAX_BYTES) throw httpError(400, "线程文件超过 32MB，请先手动清理");
+	}
+
+	function assertTrajectoryFileSize(file) {
+		if (!file) return;
+		try {
+			if (statSync(file).size > THREAD_MAX_BYTES) throw httpError(400, "轨迹文件超过 32MB，无法读取上下文");
+		} catch (err) {
+			if (err?.status) throw err;
+		}
+	}
+
 	function projectOf(target, record) {
 		return projectSettings(readSettings(settingsPath), target.source, targetProjectPath(target, record));
 	}
@@ -753,6 +767,7 @@ export function createChatHost(deps = {}) {
 		const file = record.sessionFile && existsSync(record.sessionFile) ? record.sessionFile : null;
 		if (!file) return 1;
 		try {
+			if (statSync(file).size > THREAD_MAX_BYTES) throw new Error("线程文件超过 32MB");
 			const projection = buildProjection(file);
 			const mapped = parseThreadProjection(projection, []);
 			return mapped.messages.filter((message) => message.role === "user").length + 1;
@@ -785,6 +800,7 @@ export function createChatHost(deps = {}) {
 	}
 
 	function threadPayload({ source, sessionId, fileRecord, target, record, profile }) {
+		assertThreadFileSize(fileRecord);
 		let projection;
 		try {
 			projection = buildProjection(fileRecord.file);
@@ -913,7 +929,9 @@ export function createChatHost(deps = {}) {
 		let threadFile = null;
 		if (options.threadId) {
 			if (!isSafeThreadId(options.threadId)) throw httpError(400, "非法线程 id");
-			threadFile = findThreadFile(dirs.sessionsDir, options.threadId)?.file ?? null;
+			const threadRecord = findThreadFile(dirs.sessionsDir, options.threadId);
+			assertThreadFileSize(threadRecord);
+			threadFile = threadRecord?.file ?? null;
 		}
 		const args = spawnArgs({
 			sessionsDir: dirs.sessionsDir,
@@ -1208,6 +1226,7 @@ export function createChatHost(deps = {}) {
 	/** 把 contextIds 解析成 refs；不存在的 id 进 dropped。 */
 	function resolveContextItems(target, ids) {
 		if (!ids.length) return { items: [], dropped: [] };
+		assertTrajectoryFileSize(target.session?.file);
 		if (typeof deps.getProjection !== "function" || typeof deps.findEvent !== "function") {
 			throw httpError(501, "对话缺少轨迹投影依赖");
 		}
@@ -1321,14 +1340,19 @@ export function createChatHost(deps = {}) {
 		}
 		const requestedThread = payload.threadId ?? null;
 		if (requestedThread !== null && !isSafeThreadId(requestedThread)) throw httpError(400, "非法线程 id");
+		// 大轨迹在 spawn 前拒绝，避免先起 child 再 400。
+		if (contextIds.length) assertTrajectoryFileSize(target.session?.file);
 
 		const cap = await capabilities();
 		if (!cap.enabled) throw httpError(501, cap.reason ?? "对话未启用");
 
 		const dirs = chatSessionDirs(chatDir, target.source, target.sessionId);
 		// 未指定线程时沿用该轨迹会话最新的 pi session；都没有则由 pi 新建。
-		const desiredThreadId =
-			requestedThread ?? readSessionId(latestThreadFile(dirs.sessionsDir)?.file ?? "") ?? null;
+		const requestedFile = requestedThread ? findThreadFile(dirs.sessionsDir, requestedThread) : null;
+		assertThreadFileSize(requestedFile);
+		const latest = requestedThread ? null : latestThreadFile(dirs.sessionsDir);
+		assertThreadFileSize(latest);
+		const desiredThreadId = requestedThread ?? readSessionId(latest?.file ?? "") ?? null;
 
 		// 先占项目锁，再 ensureChild：否则容量淘汰/spawn 可能先发生，第二个同项目请求才拿到 409。
 		// 检查与占位之间不能有 await，否则并发请求会同时通过。
@@ -1634,6 +1658,7 @@ export function createChatHost(deps = {}) {
 		const record = children.get(key) ?? null;
 		touch(record);
 		const fileRecord = requested ? findThreadFile(dirs.sessionsDir, requested) : latestThreadFile(dirs.sessionsDir);
+		assertThreadFileSize(fileRecord);
 		let threadId = requested ?? null;
 		if (!requested && fileRecord) threadId = readSessionId(fileRecord.file) ?? null;
 		if (!requested && !fileRecord) threadId = record?.piSessionId ?? null;
@@ -1712,6 +1737,9 @@ export function createChatHost(deps = {}) {
 		if (requestedThread !== null && !isSafeThreadId(requestedThread)) throw httpError(400, "非法线程 id");
 
 		const dirs = chatSessionDirs(chatDir, target.source, target.sessionId);
+		const requestedFile = requestedThread !== null ? findThreadFile(dirs.sessionsDir, requestedThread) : null;
+		if (requestedThread !== null && !requestedFile) throw httpError(404, `线程 ${requestedThread} 不存在`);
+		assertThreadFileSize(requestedFile);
 		const record = await ensureChild(target.source, target.sessionId, { target });
 		touch(record);
 		const refresh = url.searchParams.get("refresh") === "1";
@@ -1731,8 +1759,7 @@ export function createChatHost(deps = {}) {
 		// child 没有模型时回退到最新 session 文件。
 		let current = null;
 		if (requestedThread !== null) {
-			const file = findThreadFile(dirs.sessionsDir, requestedThread);
-			if (!file) throw httpError(404, `线程 ${requestedThread} 不存在`);
+			const file = requestedFile;
 			const stored = readSessionModel(file.file);
 			current = stored ? currentModelOf({ provider: stored.provider, id: stored.id }, models) : null;
 		} else {
@@ -1746,6 +1773,7 @@ export function createChatHost(deps = {}) {
 				current = currentModelOf(state.data.model, models);
 			} else {
 				const latest = latestThreadFile(dirs.sessionsDir);
+				assertThreadFileSize(latest);
 				const stored = latest ? readSessionModel(latest.file) : null;
 				current = stored ? currentModelOf({ provider: stored.provider, id: stored.id }, models) : null;
 			}
@@ -1777,6 +1805,7 @@ export function createChatHost(deps = {}) {
 		if (requestedThread !== null) {
 			threadFile = findThreadFile(dirs.sessionsDir, requestedThread);
 			if (!threadFile) throw httpError(404, `线程 ${requestedThread} 不存在`);
+			assertThreadFileSize(threadFile);
 		}
 
 		const record = await ensureChild(target.source, target.sessionId, {
@@ -1896,7 +1925,7 @@ export function createChatHost(deps = {}) {
 			}
 			return false;
 		} catch (err) {
-			sendJson(res, err.status ?? 500, { error: err.message });
+			sendJson(res, err.status ?? 500, { error: errorText(err) });
 			return true;
 		}
 	}

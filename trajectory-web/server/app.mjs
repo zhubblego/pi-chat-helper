@@ -39,23 +39,91 @@ const TRANSLATE_LANGS = new Set(["zh-CN", "zh-TW", "en", "ja", "ko", "fr", "de",
 const TRANSLATE_SERVICES = new Set(["google", "bing"]);
 const BING_LANG = { "zh-CN": "zh-Hans", "zh-TW": "zh-Hant" };
 
-/** 读请求体（上限 1MB，超出拖断）。 */
+/** 读请求体（上限 1MB，超出 413；保留连接以便返回错误）。 */
 function readBody(req, limit = 1 << 20) {
 	return new Promise((resolve, reject) => {
 		let size = 0;
+		let rejected = false;
 		const chunks = [];
+		const fail = (message, status) => {
+			if (rejected) return;
+			rejected = true;
+			const error = new Error(message);
+			error.status = status;
+			reject(error);
+		};
 		req.on("data", (chunk) => {
+			if (rejected) return;
 			size += chunk.length;
 			if (size > limit) {
-				reject(new Error("请求体超过 1MB"));
-				req.destroy();
+				fail("请求体超过 1MB", 413);
+				req.resume();
 				return;
 			}
 			chunks.push(chunk);
 		});
-		req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-		req.on("error", reject);
+		req.on("end", () => {
+			if (!rejected) resolve(Buffer.concat(chunks).toString("utf8"));
+		});
+		req.on("error", (err) => {
+			if (!rejected) reject(err);
+		});
 	});
+}
+
+// 回环 Host/Origin：只接受 127.0.0.1、localhost、[::1]；端口只校验格式，Origin 另比对实际监听端口。
+const LOOPBACK_NAMES = new Set(["127.0.0.1", "localhost", "[::1]"]);
+const LOOPBACK_BINDS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+
+function isLoopbackBindHost(host) {
+	return LOOPBACK_BINDS.has(String(host ?? "").toLowerCase());
+}
+
+function parseHostHeader(value) {
+	if (typeof value !== "string") return null;
+	const match = /^(\[::1\]|127\.0\.0\.1|localhost)(?::(\d{1,5}))?$/i.exec(value.trim());
+	if (!match) return null;
+	const port = match[2] === undefined ? null : Number(match[2]);
+	if (port !== null && (port < 1 || port > 65535)) return null;
+	return { hostname: match[1].toLowerCase(), port };
+}
+
+function parseOriginHeader(value) {
+	if (typeof value !== "string" || !value || value === "null") return null;
+	let url;
+	try {
+		url = new URL(value);
+	} catch {
+		return null;
+	}
+	if (url.protocol !== "http:") return null;
+	if (!LOOPBACK_NAMES.has(url.hostname.toLowerCase())) return null;
+	if (url.username || url.password || url.pathname !== "/" || url.search || url.hash) return null;
+	return { port: url.port || "80" };
+}
+
+function isJsonContentType(value) {
+	if (typeof value !== "string") return false;
+	return value.split(";", 1)[0].trim().toLowerCase() === "application/json";
+}
+
+/** chat 前缀/所有 POST 的请求门：Host、Origin、chat POST Content-Type。 */
+function requestGate(req, isChatPrefix) {
+	const isPost = req.method === "POST";
+	if (!isChatPrefix && !isPost) return null;
+	const host = parseHostHeader(req.headers.host);
+	if (!host) return { status: 403, error: "Host 不被允许" };
+	const origin = req.headers.origin;
+	if (origin !== undefined) {
+		const parsed = parseOriginHeader(origin);
+		if (!parsed) return { status: 403, error: "Origin 不被允许" };
+		const actualPort = String(req.socket?.localPort ?? "");
+		if (parsed.port !== actualPort) return { status: 403, error: "Origin 端口与服务不一致" };
+	}
+	if (isChatPrefix && isPost && !isJsonContentType(req.headers["content-type"])) {
+		return { status: 403, error: "Content-Type 必须为 application/json" };
+	}
+	return null;
 }
 
 /** 远程 POST（优先 https_proxy/HTTPS_PROXY/all_proxy 环境变量经 curl -x，否则直连），返回响应体文本。 */
@@ -291,7 +359,9 @@ export function createTrajectoryServer(options) {
 	}
 
 	function sendJson(res, status, body) {
-		const data = JSON.stringify(body);
+		const safeBody =
+			body && typeof body === "object" && typeof body.error === "string" ? { ...body, error: body.error.slice(0, 500) } : body;
+		const data = JSON.stringify(safeBody);
 		res.writeHead(status, {
 			"content-type": "application/json; charset=utf-8",
 			"content-length": Buffer.byteLength(data),
@@ -306,8 +376,15 @@ export function createTrajectoryServer(options) {
 	}
 
 	// ---- 对话控制面（T1 起：capabilities；后续加线程/SSE） ----
-	const chatEnabled =
+	const requestedChat =
 		options.chat === false ? false : options.chat === true || Boolean(options.chatDir || options.piBin || options.hostEntry);
+	const chatOnLoopback = isLoopbackBindHost(host);
+	const chatEnabled = requestedChat && chatOnLoopback;
+	const chatDisabledReason =
+		requestedChat && !chatOnLoopback
+			? "对话服务已禁用：服务监听非回环地址"
+			: "对话服务未启用（未注入 chatDir/piBin，或 --no-chat）";
+	if (requestedChat && !chatOnLoopback) log(`[chat] 监听地址 ${host} 非回环，对话服务已禁用`);
 	const piBin =
 		typeof options.piBin === "string"
 			? { cmd: options.piBin, argsPrefix: [], mode: true, display: options.piBin }
@@ -343,8 +420,20 @@ export function createTrajectoryServer(options) {
 
 	const server = createServer(async (req, res) => {
 		try {
-			const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+			let url;
+			try {
+				url = new URL(req.url ?? "/", "http://localhost");
+			} catch {
+				sendJson(res, 400, { error: "请求 URL 不合法" });
+				return;
+			}
 			const pathname = url.pathname;
+			const isChatPrefix = pathname.startsWith("/api/chat/");
+			const gate = requestGate(req, isChatPrefix);
+			if (gate) {
+				sendJson(res, gate.status, { error: gate.error });
+				return;
+			}
 			if (req.method === "POST") {
 				// 只开放翻译、裁剪与对话；其余 POST 一律 405
 				if (pathname !== "/api/translate" && pathname !== "/api/context-edit" && pathname !== "/api/crop-entry" && !CHAT_POSTS.has(pathname)) {
@@ -363,7 +452,7 @@ export function createTrajectoryServer(options) {
 						try {
 							chatBody = await readBody(req);
 						} catch (err) {
-							sendJson(res, 400, { error: err.message });
+							sendJson(res, err.status ?? 400, { error: err.message });
 							return;
 						}
 					}
@@ -379,11 +468,11 @@ export function createTrajectoryServer(options) {
 						profiles: [],
 						defaultProfile: null,
 						features: {},
-						reason: "对话服务未启用（未注入 chatDir/piBin，或 --no-chat）",
+						reason: chatDisabledReason,
 					});
 					return;
 				}
-				sendJson(res, 501, { error: "对话服务未启用" });
+				sendJson(res, 501, { error: chatDisabledReason });
 				return;
 			}
 
@@ -709,7 +798,7 @@ export function createTrajectoryServer(options) {
 		} catch (err) {
 			log(`请求处理失败：${err.stack ?? err.message}`);
 			try {
-				sendJson(res, 500, { error: String(err.message ?? err) });
+				sendJson(res, err.status ?? 500, { error: String(err.message ?? err) });
 			} catch {
 				/* 响应可能已发出 */
 			}
