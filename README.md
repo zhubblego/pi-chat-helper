@@ -107,6 +107,10 @@ npm run dev        # 默认 http://127.0.0.1:7788
 
 列表扫描都只读文件头（pi 256KB、Codex 分块增量到 1MB 早停）并用 mtime+size 缓存；`live` = 30 秒内有写入。Codex 的 `AGENTS.md`/skills 注入消息不算首条提问。
 
+### 对话存储
+
+对话线程是独立的 pi session，落在 `<chatDir>/<source>/<safeSessionId>/sessions`；`chatDir` 默认 `<agentDir>/pi-chat-helper/chats`，删除它不影响轨迹历史。`meta/turns.jsonl` 每行带 `threadId`，以 `(threadId, ordinal)` 为键，`ordinal` 按该线程的 user 消息顺序递增；同轨迹会话的多个 pi thread 互不覆盖。
+
 ### 界面风格
 
 全部组件使用 deepseek 设计 token（`web/tokens.css`），复刻自 deepseek-harness 的 `ui-theme`（MIT，上游提交 `571902028a`）：设计平台色板、语义别名、字体/圆角/动效、滚动条与焦点环。暗色由 `body[data-ds-dark-theme]` 承载，默认跟随系统；顶栏主题按钮可循环切换「跟随系统 → 浅色 → 深色」（偏好持久化于 `localStorage`，首帧内联脚本防闪屏）。`tokens.css` 是生成产物，请勿手改；更新时回上游同步后重新生成。

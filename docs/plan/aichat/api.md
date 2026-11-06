@@ -192,7 +192,9 @@ GET /api/chat/skills?source=pi&session=<id>[&refresh=1]
 
 - 数据源：child `get_commands` 过滤 `source === "skill"`；`name` 去掉 `skill:` 前缀。
 - `filePath/baseDir/scope/origin/source` 来自 `sourceInfo`；`scope` 可能是 `temporary` 或缺失，前端要兜底。
-- `chars` 由服务端 `stat` 得到，用于大小守卫；读不到时 `null`。
+- `chars` 由服务端读取 `SKILL.md` 后按 JS 字符串长度（字符）计算，用于大小守卫；不是 `stat` 字节数。读不到时 `null`。
+- `disableModelInvocation` 由服务端解析 `SKILL.md` frontmatter（`disable-model-invocation: true`）；pi 的 `get_commands` 不提供该字段。
+- `diagnostics` 只含技能文件读取失败的诊断；pi RPC 不暴露资源发现阶段的诊断。
 - `projectSkills` 是当前项目设置；默认 `false`（child 用 `-na`，只加载全局技能）。
 - `refresh=1`：重启 child（kill + spawn）以重新发现技能，再 `get_commands`。开销约 1 秒，前端显示 loading。
 - 模式 A 的跨项目限制：`--all` 查看其它项目时，列表来自 child 的 cwd（当前轨迹项目的 `projectPath`）；项目技能开关按项目生效。
@@ -204,7 +206,7 @@ GET /api/chat/skills?source=pi&session=<id>[&refresh=1]
 - 大小守卫：
   - `> 32,000` 字符：面板/发送前提示确认，用户确认后仍发送；
   - `> 200,000` 字符：400 拒绝，提示「技能正文过大，请在 SKILL.md 里拆分或精简」。
-- `disableModelInvocation` 由 pi 处理；前端只在列表里做可选徽标。
+- `disableModelInvocation` 由前端用于「仅手动」徽标；是否排除出模型提示由 pi 处理。
 
 ## 5. 线程
 
@@ -325,6 +327,7 @@ Content-Type: application/json
 
 - `profile` 枚举：`no-tools` / `read-only` / `full`；非法 400。
 - 有活动 turn 时 409；否则写 settings，杀掉该轨迹会话的 child，下一次请求按新参数重启。
+- 当前只杀目标轨迹会话的 child；同项目其它 child 不会立即重启，会在下次技能查询检测到设置差异时（无活动 turn）重启。T8 进程池统一处理跨会话回收。
 - 响应：`{ "ok": true, "profile": "full", "projectSkills": true, "restart": true }`。
 
 ## 7. 发送（SSE）
@@ -465,12 +468,14 @@ Content-Type: application/json
 每行一条 user 轮的展示元数据：
 
 ```json
-{"ordinal":7,"ts":"2026-11-05T09:01:00.000Z","displayText":"这个工具为什么失败？","contextIds":["a1:p2"],"skill":"trajectory-web-maintenance","profile":"read-only","model":{"provider":"litellm","id":"glm-5.3","name":"GLM-5.3"}}
+{"threadId":"20261105T090000-abc","ordinal":7,"ts":"2026-11-05T09:01:00.000Z","displayText":"这个工具为什么失败？","contextRefs":[{"id":"a1:p2","kind":"tool","label":"工具","preview":"bash ..."}],"skill":{"name":"trajectory-web-maintenance","chars":1876,"warning":false},"profile":"read-only","model":{"provider":"litellm","id":"glm-5.3","name":"GLM-5.3"}}
 ```
 
-- `ordinal` 从 1 开始，按该线程 user 消息顺序递增；与投影里的 user 消息对齐。
-- 写入时机：发送成功、`meta` 事件之后（若发送前失败则不写）。
-- 读取时忽略坏行；缺失时前端回退剥离已知标签。
+- `threadId` 是 pi session id；`ordinal` 从 1 开始，按**该线程**的 user 消息顺序递增，与投影里的 user 消息对齐。
+- 键为 `(threadId, ordinal)`；`readTurns(metaDir, threadId)` 只返回该线程记录，`upsertTurn` 以该键覆盖（后写胜）。旧的无 `threadId` 记录不会被任何线程匹配，仅在全量读取（不传 `threadId`）时可见。
+- 写入时机：校验/占锁后、`prompt` 前；先写 sidecar 再发送，发送前失败则本轮记录由下一次同键 upsert 覆盖。
+- `skill` 是对象（`name/chars/warning`），无技能时为 `null`；`contextRefs` 由 T6 填充。
+- 读取时忽略坏行；缺失/不匹配时前端回退剥离已知标签。
 
 ### 8.4 `meta/context.*.json`
 

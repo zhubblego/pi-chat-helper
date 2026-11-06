@@ -10,6 +10,7 @@
 | `trajectory-web/server/chat-host.mjs` | 新增 | 子进程池、RPC 协议、SSE 映射、审批桥、设置、线程路由分发 |
 | `trajectory-web/server/pi-binary.mjs` | 新增 | pi 可执行文件解析与版本探测 |
 | `trajectory-web/server/chat-session.mjs` | 新增 | 纯函数：pi session 投影 → 对话消息、侧车轮次、清单/delta、路径校验 |
+| `trajectory-web/server/chat-settings.mjs` | 新增 | 纯函数：`settings.json` 原子读写、按项目分键、profile/projectSkills 默认与校验 |
 | `trajectory-web/server/context-render.mjs` | 新增 | 纯函数：单条轨迹事件渲染（服务端与子进程扩展共用） |
 | `trajectory-web/server/app.mjs` | 修改 | 注入 `chatDir`/`piBin`；挂 `/api/chat/*`；POST 白名单；安全校验；静态资源；close 顺序 |
 | `trajectory-web/server/main.mjs` | 修改 | `--chat-dir`、`--no-chat`、`--pi-bin`；把解析结果传给 server |
@@ -262,7 +263,8 @@ sanitizeSegment(name)
 chatDirFor(chatDir, source, sessionId)
 sessionsDirFor(...) / metaDirFor(...)
 threadPath(...) / latestThreadFile(...)     // mtime + 文件名兜底
-readTurns(metaDir) / appendTurn(metaDir, rec)
+readTurns(metaDir, threadId) / upsertTurn(metaDir, rec)
+appendTurn(metaDir, rec)                    // 仅兼容，不参与新写入
 readContext(metaDir) / writeContextNext(metaDir, snap) / promoteContext(metaDir)
 parseThreadProjection(full, turns)          // pi 投影 -> 对话 messages
 buildTrajectoryIndex(items)                 // <trajectory_index>
@@ -604,7 +606,7 @@ export function initChatPanel(deps) { ... }
 - `selectionDelta`：added/removed/无变化。
 - `renderContextEvent`：user/answer/text/thinking/tool/bash/system/compaction/custom/approval 的标签与内容；单条截断。
 - `parseThreadProjection`：user/assistant/tool/notice 映射；`displayText` 优先 sidecar，缺失时剥离标签；thinking 默认不进消息。
-- `readTurns/appendTurn`：坏行忽略、ordinal 递增。
+- `readTurns/upsertTurn`：坏行忽略；`readTurns(metaDir, threadId)` 按线程过滤；`upsertTurn` 以 `(threadId, ordinal)` 为键覆盖；`appendTurn` 仅兼容旧调用。
 - `readContext/writeContextNext/promoteContext`：原子提升、损坏 JSON 回退空。
 - `latestThreadFile`：mtime 相同时按文件名兜底。
 - `settings`：默认值、非法 profile 拒绝、按项目分键。
