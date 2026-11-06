@@ -126,25 +126,30 @@ export function findThreadFile(sessionsDir, id) {
 	return null;
 }
 
-/** 读 meta/turns.jsonl；坏行忽略，按 ordinal 升序。 */
-export function readTurns(metaDir) {
+/** 读 meta/turns.jsonl；坏行忽略，按 (ordinal, threadId) 升序。传 threadId 时只返回该线程。 */
+export function readTurns(metaDir, threadId) {
 	let text;
 	try {
 		text = readFileSync(join(metaDir, "turns.jsonl"), "utf8");
 	} catch {
 		return [];
 	}
+	const filterByThread = threadId !== undefined && threadId !== null;
 	const turns = [];
 	for (const line of text.split("\n")) {
 		if (!line.trim()) continue;
 		try {
 			const record = JSON.parse(line);
-			if (record && Number.isInteger(Number(record.ordinal))) turns.push(record);
+			if (!record || !Number.isInteger(Number(record.ordinal))) continue;
+			if (filterByThread && record.threadId !== threadId) continue;
+			turns.push(record);
 		} catch {
 			/* 忽略坏行 */
 		}
 	}
-	turns.sort((a, b) => Number(a.ordinal) - Number(b.ordinal));
+	turns.sort(
+		(a, b) => Number(a.ordinal) - Number(b.ordinal) || String(a.threadId ?? "").localeCompare(String(b.threadId ?? "")),
+	);
 	return turns;
 }
 
@@ -155,15 +160,21 @@ export function appendTurn(metaDir, record) {
 }
 
 /**
- * 写一轮元数据：同 ordinal 覆盖（后写胜），其余保留，原子替换。
- * 重复发送/失败重试不会让 turns.jsonl 无限长出重复行。
+ * 写一轮元数据：以 (threadId, ordinal) 为键覆盖（后写胜），其余保留，原子替换。
+ * 旧的无 threadId 记录不会被任何线程匹配，也不会被本函数删除。
  */
 export function upsertTurn(metaDir, record) {
 	const ordinal = Number(record?.ordinal);
 	if (!Number.isInteger(ordinal)) throw new Error("ordinal 需为整数");
-	const kept = readTurns(metaDir).filter((item) => Number(item.ordinal) !== ordinal);
-	kept.push({ ...record, ordinal });
-	kept.sort((a, b) => Number(a.ordinal) - Number(b.ordinal));
+	const threadId = typeof record?.threadId === "string" ? record.threadId : "";
+	if (!threadId) throw new Error("turn 缺少 threadId");
+	const kept = readTurns(metaDir).filter(
+		(item) => !(item.threadId === threadId && Number(item.ordinal) === ordinal),
+	);
+	kept.push({ ...record, threadId, ordinal });
+	kept.sort(
+		(a, b) => Number(a.ordinal) - Number(b.ordinal) || String(a.threadId ?? "").localeCompare(String(b.threadId ?? "")),
+	);
 	mkdirSync(metaDir, { recursive: true, mode: 0o700 });
 	const file = join(metaDir, "turns.jsonl");
 	const tmp = `${file}.tmp`;

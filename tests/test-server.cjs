@@ -550,6 +550,7 @@ async function stopServer(child) {
 		check(
 			"send skill：turns.jsonl 写 displayText/skill/contextRefs/profile",
 			turn2?.displayText === "你好" &&
+				turn2?.threadId === "thread-ord" &&
 				turn2?.skill?.name === "demo" &&
 				Array.isArray(turn2?.contextRefs) &&
 				turn2?.profile === "read-only" &&

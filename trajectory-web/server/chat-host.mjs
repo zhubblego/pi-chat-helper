@@ -673,8 +673,9 @@ export function createChatHost(deps = {}) {
 			const mapped = parseThreadProjection(projection, []);
 			return mapped.messages.filter((message) => message.role === "user").length + 1;
 		} catch {
-			// 文件正在写/损坏：退到 turns 的最大 ordinal + 1，避免重复覆盖
-			const turns = readTurns(record.metaDir);
+			// 文件正在写/损坏：退到同线程 turns 的最大 ordinal + 1，避免重复覆盖
+			const threadId = record.piSessionId ?? (record.sessionFile ? readSessionId(record.sessionFile) : null);
+			const turns = threadId ? readTurns(record.metaDir, threadId) : [];
 			return Math.max(0, ...turns.map((turn) => Number(turn.ordinal) || 0)) + 1;
 		}
 	}
@@ -707,9 +708,10 @@ export function createChatHost(deps = {}) {
 			throw httpError(500, `线程文件解析失败：${err.message}`);
 		}
 		const dirs = chatSessionDirs(chatDir, source, sessionId);
-		const turns = readTurns(dirs.metaDir);
+		// 先确定线程 id，再只取该线程的 turns；旧的无 threadId 记录不参与映射。
+		const id = readSessionId(fileRecord.file) ?? projection.meta?.id ?? null;
+		const turns = id ? readTurns(dirs.metaDir, id) : [];
 		const mapped = parseThreadProjection(projection, turns);
-		const id = mapped.id ?? readSessionId(fileRecord.file) ?? null;
 		const pending = Boolean(record?.currentTurn) && (!id || record.piSessionId === id);
 		return {
 			thread: {
@@ -1043,6 +1045,7 @@ export function createChatHost(deps = {}) {
 			// 先写 sidecar 再 prompt：显示文本/技能/模型由它保存；写失败只记日志，不阻断对话。
 			try {
 				upsertTurn(record.metaDir, {
+					threadId: record.piSessionId,
 					ordinal: userOrdinal,
 					displayText: resolved.displayText,
 					contextRefs: [],

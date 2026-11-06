@@ -309,15 +309,30 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 
 	// ---- turns：同 ordinal 覆盖（后写胜） ----
 	const upsertDir = path.join(tmp, "turns-upsert");
-	chatSession.appendTurn(upsertDir, { ordinal: 1, displayText: "旧" });
-	chatSession.upsertTurn(upsertDir, { ordinal: 1, displayText: "新" });
-	chatSession.upsertTurn(upsertDir, { ordinal: 2, displayText: "二" });
-	const upserted = chatSession.readTurns(upsertDir);
+	chatSession.upsertTurn(upsertDir, { threadId: "t1", ordinal: 1, displayText: "旧" });
+	chatSession.upsertTurn(upsertDir, { threadId: "t1", ordinal: 1, displayText: "新" });
+	chatSession.upsertTurn(upsertDir, { threadId: "t1", ordinal: 2, displayText: "二" });
+	chatSession.upsertTurn(upsertDir, { threadId: "t2", ordinal: 1, displayText: "另一线程" });
+	const upserted = chatSession.readTurns(upsertDir, "t1");
 	check(
-		"upsertTurn：同 ordinal 覆盖且保持排序",
+		"upsertTurn：同 threadId+ordinal 覆盖且保持排序",
 		upserted.length === 2 && upserted[0].displayText === "新" && upserted[1].ordinal === 2,
 		JSON.stringify(upserted),
 	);
+	check(
+		"readTurns：同 ordinal 的不同线程互不覆盖",
+		chatSession.readTurns(upsertDir, "t2").length === 1 &&
+			chatSession.readTurns(upsertDir, "t2")[0].displayText === "另一线程" &&
+			chatSession.readTurns(upsertDir).length === 3,
+		JSON.stringify(chatSession.readTurns(upsertDir, "t2")),
+	);
+	let missingThreadIdThrew = false;
+	try {
+		chatSession.upsertTurn(upsertDir, { ordinal: 9, displayText: "无线程" });
+	} catch {
+		missingThreadIdThrew = true;
+	}
+	check("upsertTurn：缺 threadId 拒绝", missingThreadIdThrew);
 
 	const projFile = path.join(tmp, "proj-chat", "2026-01-01T00-00-00-000Z_thread-a.jsonl");
 	writePiSessionFile(projFile, {
@@ -424,7 +439,7 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 	fs.mkdirSync(path.join(chatHttpDir, "pi", "chat-sess-1", "meta"), { recursive: true });
 	fs.writeFileSync(
 		path.join(chatHttpDir, "pi", "chat-sess-1", "meta", "turns.jsonl"),
-		JSON.stringify({ ordinal: 1, displayText: "问题 A", contextRefs: [{ id: "a1:p2", kind: "tool", label: "工具", preview: "bash" }] }) + "\n",
+		JSON.stringify({ threadId: "thread-a", ordinal: 1, displayText: "问题 A", contextRefs: [{ id: "a1:p2", kind: "tool", label: "工具", preview: "bash" }] }) + "\n",
 	);
 
 	const traceFile = path.join(tmp, "pi-trace.log");
@@ -677,7 +692,7 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 
 	// ---- T5：技能选择 / 大小守卫 / 直输 / ordinal / turns ----
 	const skillMetaDir = path.join(chatHttpDir, "pi", "chat-sess-1", "meta");
-	chatSession.upsertTurn(skillMetaDir, { ordinal: 5, displayText: "占位" });
+	chatSession.upsertTurn(skillMetaDir, { threadId: "thread-dummy", ordinal: 5, displayText: "占位" });
 	const traceBeforeSkill = fs.readFileSync(traceFile, "utf8");
 	const bigSkill = await readSse(await send("hi", { threadId: "thread-b", skill: "big" }));
 	const bigMeta = bigSkill.events.find((e) => e.event === "meta")?.data ?? {};
@@ -693,10 +708,10 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 	);
 	const traceAfterBig = fs.readFileSync(traceFile, "utf8").slice(traceBeforeSkill.length);
 	check("send skill：prompt 拼 /skill:name 前缀", traceAfterBig.includes('prompt:"/skill:big\\n\\nhi"'), traceAfterBig);
-	const bigTurn = chatSession.readTurns(skillMetaDir).find((turn) => turn.ordinal === 2);
+	const bigTurn = chatSession.readTurns(skillMetaDir, "thread-b").find((turn) => turn.ordinal === 2);
 	check(
 		"send skill：upsertTurn 写 displayText/skill/contextRefs",
-		bigTurn?.displayText === "hi" && bigTurn?.skill?.name === "big" && Array.isArray(bigTurn?.contextRefs) && bigTurn?.profile === "read-only",
+		bigTurn?.displayText === "hi" && bigTurn?.skill?.name === "big" && Array.isArray(bigTurn?.contextRefs) && bigTurn?.profile === "read-only" && bigTurn?.threadId === "thread-b",
 		JSON.stringify(bigTurn),
 	);
 	const hugeRes = await postJson(`${handle.url}api/chat/send`, { source: "pi", session: "chat-sess-1", threadId: "thread-b", prompt: "hi", skill: "huge" });
@@ -726,6 +741,39 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 		"直输未知技能：pi 行为透传（200 + 原文）",
 		unknownMeta.skill?.name === "nope" && unknownMeta.skill?.chars === null && unknownTrace.includes('prompt:"/skill:nope 你好"'),
 		JSON.stringify(unknownMeta.skill),
+	);
+
+	// ---- P1 回归：同 session 两个 thread 的 ordinal 1 互不覆盖 ----
+	const isoAFile = path.join(chatHttpDir, "pi", "chat-sess-1", "sessions", "2026-01-01T00-00-00-000Z_thread-iso-a.jsonl");
+	const isoBFile = path.join(chatHttpDir, "pi", "chat-sess-1", "sessions", "2026-01-01T00-00-00-000Z_thread-iso-b.jsonl");
+	writePiSessionFile(isoAFile, { id: "thread-iso-a", cwd: "/tmp/projA", userText: "原始 A" });
+	writePiSessionFile(isoBFile, { id: "thread-iso-b", cwd: "/tmp/projA", userText: "原始 B" });
+	chatSession.upsertTurn(skillMetaDir, { threadId: "thread-iso-a", ordinal: 1, displayText: "A 显示", contextRefs: [], skill: { name: "demo", chars: 1, warning: false } });
+	chatSession.upsertTurn(skillMetaDir, { threadId: "thread-iso-b", ordinal: 1, displayText: "B 显示", contextRefs: [], skill: { name: "big", chars: 2, warning: false } });
+	const userMessageOf = (json) => json.thread?.messages?.find((message) => message.role === "user");
+	const isoA = await (await fetch(threadUrl("thread-iso-a"))).json();
+	const isoB = await (await fetch(threadUrl("thread-iso-b"))).json();
+	check(
+		"turns：同 session 两个 thread 的 ordinal 1 各自映射",
+		userMessageOf(isoA)?.displayText === "A 显示" &&
+			userMessageOf(isoA)?.skill?.name === "demo" &&
+			userMessageOf(isoB)?.displayText === "B 显示" &&
+			userMessageOf(isoB)?.skill?.name === "big",
+		JSON.stringify([userMessageOf(isoA), userMessageOf(isoB)]),
+	);
+	chatSession.upsertTurn(skillMetaDir, {
+		threadId: "thread-iso-a",
+		ordinal: 1,
+		displayText: "A 改",
+		contextRefs: [],
+		skill: { name: "demo", chars: 1, warning: true },
+	});
+	const isoA2 = await (await fetch(threadUrl("thread-iso-a"))).json();
+	const isoB2 = await (await fetch(threadUrl("thread-iso-b"))).json();
+	check(
+		"turns：覆盖 A 的 ordinal 1 不影响 B",
+		userMessageOf(isoA2)?.displayText === "A 改" && userMessageOf(isoB2)?.displayText === "B 显示",
+		JSON.stringify([userMessageOf(isoA2), userMessageOf(isoB2)]),
 	);
 
 	const crash = await readSse(await send("exit"));
