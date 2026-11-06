@@ -156,7 +156,7 @@ export async function probePi(pi, { timeoutMs = 5000 } = {}) {
 4. 解析 context：`getProjection` → `findEvent` 逐条；写 `context.next.json`；rename `context.active.json`；算 `added/removed`。
 5. 解析 skill：`get_commands` 找名字；读 `SKILL.md` 做大小守卫；拼 `/skill:<name>` 前缀。
 6. 确保线程：`threadId` 为空则 `new_session`；否则若与 child 当前 session 不同则 `switch_session`。
-7. 组装 user 文本：可选 `<trajectory_index>`/`<trajectory_index_delta>` + skill 前缀 + prompt。
+7. 组装 user 文本：skill 前缀（最前，保证 pi 原生展开） + 可选 `<trajectory_index>`/`<trajectory_index_delta>` + prompt。
 8. 写 `meta` 事件（含 `threadId/userOrdinal/model/profile/context/skill`）。
 9. 写 SSE 头；启动 keepalive（15s）。
 10. `prompt` 命令；订阅事件直到 `agent_end`/`error`/`res.close`。
@@ -381,13 +381,13 @@ profile 差异：
 | profile | 工具参数 | 额外扩展 | 行为 |
 |---|---|---|---|
 | `no-tools` | `--no-builtin-tools` | 无 | 只有 `read_trajectory` |
-| `read-only` | `--tools read,grep,ls` | 无 | 只读工具 + `read_trajectory`（默认） |
-| `full` | `--tools read,write,edit,bash` | `-e chat-approval.ts` | 全量工具，写/命令逐次审批 |
+| `read-only` | `--tools read,grep,ls,read_trajectory` | 无 | 只读工具 + `read_trajectory`（默认） |
+| `full` | `--tools read,write,edit,bash,read_trajectory` | `-e chat-approval.ts` | 全量工具，写/命令逐次审批 |
 
 注意：
 
 - 用 `--no-builtin-tools` 而不是 `--no-tools`：后者会把扩展注册的 `read_trajectory` 也关掉。
-- `--tools` 的 allowlist 不会关闭显式注册的扩展工具；`read_trajectory` 始终可用。
+- `--tools` 是**白名单**，pi 1.5 实测会过滤未列出的扩展工具；read-only/full 必须显式把 `read_trajectory` 写进 `--tools`，否则真子进程里工具不可见。
 - `-na` 与 `--skill` 可以共存：显式 CLI 技能路径以 `temporary` scope 加载，不受项目信任影响。
 - 项目技能目录候选：`<projectPath>/.pi/skills`、`<projectPath>/.agents/skills`（存在才传）。
 
@@ -668,6 +668,7 @@ export function initChatPanel(deps) { ... }
   - 首页 200 且含 `chat-profile`/`chat-approval`；
   - 无进程残留（`pgrep -f "mode rpc"`）。
 - 真浏览器：三档 profile、审批、工具卡片、切项目/线程、重启恢复。CDP 不可用时注明「未做浏览器实测」。
+- T6 现状：浏览器仍未实测（CDP 不可用）；chips/勾选/50 上限仅纯函数 + 源码守卫；工具整份投影未加 32MB 守卫（T9）；codex send 上下文未 e2e（T9）。
 
 ## 6. 提交拆分
 

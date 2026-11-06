@@ -326,6 +326,7 @@ Content-Type: application/json
 ```
 
 - `profile` 枚举：`no-tools` / `read-only` / `full`；非法 400。
+- profile 的工具白名单（`--tools` 会过滤未列出的扩展工具）：`no-tools` 用 `--no-builtin-tools`（保留扩展工具）；`read-only` 为 `read,grep,ls,read_trajectory`；`full` 为 `read,write,edit,bash,read_trajectory`（T7 再加审批扩展）。
 - 有活动 turn 时 409；否则写 settings，杀掉该轨迹会话的 child，下一次请求按新参数重启。
 - 当前只杀目标轨迹会话的 child；同项目其它 child 不会立即重启，会在下次技能查询检测到设置差异时（无活动 turn）重启。T8 进程池统一处理跨会话回收。
 - 响应：`{ "ok": true, "profile": "full", "projectSkills": true, "restart": true }`。
@@ -517,11 +518,13 @@ Content-Type: application/json
 
 - 前端 `state.selectedEvs`（与蒸馏模式共用）、`localStorage["tw.chatCtx"]`、上限 50。
 - 每次发送把 `contextIds` 传给服务端；服务端逐条 `findEvent` 校验，缺失进 `meta.context.dropped`。
-- 服务端写 `context.next.json` → rename `context.active.json`；`read_trajectory` 只读 `active`。
+- 服务端写 `context.next.json` → rename `context.active.json`；`context.active.json` **只作为 `read_trajectory` 的本轮快照**，不作为清单 delta 的基线。
+- delta 基线是**同一 pi 线程上一轮 `turns.contextRefs`**：`readTurns(metaDir, threadId)` 取最后一条；没有 turns 视为空。首次在该线程发送（上一轮为空）发完整清单；未变化不发；变化发 delta + 新清单。
+- `chars` 是事件经 `renderContextEvent` 渲染后的长度（单条最多 6,000 字符），不是原始正文全长；用于工具 `list` 与大小提示。
 
 ### 9.2 清单格式
 
-首次发送或选中集变化时，在 user 消息前插入：
+首次在该线程发送，或相对该线程上一轮 `contextRefs` 变化时，在 user 消息前插入：
 
 ```text
 <trajectory_index source="pi" session="ext-1" count="3">
@@ -537,10 +540,11 @@ Content-Type: application/json
 <trajectory_index_delta>{"added":["a2:p1"],"removed":["a1:p3"]}</trajectory_index_delta>
 ```
 
-- 首次：只发完整清单。
+- 首次（该线程上一轮无 `contextRefs`）：只发完整清单。
 - 未变化：不发。
 - 变化：delta + 新完整清单（清单很小，1–2k 字符）。
 - 清单里的 preview 截断到 80 字符；正文永远不进清单。
+- 多个线程共用同一个 `context.active.json`，但每个线程的 delta 基线各自独立（来自该线程上一轮 turns）。
 
 ### 9.3 `read_trajectory` 工具
 
@@ -549,7 +553,7 @@ Content-Type: application/json
 { "action": "read", "ids": ["a1:p2"], "query": "exit 1", "kind": "tool", "offset": 0, "limit": 3 }
 ```
 
-- `list`：返回当前选中集的 `id/kind/label/preview/chars`；空选中返回「当前没有选中条目」。
+- `list`：返回当前选中集的 `id/kind/label/preview/chars`；`chars` 为渲染后（单条 6k 上限）长度；空选中返回「当前没有选中条目」。
 - `read`：
   - `ids`：按当前选中集白名单读取；不在选中集的 id 逐条返回「不在当前选中集（可能已被取消勾选）」。
   - `query`：在当前选中集里做大小写不敏感的子串匹配；`kind` 可进一步过滤。
@@ -557,6 +561,8 @@ Content-Type: application/json
 - 上限：单条 6,000 字符，单次总量 12,000 字符；超出时返回截断标记 + 继续用的 offset。
 - 渲染复用服务端的 `renderContextEvent`（与轨迹详情一致），包含类型、轮次、时间、正文。
 - 工具只读，自动放行；仍以 `tool` 事件显示在 UI。
+- **codex 支持程度**：工具层已支持 `readCodexSession` + `buildProjectionFrom`（fixture 验证 list/read）；send 上下文链路是 source-agnostic 的，但 codex send 未做 e2e，留 T9 补。viewer 的 Guardian 审批合并只用于展示；工具读取时不合并 Guardian，勾选 Guardian-only 条目会得到「不在当前选中集/已失效」。
+- **已知限制**：工具读取整份轨迹投影，未加 32MB 大文件守卫（T9）；浏览器实测未做（CDP 不可用）；`tw.chatThread` 线程记忆未实现（T7「新对话」时补）。
 
 ### 9.4 增删语义
 
@@ -596,12 +602,14 @@ Content-Type: application/json
 按顺序拼接：
 
 ```text
+/skill:<name>                                   # 面板选择时，服务端拼；必须在最前
 <trajectory_index ...>...</trajectory_index>   # 首次/变化时
 <trajectory_index_delta>...</trajectory_index_delta>  # 变化时
-/skill:<name>                                   # 面板选择时，服务端拼
 <用户问题>
 ```
 
+- **skill 必须在最前**：pi 只在消息以 `/skill:` 开头时原生展开；index/delta 放在 skill 前会让技能命令退化为普通文本。
+- 直输 `/skill:name args` 时，context 块插在命令与 args 之间（`/skill:name` → index/delta → 原 args）。
 - 没有 skill/清单时对应块省略。
 - `displayText` 只存用户问题（不含注入块），用于 UI 气泡与 `turns.jsonl`。
 - 上下文正文**不进** user 消息；由工具按需取。
