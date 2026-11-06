@@ -147,6 +147,7 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 	const { RpcChild, createChatHost, checkChatDir, isPathInside, resolveAgentDir, sanitizeModel, providerNameOf } = await import(urlOf("trajectory-web/server/chat-host.mjs"));
 	const chatSession = await import(urlOf("trajectory-web/server/chat-session.mjs"));
 	const contextRender = await import(urlOf("trajectory-web/server/context-render.mjs"));
+	const approval = await import(urlOf("trajectory-web/server/approval.mjs"));
 	const chatSettings = await import(urlOf("trajectory-web/server/chat-settings.mjs"));
 	const { buildProjection } = await import(urlOf("trajectory-web/server/session.mjs"));
 
@@ -416,6 +417,29 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 	);
 	check("renderContextBatch：总量 12k 截断 + nextOffset", batch.truncated === true && batch.count === 2 && batch.nextOffset === 2 && batch.text.length <= 12000, JSON.stringify({ count: batch.count, nextOffset: batch.nextOffset, len: batch.text.length }));
 
+	// ---- 审批纯函数 ----
+	check(
+		"approval：toolName 中英文问号解析",
+		approval.parseApprovalToolName("允许 bash？") === "bash" &&
+			approval.parseApprovalToolName("允许 write?") === "write" &&
+			approval.parseApprovalToolName("允许 mcp__docs__search？") === "mcp__docs__search",
+		JSON.stringify([approval.parseApprovalToolName("允许 bash？"), approval.parseApprovalToolName("允许 write?")]),
+	);
+	check("approval：非审批标题返回 null", approval.parseApprovalToolName("随便") === null && approval.parseApprovalToolName(null) === null);
+	check("approval：AUTO 集合", approval.isAutoApprovedTool("read_trajectory") && approval.isAutoApprovedTool("read") && !approval.isAutoApprovedTool("bash"));
+	check(
+		"approval：摘要截断 500",
+		approval.approvalMessageSummary("x".repeat(600)).length === 501 && approval.approvalMessageSummary("ok") === "ok" && approval.approvalMessageSummary(null) === "",
+	);
+	check(
+		"approval：timeout 毫秒→秒 + 默认 120s",
+		approval.approvalTimeoutMs(5000) === 5000 &&
+			approval.approvalTimeoutMs(undefined) === 120000 &&
+			approval.approvalTimeoutMs("bad") === 120000 &&
+			approval.approvalTimeoutSeconds(120000) === 120 &&
+			approval.approvalTimeoutSeconds(120) === 1,
+	);
+
 	const projFile = path.join(tmp, "proj-chat", "2026-01-01T00-00-00-000Z_thread-a.jsonl");
 	writePiSessionFile(projFile, {
 		id: "thread-a",
@@ -540,7 +564,7 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 	check("HTTP：capabilities 200 且 enabled", capHttp.enabled === true && capHttp.piVersion === "1.5.0", JSON.stringify(capHttp));
 	const health = await (await fetch(`${handle.url}api/health`)).json();
 	check("HTTP：轨迹 health 不受影响", health.ok === true && health.scope === "all");
-	check("HTTP：未实现的 chat 路由 501", (await fetch(`${handle.url}api/chat/approval?source=pi&session=chat-sess-1`)).status === 501);
+	check("HTTP：未实现的 chat 路由 501", (await fetch(`${handle.url}api/chat/unknown?source=pi&session=chat-sess-1`)).status === 501);
 
 	const threadUrl = (thread) =>
 		`${handle.url}api/chat/thread?source=pi&session=chat-sess-1${thread ? `&thread=${encodeURIComponent(thread)}` : ""}`;

@@ -174,3 +174,21 @@ export function pruneContextIds(ids, eventsById) {
 			: (id) => Boolean(eventsById?.[id]);
 	return (Array.isArray(ids) ? ids : []).filter((id) => typeof id === "string" && id && has(id));
 }
+
+/** tw.chatThread：读取某个 source:session 记住的 pi session id。 */
+export function readThreadId(map, key) {
+	const value = map && typeof map === "object" ? map[key] : null;
+	return typeof value === "string" && value ? value : null;
+}
+
+/** tw.chatThread：写回记住的线程（不改原 map）。 */
+export function rememberThread(map, key, threadId) {
+	return { ...(map && typeof map === "object" ? map : {}), [key]: String(threadId) };
+}
+
+/** tw.chatThread：删除失效线程记忆（不改原 map）。 */
+export function forgetThread(map, key) {
+	const next = { ...(map && typeof map === "object" ? map : {}) };
+	delete next[key];
+	return next;
+}

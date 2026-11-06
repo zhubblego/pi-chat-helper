@@ -306,6 +306,39 @@ function freePort() {
 		delete process.env.PI_CHAT_SOURCE;
 		delete process.env.PI_CHAT_SESSION_ID;
 
+		// ---- T7：chat-approval 扩展 ----
+		const approvalMod = jiti(path.join(__dirname, "..", "trajectory-web", "chat-approval.ts"));
+		const approvalHandlers = [];
+		approvalMod.default({ on: (_event, handler) => approvalHandlers.push(handler) });
+		const toolCall = approvalHandlers[0];
+		check("chat-approval：注册 tool_call", typeof toolCall === "function");
+		let confirmArgs = null;
+		const approvalCtx = {
+			ui: {
+				confirm: async (...args) => {
+					confirmArgs = args;
+					return false;
+				},
+			},
+		};
+		const autoResult = await toolCall({ toolName: "read", input: { path: "x" } }, approvalCtx);
+		check("chat-approval：AUTO 放行", autoResult === undefined && confirmArgs === null);
+		const denied = await toolCall({ toolName: "bash", input: { command: "rm -rf x" } }, approvalCtx);
+		check("chat-approval：非 AUTO 拒绝返回 block", denied?.block === true && /拒绝/.test(denied.reason ?? ""), JSON.stringify(denied));
+		check(
+			"chat-approval：confirm 标题/摘要/timeout",
+			confirmArgs?.[0] === "允许 bash？" && String(confirmArgs?.[1] ?? "").includes("rm -rf") && confirmArgs?.[2]?.timeout === 120000,
+			JSON.stringify(confirmArgs),
+		);
+		approvalCtx.ui.confirm = async (...args) => {
+			confirmArgs = args;
+			return true;
+		};
+		const allowed = await toolCall({ toolName: "write", input: { path: "/tmp/x" } }, approvalCtx);
+		check("chat-approval：允许返回 undefined", allowed === undefined && confirmArgs?.[0] === "允许 write？" && confirmArgs?.[1] === "/tmp/x");
+		await toolCall({ toolName: "custom_tool", input: { x: "y".repeat(600) } }, approvalCtx);
+		check("chat-approval：detail 截断 500", confirmArgs?.[1]?.length === 501, String(confirmArgs?.[1]?.length));
+
 		// ---- 精确工具归属（模式 A：来自 pi.getAllTools().sourceInfo） ----
 		const origins = await (await fetch(`${url}api/tool-origins`)).json();
 		check(

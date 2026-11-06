@@ -18,6 +18,12 @@ import { buildProjection } from "./session.mjs";
 import { buildSystemPrompt } from "./chat-prompt.mjs";
 import { contextEventRef } from "./context-render.mjs";
 import {
+	approvalMessageSummary,
+	approvalTimeoutMs,
+	approvalTimeoutSeconds,
+	parseApprovalToolName,
+} from "./approval.mjs";
+import {
 	CHAT_PROFILES,
 	DEFAULT_PROFILE,
 	projectSettings,
@@ -52,6 +58,7 @@ const SKILL_WARN_CHARS = 32_000;
 const SKILL_MAX_CHARS = 200_000;
 const MAX_CONTEXT_IDS = 50;
 const TRAJECTORY_TOOL_PATH = fileURLToPath(new URL("../chat-trajectory-tool.ts", import.meta.url));
+const APPROVAL_TOOL_PATH = fileURLToPath(new URL("../chat-approval.ts", import.meta.url));
 
 export { CHAT_PROFILES, DEFAULT_PROFILE };
 
@@ -192,6 +199,17 @@ export class RpcChild {
 				rejectPromise(err);
 			}
 		});
+	}
+
+	/** 写一条不参与命令 id 配对的 JSON 记录（extension_ui_response 等）。 */
+	writeRecord(record) {
+		if (!this.proc || this.exited) return false;
+		try {
+			this.proc.stdin.write(JSON.stringify(record) + "\n");
+			return true;
+		} catch {
+			return false;
+		}
 	}
 
 	/** 关闭子进程：SIGTERM → 等待 → SIGKILL。 */
@@ -452,6 +470,8 @@ export function createChatHost(deps = {}) {
 	const projectTurns = new Map();
 	/** 启动中的 child（同 key 并发请求复用同一次 spawn）。 */
 	const starting = new Map();
+	/** 本会话允许的工具：`${source}:${projectPath}` -> Set<toolName>（内存，重启清空）。 */
+	const approvalAllow = new Map();
 	const ssePingMs = deps.ssePingMs ?? SSE_PING_MS;
 	let resolvedPi = deps.pi ?? null;
 	let capCache = null;
@@ -578,6 +598,7 @@ export function createChatHost(deps = {}) {
 			"-e",
 			TRAJECTORY_TOOL_PATH,
 		];
+		if (profile === "full") args.push("-e", APPROVAL_TOOL_PATH);
 		if (projectSkills && projectPath) {
 			for (const dir of [join(projectPath, ".pi", "skills"), join(projectPath, ".agents", "skills")]) {
 				if (existsSync(dir)) args.push("--skill", dir);
@@ -607,6 +628,26 @@ export function createChatHost(deps = {}) {
 
 	function projectOf(target, record) {
 		return projectSettings(readSettings(settingsPath), target.source, targetProjectPath(target, record));
+	}
+
+	function approvalKey(source, projectPath) {
+		return `${source}:${projectPath ?? ""}`;
+	}
+
+	function approvalAllowList(source, projectPath) {
+		return [...(approvalAllow.get(approvalKey(source, projectPath)) ?? [])].sort();
+	}
+
+	function addApprovalAllow(source, projectPath, toolName) {
+		if (!toolName) return;
+		const key = approvalKey(source, projectPath);
+		const set = approvalAllow.get(key) ?? new Set();
+		set.add(toolName);
+		approvalAllow.set(key, set);
+	}
+
+	function isApprovalAllowed(source, projectPath, toolName) {
+		return Boolean(toolName) && (approvalAllow.get(approvalKey(source, projectPath))?.has(toolName) ?? false);
 	}
 
 	/** get_commands 里的技能（去 skill: 前缀，sourceInfo 平坦化）。 */
@@ -825,6 +866,12 @@ export function createChatHost(deps = {}) {
 			record.state = "dead";
 			if (children.get(key) === record) children.delete(key);
 		});
+		// 没有活动 turn 时的 extension_ui_request：直接取消，避免 pi 等待超时。
+		child.onEvent((event) => {
+			if (event.type !== "extension_ui_request" || event.method !== "confirm" || !event.id) return;
+			if (record.currentTurn) return;
+			child.writeRecord({ type: "extension_ui_response", id: event.id, cancelled: true });
+		});
 		child.start();
 		try {
 			const state = await child.send({ type: "get_state" }, { timeoutMs: 15_000 });
@@ -876,7 +923,12 @@ export function createChatHost(deps = {}) {
 		const target = resolveTarget(url.searchParams.get("source"), url.searchParams.get("session"));
 		const record = children.get(`${target.source}:${target.sessionId}`) ?? null;
 		const project = projectOf(target, record);
-		sendJson(res, 200, { profile: project.profile, projectSkills: project.projectSkills, approvalAllow: [] });
+		const allowPath = record?.projectPath ?? targetProjectPath(target, record);
+		sendJson(res, 200, {
+			profile: project.profile,
+			projectSkills: project.projectSkills,
+			approvalAllow: approvalAllowList(target.source, allowPath),
+		});
 	}
 
 	async function handlePostSettings(rawBody, res, sendJson) {
@@ -1042,6 +1094,57 @@ export function createChatHost(deps = {}) {
 		return `${match[1]}\n\n${contextBlock}${rest ? `\n${rest}` : ""}`;
 	}
 
+	/** 拒绝一个 turn 的全部待审批请求，并清定时器。 */
+	function rejectApprovals(turn, noticeText = null) {
+		if (!turn?.approvals?.size) return;
+		for (const [id, pending] of turn.approvals) {
+			clearTimeout(pending.timer);
+			turn.record.child.writeRecord({ type: "extension_ui_response", id, confirmed: false });
+		}
+		turn.approvals.clear();
+		if (noticeText && turn.res) writeSse(turn.res, "notice", { text: noticeText, kind: "warn" });
+	}
+
+	/** extension_ui_request(confirm) → allow-set 自动确认或 SSE approval。 */
+	function handleApprovalRequest(record, turn, res, event) {
+		if (event?.method !== "confirm" || typeof event.id !== "string" || !event.id) return;
+		const title = typeof event.title === "string" && event.title ? event.title : "允许工具执行？";
+		const toolName = parseApprovalToolName(title);
+		if (isApprovalAllowed(record.source, record.projectPath, toolName)) {
+			record.child.writeRecord({ type: "extension_ui_response", id: event.id, confirmed: true });
+			return;
+		}
+		if (turn.finished) {
+			record.child.writeRecord({ type: "extension_ui_response", id: event.id, confirmed: false });
+			return;
+		}
+		if (turn.approvals.has(event.id)) return;
+		const timeoutMs = approvalTimeoutMs(event.timeout);
+		const pending = {
+			id: event.id,
+			toolName,
+			title,
+			message: approvalMessageSummary(event.message),
+			timeoutMs,
+			timer: null,
+		};
+		pending.timer = setTimeout(() => {
+			if (!turn.approvals.has(event.id)) return;
+			turn.approvals.delete(event.id);
+			record.child.writeRecord({ type: "extension_ui_response", id: event.id, confirmed: false });
+			writeSse(res, "notice", { text: `审批超时，已拒绝 ${toolName ?? "工具"}`, kind: "warn" });
+		}, timeoutMs);
+		pending.timer.unref?.();
+		turn.approvals.set(event.id, pending);
+		writeSse(res, "approval", {
+			id: event.id,
+			toolName,
+			title,
+			message: pending.message,
+			timeout: approvalTimeoutSeconds(timeoutMs),
+		});
+	}
+
 	async function handleSend(_req, res, rawBody) {
 		let payload;
 		try {
@@ -1095,6 +1198,8 @@ export function createChatHost(deps = {}) {
 		const turn = {
 			record,
 			projectKey,
+			res,
+			approvals: new Map(),
 			aborted: false,
 			finished: false,
 			ping: null,
@@ -1198,6 +1303,7 @@ export function createChatHost(deps = {}) {
 			const finish = (event, data) => {
 				if (doneSent) return;
 				doneSent = true;
+				rejectApprovals(turn);
 				writeSse(res, event, data);
 				settle();
 			};
@@ -1241,6 +1347,9 @@ export function createChatHost(deps = {}) {
 						});
 						break;
 					}
+					case "extension_ui_request":
+						handleApprovalRequest(record, turn, res, event);
+						break;
 					case "child_error":
 						finish("error", { message: errorText(event.message ?? "pi 子进程启动失败"), code: "child_error" });
 						break;
@@ -1260,6 +1369,7 @@ export function createChatHost(deps = {}) {
 			onClose = () => {
 				if (turn.finished) return;
 				turn.aborted = true;
+				rejectApprovals(turn);
 				record.child.send({ type: "abort" }, { timeoutMs: 10_000 }).catch(() => {});
 				settle();
 			};
@@ -1276,6 +1386,7 @@ export function createChatHost(deps = {}) {
 			writeSse(res, "error", { message: errorText(err), code: err.status ? "request" : "rpc_error" });
 		} finally {
 			turn.finished = true;
+			rejectApprovals(turn);
 			if (turn.ping) clearInterval(turn.ping);
 			offEvent();
 			res.off("close", onClose);
@@ -1307,12 +1418,53 @@ export function createChatHost(deps = {}) {
 			return;
 		}
 		turn.aborted = true;
+		rejectApprovals(turn);
 		try {
 			await record.child.send({ type: "abort" }, { timeoutMs: 10_000 });
 		} catch {
 			/* child 已退出：SSE 侧会收到 child_exit */
 		}
 		sendJson(res, 200, { ok: true, stopped: true });
+	}
+
+	async function handlePostApproval(rawBody, res, sendJson) {
+		let payload;
+		try {
+			payload = JSON.parse(rawBody || "{}");
+		} catch {
+			throw httpError(400, "请求体不是合法 JSON");
+		}
+		const target = resolveTarget(payload.source, payload.session);
+		const requestedThread = payload.threadId ?? null;
+		if (requestedThread !== null && !isSafeThreadId(requestedThread)) throw httpError(400, "非法线程 id");
+		if (typeof payload.id !== "string" || !payload.id) throw httpError(400, "缺少审批 id");
+		if (typeof payload.confirmed !== "boolean") throw httpError(400, "confirmed 需为布尔值");
+		if (payload.allowForSession !== undefined && typeof payload.allowForSession !== "boolean") {
+			throw httpError(400, "allowForSession 需为布尔值");
+		}
+
+		const record = children.get(`${target.source}:${target.sessionId}`) ?? null;
+		const turn = record?.currentTurn ?? null;
+		if (!record || !turn) {
+			sendJson(res, 200, { ok: false });
+			return;
+		}
+		if (requestedThread !== null && record.piSessionId !== requestedThread) {
+			sendJson(res, 200, { ok: false });
+			return;
+		}
+		const pending = turn.approvals.get(payload.id);
+		if (!pending) {
+			sendJson(res, 200, { ok: false });
+			return;
+		}
+		const written = record.child.writeRecord({ type: "extension_ui_response", id: pending.id, confirmed: payload.confirmed });
+		clearTimeout(pending.timer);
+		turn.approvals.delete(pending.id);
+		if (written && payload.confirmed && payload.allowForSession === true) {
+			addApprovalAllow(record.source, record.projectPath, pending.toolName);
+		}
+		sendJson(res, 200, { ok: written });
 	}
 
 	async function handleGetThread(url, res, sendJson) {
@@ -1559,6 +1711,14 @@ export function createChatHost(deps = {}) {
 				await handlePostModel(body, res, sendJson);
 				return true;
 			}
+			if (url.pathname === "/api/chat/approval") {
+				if (req.method !== "POST") {
+					sendJson(res, 405, { error: "method not allowed" });
+					return true;
+				}
+				await handlePostApproval(body, res, sendJson);
+				return true;
+			}
 			if (url.pathname === "/api/chat/send") {
 				if (req.method !== "POST") {
 					sendJson(res, 405, { error: "method not allowed" });
@@ -1583,7 +1743,10 @@ export function createChatHost(deps = {}) {
 	}
 
 	async function close() {
-		// 先 abort 活动 turn（让 pi 把 partial 写回 session），再杀进程。
+		// 先拒绝待审批，再 abort 活动 turn，最后杀进程。
+		for (const record of children.values()) {
+			if (record.currentTurn) rejectApprovals(record.currentTurn);
+		}
 		await Promise.allSettled(
 			[...children.values()]
 				.filter((record) => record.currentTurn)
@@ -1592,6 +1755,7 @@ export function createChatHost(deps = {}) {
 		await Promise.allSettled([...children.values()].map((record) => record.child?.close()));
 		children.clear();
 		projectTurns.clear();
+		approvalAllow.clear();
 	}
 
 	return {

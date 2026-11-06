@@ -17,7 +17,7 @@ const WEB = path.join(ROOT, "trajectory-web", "web");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** 读完一条 SSE 流，按事件块解析成 {event,data} 数组（原始文本保留给保活断言）。 */
-async function readSse(response) {
+async function readSse(response, onEvent = null) {
 	if (!response.body) throw new Error("响应没有可读流");
 	const reader = response.body.getReader();
 	const decoder = new TextDecoder("utf-8");
@@ -40,7 +40,11 @@ async function readSse(response) {
 				if (line.startsWith("event:")) event = line.slice(6).trim();
 				else if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
 			}
-			if (data.length) events.push({ event, data: JSON.parse(data.join("\n")) });
+			if (data.length) {
+				const parsed = { event, data: JSON.parse(data.join("\n")) };
+				events.push(parsed);
+				if (onEvent) await onEvent(parsed);
+			}
 		}
 	}
 	return { events, raw };
@@ -810,7 +814,132 @@ async function stopServer(child) {
 			JSON.stringify(crash.events.at(-1)),
 		);
 
+		// ---- T7：审批桥 / profile spawn / close 拒绝 ----
+		const approvalPost = (body) => postJson(`${chatBase}api/chat/approval`, { source: "pi", session: "cs-3", ...body });
+		const approvalAllowOf = async () => (await (await fetch(`${chatBase}api/chat/settings?source=pi&session=cs-3`)).json()).approvalAllow;
+		const traceNow = () => (fs.existsSync(chatTrace) ? fs.readFileSync(chatTrace, "utf8") : "");
+
+		let approvalData = null;
+		const denied = await readSse(await send("cs-3", "approve"), async (event) => {
+			if (event.event !== "approval") return;
+			approvalData = event.data;
+			const res = await approvalPost({ id: event.data.id, confirmed: false });
+			check("approval：拒绝 POST ok", res.status === 200 && (await res.json()).ok === true);
+		});
+		check(
+			"approval：SSE approval 字段",
+			approvalData?.toolName === "bash" && approvalData?.title?.includes("bash") && approvalData?.message === "npm test" && approvalData?.timeout === 5,
+			JSON.stringify(approvalData),
+		);
+		check(
+			"approval：拒绝后 fake 收到 false 并结束",
+			approvalData && traceNow().includes(`ui:${approvalData.id}:false`) && denied.events.some((event) => event.event === "delta" && event.data.text.includes("false")),
+			JSON.stringify(denied.events.map((event) => event.event)),
+		);
+
+		approvalData = null;
+		let wrongThreadOk = null;
+		const allowedOnce = await readSse(await send("cs-3", "approve"), async (event) => {
+			if (event.event !== "approval") return;
+			approvalData = event.data;
+			const wrong = await approvalPost({ id: event.data.id, confirmed: true, threadId: "wrong-thread" });
+			wrongThreadOk = (await wrong.json()).ok;
+			const res = await approvalPost({ id: event.data.id, confirmed: true, allowForSession: false });
+			check("approval：允许本次 POST ok", res.status === 200 && (await res.json()).ok === true);
+		});
+		check("approval：threadId 不匹配 no-op", wrongThreadOk === false);
+		check(
+			"approval：允许本次后 fake 收到 true",
+			Boolean(approvalData) && traceNow().includes(`ui:${approvalData.id}:true`) && allowedOnce.events.some((event) => event.event === "delta" && event.data.text.includes("true")),
+			JSON.stringify(allowedOnce.events.map((event) => event.event)),
+		);
+		check("approval：allowForSession 非布尔 400", (await approvalPost({ id: "x", confirmed: true, allowForSession: "yes" })).status === 400);
+		check("approval：仅本次不写 allow-set", (await approvalAllowOf()).length === 0, JSON.stringify(await approvalAllowOf()));
+
+		const timeoutStream = await readSse(await send("cs-3", "approve-timeout"));
+		const timeoutApproval = timeoutStream.events.find((event) => event.event === "approval")?.data;
+		check(
+			"approval：超时自动拒绝 + notice",
+			timeoutApproval?.timeout === 1 &&
+				timeoutStream.events.some((event) => event.event === "notice" && event.data.text.includes("审批超时")) &&
+				timeoutStream.events.some((event) => event.event === "delta" && event.data.text.includes("false")),
+			JSON.stringify(timeoutStream.events.map((event) => event.event)),
+		);
+		check("approval：超时 child 收到 false", Boolean(timeoutApproval) && traceNow().includes(`ui:${timeoutApproval.id}:false`));
+
+		approvalData = null;
+		const stopStream = await readSse(await send("cs-3", "approve"), async (event) => {
+			if (event.event !== "approval") return;
+			approvalData = event.data;
+			await postJson(`${chatBase}api/chat/stop`, { source: "pi", session: "cs-3" });
+		});
+		check(
+			"approval：stop 拒绝待审批",
+			Boolean(approvalData) && traceNow().includes(`ui:${approvalData.id}:false`) && stopStream.events.at(-1)?.event === "done",
+			JSON.stringify(stopStream.events.at(-1)),
+		);
+
+		approvalData = null;
+		await readSse(await send("cs-3", "approve"), async (event) => {
+			if (event.event !== "approval") return;
+			approvalData = event.data;
+			await approvalPost({ id: event.data.id, confirmed: true, allowForSession: true });
+		});
+		check("approval：allowForSession 写 allow-set", (await approvalAllowOf()).includes("bash"), JSON.stringify(await approvalAllowOf()));
+		const traceBeforeAuto = traceNow().length;
+		const autoApproved = await readSse(await send("cs-3", "approve"));
+		check(
+			"approval：allow-set 自动确认不再 SSE",
+			!autoApproved.events.some((event) => event.event === "approval") &&
+				autoApproved.events.some((event) => event.event === "delta" && event.data.text.includes("true")),
+			JSON.stringify(autoApproved.events.map((event) => event.event)),
+		);
+		check("approval：自动确认写 child true", traceNow().slice(traceBeforeAuto).includes(":true"));
+
+		const profileSet = (profile) => postJson(`${chatBase}api/chat/settings`, { source: "pi", session: "cs-3", profile });
+		check("profile：切 full 返回 full", (await (await profileSet("full")).json()).profile === "full");
+		let lenProfile = traceNow().length;
+		await readSse(await send("cs-3", "hi"));
+		const fullTrace = traceNow().slice(lenProfile);
+		check(
+			"profile：full spawn 带 approval 扩展 + 完整 tools",
+			fullTrace.includes("chat-approval.ts") && fullTrace.includes("--tools read,write,edit,bash,read_trajectory"),
+			fullTrace.slice(-900),
+		);
+		check("profile：GET settings full", (await (await fetch(`${chatBase}api/chat/settings?source=pi&session=cs-3`)).json()).profile === "full");
+
+		await profileSet("read-only");
+		lenProfile = traceNow().length;
+		await readSse(await send("cs-3", "hi"));
+		const readOnlyTrace = traceNow().slice(lenProfile);
+		check(
+			"profile：read-only 不带 approval 扩展",
+			readOnlyTrace.includes("--tools read,grep,ls,read_trajectory") && !readOnlyTrace.includes("chat-approval.ts"),
+			readOnlyTrace.slice(-700),
+		);
+
+		await profileSet("no-tools");
+		lenProfile = traceNow().length;
+		await readSse(await send("cs-3", "hi"));
+		const noToolsTrace = traceNow().slice(lenProfile);
+		check(
+			"profile：no-tools 用 --no-builtin-tools 且不带 approval",
+			noToolsTrace.includes("--no-builtin-tools") && !noToolsTrace.includes("chat-approval.ts"),
+			noToolsTrace.slice(-600),
+		);
+		await profileSet("read-only");
+
+		// close 时拒绝 pending：用另一个项目（cs-1，allow-set 为空）
+		let closeApproval = null;
+		const closeStreamPromise = readSse(await send("cs-1", "approve"), async (event) => {
+			if (event.event === "approval") closeApproval = event.data;
+		}).catch(() => ({ events: [] }));
+		for (let i = 0; i < 100 && !closeApproval; i++) await sleep(20);
+		check("approval：close 前拿到 pending", Boolean(closeApproval));
 		await chatServer.close();
+		await closeStreamPromise;
+		await sleep(200);
+		check("approval：close 拒绝待审批", Boolean(closeApproval) && traceNow().includes(`ui:${closeApproval.id}:false`), traceNow().slice(-600));
 		delete process.env.FAKE_PI_TRACE;
 		delete process.env.FAKE_PI_MODELS_FAIL;
 		delete process.env.FAKE_PI_COMMANDS_FAIL;

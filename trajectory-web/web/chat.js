@@ -5,7 +5,18 @@
  *       GET /api/chat/thread、GET /api/chat/capabilities。
  * 本阶段（T3）只做流式与消息渲染；模型/技能/上下文/审批在后续阶段接入。
  */
-import { filterPaletteItems, formatChars, formatContextWindow, isCurrentTurn, modelLabel, parseSseChunk, parseSseData } from "./chat-lib.js";
+import {
+	filterPaletteItems,
+	forgetThread,
+	formatChars,
+	formatContextWindow,
+	isCurrentTurn,
+	modelLabel,
+	parseSseChunk,
+	parseSseData,
+	readThreadId,
+	rememberThread,
+} from "./chat-lib.js";
 import { fmtTokens } from "./lib.js";
 
 const PROMPT_MAX = 32000;
@@ -13,7 +24,14 @@ const RENDER_MIN_MS = 80;
 const MODELS_TTL_MS = 5000;
 const SKILL_WARN_CHARS = 32_000;
 const SKILL_MAX_CHARS = 200_000;
-const PROFILE_LABEL = { "no-tools": "仅轨迹工具", "read-only": "只读", full: "全量工具" };
+const PROFILE_LABEL = { "no-tools": "仅对话", "read-only": "只读", full: "全量工具" };
+const PROFILE_OPTIONS = Object.freeze([
+	{ id: "no-tools", label: "仅对话", hint: "只读轨迹工具，不能读项目文件" },
+	{ id: "read-only", label: "只读", hint: "可读项目文件（read/grep/ls），不能写、不能跑命令" },
+	{ id: "full", label: "全量工具", hint: "可写文件、可跑命令；每次执行前弹审批", warn: true },
+]);
+const CHAT_THREAD_KEY = "tw.chatThread";
+const CHAT_THREAD_NEW_KEY = "tw.chatThreadNew";
 const SKILL_SCOPE_LABEL = { user: "全局技能", project: "项目技能", temporary: "临时技能", path: "路径技能" };
 const SKILL_SCOPE_ORDER = { user: 0, project: 1, temporary: 2, path: 3 };
 const COMMAND_ITEMS = Object.freeze([
@@ -31,6 +49,8 @@ export function initChatPanel(deps) {
 	const sendBtn = el("chat-send");
 	const announcer = el("chat-announcer");
 	const paletteEl = el("chat-palette");
+	const profileMenuEl = el("chat-profile-menu");
+	const approvalEl = el("chat-approval");
 	const sendIcon = sendBtn?.firstElementChild?.cloneNode(true) ?? null;
 	let localSeq = 0;
 	let renderTimer = 0;
@@ -69,6 +89,19 @@ export function initChatPanel(deps) {
 		skillsError: null,
 		skillsDiagnostics: [],
 		skill: null,
+		// profile 菜单与审批
+		profileMenuOpen: false,
+		profileConfirm: false,
+		profileBusy: false,
+		fullConfirmed: false,
+		approvals: [],
+		approvalChecked: false,
+		approvalBusy: false,
+		approvalRenderedId: null,
+		approvalRemaining: 0,
+		approvalTimer: 0,
+		approvalStart: 0,
+		newThreadIds: new Set(),
 	};
 
 	const localId = (kind) => `local-${kind}-${++localSeq}`;
@@ -89,6 +122,69 @@ export function initChatPanel(deps) {
 
 	function currentKey() {
 		return sessionKeyOf(currentSession());
+	}
+
+	function readChatThreadMap() {
+		try {
+			const parsed = JSON.parse(localStorage.getItem(CHAT_THREAD_KEY) || "{}");
+			return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+		} catch {
+			return {};
+		}
+	}
+
+	function writeChatThreadMap(map) {
+		try {
+			localStorage.setItem(CHAT_THREAD_KEY, JSON.stringify(map));
+		} catch {
+			/* 无痕模式等场景忽略 */
+		}
+	}
+
+	function rememberedThreadFor(key) {
+		return readThreadId(readChatThreadMap(), key);
+	}
+
+	function rememberThreadFor(key, threadId) {
+		if (!threadId) return;
+		writeChatThreadMap(rememberThread(readChatThreadMap(), key, threadId));
+	}
+
+	function forgetThreadFor(key) {
+		writeChatThreadMap(forgetThread(readChatThreadMap(), key));
+	}
+
+	function readNewThreadMap() {
+		try {
+			const parsed = JSON.parse(localStorage.getItem(CHAT_THREAD_NEW_KEY) || "{}");
+			return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+		} catch {
+			return {};
+		}
+	}
+
+	function writeNewThreadMap(map) {
+		try {
+			localStorage.setItem(CHAT_THREAD_NEW_KEY, JSON.stringify(map));
+		} catch {
+			/* 无痕模式等场景忽略 */
+		}
+	}
+
+	function markNewThread(key, threadId) {
+		if (!threadId) return;
+		writeNewThreadMap({ ...readNewThreadMap(), [key]: threadId });
+	}
+
+	function clearNewThread(key) {
+		const map = readNewThreadMap();
+		if (!(key in map)) return;
+		delete map[key];
+		writeNewThreadMap(map);
+	}
+
+	function isNewThread(key, threadId) {
+		return Boolean(threadId) && readNewThreadMap()[key] === threadId;
 	}
 
 	/** SSE 回调只允许写当前会话、且属于当前 turn。state.turn 防止已收尾的旧流回写。 */
@@ -115,9 +211,9 @@ export function initChatPanel(deps) {
 		render();
 	}
 
-	async function fetchThread(session) {
+	async function fetchThread(session, threadId = state.threadId) {
 		const params = new URLSearchParams({ source: session.source, session: session.id });
-		if (state.threadId) params.set("thread", state.threadId);
+		if (threadId) params.set("thread", threadId);
 		const res = await fetch(`/api/chat/thread?${params}`);
 		if (!res.ok) {
 			let message = `HTTP ${res.status}`;
@@ -148,12 +244,24 @@ export function initChatPanel(deps) {
 		const seq = ++state.loadSeq;
 		state.loading = true;
 		state.sessionKey = key;
+		const remembered = state.threadId ?? rememberedThreadFor(key);
+		state.threadId = remembered ?? null;
 		render();
 		try {
-			const data = await fetchThread(session);
+			let data = await fetchThread(session, remembered);
 			if (seq !== state.loadSeq) return;
+			// 记住的线程文件真的不存在：清掉记忆并回退到最新（本次页面新建、还未落盘的线程保留）
+			if (data.thread?.exists === false && remembered && !state.newThreadIds.has(remembered) && !isNewThread(key, remembered)) {
+				forgetThreadFor(key);
+				clearNewThread(key);
+				state.threadId = null;
+				data = await fetchThread(session, null);
+				if (seq !== state.loadSeq) return;
+			}
 			state.thread = data.thread ?? null;
 			state.threadId = data.thread?.id ?? null;
+			if (state.threadId) rememberThreadFor(key, state.threadId);
+			if (data.thread?.exists === true) clearNewThread(key);
 			state.model = data.thread?.model ?? state.model;
 			setMessages(data.thread?.messages ?? []);
 			state.loadedKey = key;
@@ -419,7 +527,16 @@ export function initChatPanel(deps) {
 			if (state.modelsError) modelEl.title = `${modelEl.title} · ${state.modelsError}`;
 		}
 		const profileEl = el("chat-profile");
-		if (profileEl) profileEl.textContent = PROFILE_LABEL[state.profile] ?? state.profile;
+		if (profileEl) {
+			profileEl.textContent = PROFILE_LABEL[state.profile] ?? state.profile;
+			profileEl.classList.toggle("is-full", state.profile === "full");
+			profileEl.title = state.profile === "full" ? "全量工具：会真实修改工作区，每次执行前审批" : "工具权限";
+		}
+		const newBtn = el("chat-new");
+		if (newBtn) {
+			newBtn.disabled = state.streaming;
+			newBtn.title = state.streaming ? "回复中，先停止" : "新对话";
+		}
 	}
 
 	function updateSendButton() {
@@ -450,6 +567,8 @@ export function initChatPanel(deps) {
 		renderComposer();
 		renderSkillChip();
 		renderContext();
+		renderProfileMenu();
+		renderApproval();
 		updateSendButton();
 		updateA11y();
 		renderPalette();
@@ -516,7 +635,7 @@ export function initChatPanel(deps) {
 		updateSendButton();
 	}
 
-	async function newThreadPreservingSelection() {
+	async function newThread({ preserveSelection = false } = {}) {
 		if (state.streaming) {
 			pushNotice("回复中，先停止", "warn");
 			flushRender();
@@ -524,6 +643,7 @@ export function initChatPanel(deps) {
 		}
 		const session = currentSession();
 		if (!session) return;
+		const key = sessionKeyOf(session);
 		try {
 			const res = await fetch("/api/chat/thread", {
 				method: "POST",
@@ -544,15 +664,298 @@ export function initChatPanel(deps) {
 			state.threadId = data.thread?.id ?? null;
 			state.model = data.thread?.model ?? state.model;
 			state.skill = null;
-			state.loadedKey = sessionKeyOf(session);
+			state.loadedKey = key;
+			if (state.threadId) {
+				state.newThreadIds.add(state.threadId);
+				rememberThreadFor(key, state.threadId);
+				markNewThread(key, state.threadId);
+			}
 			setMessages([]);
+			clearApprovals();
+			closeProfileMenu();
+			if (!preserveSelection) deps.setSelectedIds?.([], { silent: true });
 			render();
-			pushNotice("已新建对话（保留当前上下文选择）");
+			pushNotice(preserveSelection ? "已新建对话（保留当前上下文选择）" : "已新建对话");
 			flushRender();
 		} catch (err) {
 			pushNotice(`新建对话失败：${err.message}`, "error");
 			flushRender();
 		}
+	}
+
+	async function newThreadPreservingSelection() {
+		return newThread({ preserveSelection: true });
+	}
+
+	// ------------------------------------------------------------------
+	// 工具权限菜单
+	// ------------------------------------------------------------------
+
+	function openProfileMenu() {
+		if (state.streaming) {
+			pushNotice("回复中，先停止", "warn");
+			flushRender();
+			return;
+		}
+		state.profileMenuOpen = true;
+		state.profileConfirm = false;
+		renderProfileMenu();
+	}
+
+	function closeProfileMenu() {
+		state.profileMenuOpen = false;
+		state.profileConfirm = false;
+		state.profileBusy = false;
+		renderProfileMenu();
+	}
+
+	function renderProfileMenu() {
+		if (!profileMenuEl) return;
+		const profileBtn = el("chat-profile");
+		profileBtn?.setAttribute("aria-expanded", String(state.profileMenuOpen));
+		if (!state.profileMenuOpen) {
+			profileMenuEl.hidden = true;
+			profileMenuEl.replaceChildren();
+			return;
+		}
+		profileMenuEl.hidden = false;
+		if (state.profileConfirm) {
+			profileMenuEl.replaceChildren(
+				h(
+					"div",
+					{ class: "chat-profile-confirm" },
+					h("div", { class: "chat-profile-confirm-text", text: "全量工具会真实修改工作区，每次执行前会请求确认" }),
+					h(
+						"div",
+						{ class: "chat-profile-confirm-actions" },
+						h("button", { type: "button", class: "chat-profile-confirm-yes", dataset: { profileConfirm: "yes" }, text: "确认切换" }),
+						h("button", { type: "button", class: "chat-profile-confirm-no", dataset: { profileConfirm: "no" }, text: "取消" }),
+					),
+				),
+			);
+			return;
+		}
+		const nodes = [];
+		for (const option of PROFILE_OPTIONS) {
+			const current = state.profile === option.id;
+			nodes.push(
+				h(
+					"button",
+					{
+						class: `chat-profile-option${current ? " is-current" : ""}${option.warn ? " is-warn" : ""}`,
+						type: "button",
+						role: "menuitemradio",
+						"aria-checked": String(current),
+						dataset: { profile: option.id },
+						disabled: state.profileBusy,
+					},
+					h("span", { class: "chat-profile-option-check", "aria-hidden": "true", text: current ? "✓" : "" }),
+					h(
+						"span",
+						{ class: "chat-profile-option-body" },
+						h("span", { class: "chat-profile-option-label", text: option.label }),
+						h("span", { class: "chat-profile-option-hint", text: option.hint }),
+					),
+				),
+			);
+		}
+		profileMenuEl.replaceChildren(...nodes);
+	}
+
+	async function selectProfile(profile) {
+		if (state.profileBusy) return;
+		if (state.streaming) {
+			pushNotice("回复中，先停止", "warn");
+			closeProfileMenu();
+			flushRender();
+			return;
+		}
+		if (profile === state.profile) {
+			closeProfileMenu();
+			return;
+		}
+		if (profile === "full" && !state.fullConfirmed) {
+			state.profileConfirm = true;
+			renderProfileMenu();
+			return;
+		}
+		await applyProfile(profile);
+	}
+
+	async function applyProfile(profile) {
+		const session = currentSession();
+		if (!session) return;
+		state.profileBusy = true;
+		state.profileConfirm = false;
+		renderProfileMenu();
+		try {
+			const res = await fetch("/api/chat/settings", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ source: session.source, session: session.id, profile }),
+			});
+			if (!res.ok) {
+				let message = `HTTP ${res.status}`;
+				try {
+					message = (await res.json())?.error ?? message;
+				} catch {
+					/* 非 JSON 错误体 */
+				}
+				throw new Error(message);
+			}
+			const data = await res.json();
+			state.settings.profile = data.profile ?? profile;
+			state.profile = state.settings.profile;
+			if (profile === "full") state.fullConfirmed = true;
+			closeProfileMenu();
+			pushNotice("对话进程已重启");
+			flushRender();
+			await refreshThread();
+		} catch (err) {
+			state.profileBusy = false;
+			renderProfileMenu();
+			pushNotice(`切换工具权限失败：${err.message}`, "error");
+			flushRender();
+		}
+	}
+
+	// ------------------------------------------------------------------
+	// 工具审批弹层（队列 + 倒计时）
+	// ------------------------------------------------------------------
+
+	function stopApprovalTimer() {
+		if (state.approvalTimer) clearInterval(state.approvalTimer);
+		state.approvalTimer = 0;
+	}
+
+	function clearApprovals() {
+		stopApprovalTimer();
+		state.approvals = [];
+		state.approvalChecked = false;
+		state.approvalBusy = false;
+		state.approvalRemaining = 0;
+		state.approvalRenderedId = null;
+		renderApproval();
+	}
+
+	function enqueueApproval(data) {
+		if (!data || typeof data.id !== "string" || !data.id) return;
+		closeProfileMenu();
+		state.approvals.push({
+			id: data.id,
+			toolName: typeof data.toolName === "string" ? data.toolName : null,
+			title: typeof data.title === "string" && data.title ? data.title : "允许执行工具？",
+			message: typeof data.message === "string" ? data.message.slice(0, 500) : "",
+			timeout: Number(data.timeout) > 0 ? Number(data.timeout) : 120,
+		});
+		state.approvalChecked = false;
+		state.approvalRenderedId = null;
+		startApprovalTimer();
+		renderApproval();
+	}
+
+	function startApprovalTimer() {
+		stopApprovalTimer();
+		const approval = state.approvals[0];
+		if (!approval) return;
+		state.approvalStart = Date.now();
+		state.approvalRemaining = approval.timeout;
+		state.approvalTimer = setInterval(() => {
+			const remaining = Math.max(0, Math.ceil(approval.timeout - (Date.now() - state.approvalStart) / 1000));
+			state.approvalRemaining = remaining;
+			renderApproval();
+			if (remaining <= 0) void respondApproval(false);
+		}, 500);
+		state.approvalTimer.unref?.();
+	}
+
+	async function respondApproval(confirmed) {
+		const approval = state.approvals[0];
+		if (!approval || state.approvalBusy) return;
+		state.approvalBusy = true;
+		renderApproval();
+		const allowForSession = confirmed && state.approvalChecked;
+		try {
+			const session = currentSession();
+			if (session) {
+				await fetch("/api/chat/approval", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({
+						source: session.source,
+						session: session.id,
+						threadId: state.threadId ?? null,
+						id: approval.id,
+						confirmed,
+						allowForSession,
+					}),
+				});
+			}
+		} catch {
+			/* 服务端会按超时/断开拒绝 */
+		}
+		state.approvals.shift();
+		state.approvalChecked = false;
+		state.approvalBusy = false;
+		state.approvalRenderedId = null;
+		stopApprovalTimer();
+		if (state.approvals.length) startApprovalTimer();
+		renderApproval();
+	}
+
+	function renderApproval() {
+		if (!approvalEl) return;
+		const approval = state.approvals[0];
+		if (!approval) {
+			stopApprovalTimer();
+			approvalEl.hidden = true;
+			approvalEl.replaceChildren();
+			return;
+		}
+		approvalEl.hidden = false;
+		const count = state.approvals.length;
+		if (state.approvalRenderedId === approval.id && approvalEl.querySelector(".chat-approval-card")) {
+			const timer = approvalEl.querySelector(".chat-approval-timer");
+			if (timer) timer.textContent = `⏱ ${state.approvalRemaining}s`;
+			const counter = approvalEl.querySelector(".chat-approval-count");
+			if (counter) counter.textContent = `1/${count}`;
+			const denyBtn = approvalEl.querySelector(".chat-approval-deny");
+			const allowBtn = approvalEl.querySelector(".chat-approval-allow");
+			if (denyBtn) denyBtn.disabled = state.approvalBusy;
+			if (allowBtn) allowBtn.disabled = state.approvalBusy;
+			return;
+		}
+		state.approvalRenderedId = approval.id;
+		const checkbox = h("input", { type: "checkbox", class: "chat-approval-check", checked: state.approvalChecked });
+		checkbox.addEventListener("change", () => {
+			state.approvalChecked = checkbox.checked;
+		});
+		const deny = h("button", { class: "chat-approval-deny", type: "button", text: "拒绝", disabled: state.approvalBusy });
+		deny.addEventListener("click", () => void respondApproval(false));
+		const allow = h("button", { class: "chat-approval-allow", type: "button", text: "仅本次允许", disabled: state.approvalBusy });
+		allow.addEventListener("click", () => void respondApproval(true));
+		approvalEl.replaceChildren(
+			h(
+				"div",
+				{ class: "chat-approval-card", role: "document" },
+				h(
+					"div",
+					{ class: "chat-approval-head" },
+					h("span", { class: "chat-approval-title", text: approval.title }),
+					h("span", { class: "chat-approval-count", text: `1/${count}` }),
+					h("span", { class: "chat-approval-timer", text: `⏱ ${state.approvalRemaining}s` }),
+				),
+				approval.toolName ? h("div", { class: "chat-approval-tool", text: approval.toolName }) : null,
+				approval.message ? h("pre", { class: "chat-approval-message", text: approval.message }) : null,
+				h(
+					"label",
+					{ class: "chat-approval-allow-row" },
+					checkbox,
+					h("span", { text: `本会话允许 ${approval.toolName ?? "该工具"}` }),
+				),
+				h("div", { class: "chat-approval-actions" }, deny, allow),
+			),
+		);
 	}
 
 	/** 流式中 aria-live=off（避免逐字朗读）；收尾时短暂 hold，只让 #chat-announcer 播报最后一条。 */
@@ -1133,6 +1536,7 @@ export function initChatPanel(deps) {
 	function finishTurn(turn, outcome = {}) {
 		if (!turn || turn.settled) return;
 		turn.settled = true;
+		clearApprovals();
 		const { error = null, aborted = false, usage = null, durationMs = null, stopReason = null } = outcome;
 		let lastAssistant = null;
 		for (const message of state.messages) {
@@ -1195,7 +1599,10 @@ export function initChatPanel(deps) {
 		switch (event.event) {
 			case "meta": {
 				turn.metaReceived = true;
-				if (data.threadId) state.threadId = data.threadId;
+				if (data.threadId) {
+					state.threadId = data.threadId;
+					rememberThreadFor(currentKey(), data.threadId);
+				}
 				if (data.model) state.model = data.model;
 				if (data.profile) state.profile = data.profile;
 				const user = state.messages.find((message) => turn.ids.has(message.id) && message.role === "user");
@@ -1243,6 +1650,10 @@ export function initChatPanel(deps) {
 			}
 			case "notice": {
 				pushNotice(String(data.text ?? ""), data.kind === "warn" ? "warn" : data.kind === "error" ? "error" : "info");
+				break;
+			}
+			case "approval": {
+				enqueueApproval(data);
 				break;
 			}
 			case "done": {
@@ -1293,6 +1704,7 @@ export function initChatPanel(deps) {
 
 	async function send() {
 		if (state.streaming || state.palette) return;
+		closeProfileMenu();
 		const session = currentSession();
 		if (!session || state.enabled !== true || !input) return;
 		const text = input.value.trim();
@@ -1383,6 +1795,7 @@ export function initChatPanel(deps) {
 	async function stop() {
 		const turn = state.turn;
 		if (!turn || turn.settled) return;
+		clearApprovals();
 		if (sendBtn) sendBtn.disabled = true;
 		const session = currentSession();
 		try {
@@ -1482,6 +1895,28 @@ export function initChatPanel(deps) {
 		});
 	}
 	el("chat-model")?.addEventListener("click", () => openModelPicker());
+	el("chat-new")?.addEventListener("click", () => void newThread({ preserveSelection: false }));
+	el("chat-profile")?.addEventListener("click", (e) => {
+		e.stopPropagation();
+		if (state.profileMenuOpen) closeProfileMenu();
+		else openProfileMenu();
+	});
+	profileMenuEl?.addEventListener("click", (e) => {
+		const confirm = e.target.closest?.("[data-profile-confirm]");
+		if (confirm) {
+			if (confirm.dataset.profileConfirm === "yes") {
+				state.fullConfirmed = true;
+				state.profileConfirm = false;
+				void applyProfile("full");
+			} else {
+				state.profileConfirm = false;
+				renderProfileMenu();
+			}
+			return;
+		}
+		const option = e.target.closest?.("[data-profile]");
+		if (option) void selectProfile(option.dataset.profile);
+	});
 	// 点击面板外关闭（面板/输入框/模型 chip 内除外）
 	document.addEventListener("click", (e) => {
 		if (!state.palette) return;
@@ -1490,17 +1925,36 @@ export function initChatPanel(deps) {
 		if (inside(paletteEl) || inside(input) || inside(el("chat-model"))) return;
 		closePalette({ restore: true, focus: false });
 	});
+	// 点击权限菜单外关闭
+	document.addEventListener("click", (e) => {
+		if (!state.profileMenuOpen) return;
+		const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+		const inside = (node) => node && (path.includes(node) || (typeof node.contains === "function" && node.contains(e.target)));
+		if (inside(profileMenuEl) || inside(el("chat-profile"))) return;
+		closeProfileMenu();
+	});
 
 	render();
 
 	return {
 		setOpen(open) {
 			state.open = open === true;
-			if (!state.open) closePalette({ restore: true, focus: false });
+			if (!state.open) {
+				closePalette({ restore: true, focus: false });
+				closeProfileMenu();
+			}
 			if (state.open) void ensureLoaded();
 			renderContext();
 		},
 		handleEscape() {
+			if (state.approvals.length) {
+				void respondApproval(false);
+				return true;
+			}
+			if (state.profileMenuOpen) {
+				closeProfileMenu();
+				return true;
+			}
 			if (state.palette) {
 				paletteEscape();
 				return true;
@@ -1521,6 +1975,8 @@ export function initChatPanel(deps) {
 				resetStreamState();
 			}
 			closePalette({ restore: false, clearInput: true, focus: false });
+			clearApprovals();
+			closeProfileMenu();
 			state.models = [];
 			state.modelsAt = 0;
 			state.modelsError = null;

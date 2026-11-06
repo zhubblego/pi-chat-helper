@@ -134,6 +134,8 @@ function state() {
 }
 
 let timers = [];
+let pendingApproval = null;
+let approvalSeq = 0;
 
 function clearTimers() {
 	for (const timer of timers) clearTimeout(timer);
@@ -146,6 +148,7 @@ function streamPrompt(command) {
 	const message = String(command.message ?? "");
 	const thinking = message.includes("think");
 	const withTool = message.includes("tool");
+	const approve = message.includes("approve");
 	const slow = message.includes("slow");
 	const crash = message.includes("exit");
 	const later = (fn, ms) => timers.push(setTimeout(fn, ms));
@@ -189,6 +192,47 @@ function streamPrompt(command) {
 	}
 	if (crash) {
 		later(() => process.exit(3), 25);
+		return;
+	}
+	if (approve) {
+		later(() => {
+			const id = `ui-${++approvalSeq}`;
+			const timeout = message.includes("approve-timeout") ? 120 : Number(process.env.FAKE_PI_CONFIRM_TIMEOUT ?? 5000);
+			pendingApproval = {
+				id,
+				resolve: (confirmed) => {
+					pendingApproval = null;
+					trace(`ui:${id}:${confirmed}`);
+					isStreaming = false;
+					emit({
+						type: "message_update",
+						usage,
+						assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: `审批结果：${confirmed}`, partial: {} },
+					});
+					emit({
+						type: "agent_end",
+						messages: [
+							{
+								role: "assistant",
+								content: [{ type: "text", text: `审批结果：${confirmed}` }],
+								stopReason: "stop",
+								durationMs: 5,
+								usage: { input: 10, output: 5, totalTokens: 15 },
+							},
+						],
+						willRetry: false,
+					});
+				},
+			};
+			emit({
+				type: "extension_ui_request",
+				id,
+				method: "confirm",
+				title: "允许 bash？",
+				message: "npm test",
+				timeout,
+			});
+		}, 17);
 		return;
 	}
 	if (slow) return;
@@ -298,13 +342,14 @@ rl.on("line", (line) => {
 		case "abort":
 			clearTimers();
 			isStreaming = false;
+			pendingApproval = null;
 			reply(command);
 			emit({ type: "agent_end", messages: [], willRetry: false });
 			emit({ type: "agent_settled", aborted: true });
 			break;
 		case "extension_ui_response":
-			// 测试里不需要额外动作；保留可观测的 stderr
-			process.stderr.write(`fake-pi: approval ${command.id} => ${command.confirmed}\n`);
+			trace(`ui:${command.id}:${command.confirmed}`);
+			if (pendingApproval?.id === command.id) pendingApproval.resolve(command.confirmed === true);
 			break;
 		default:
 			fail(command, `unknown command: ${command.type}`);

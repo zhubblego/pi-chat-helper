@@ -82,8 +82,10 @@
 			<div id="chat-resize" class="chat-resize" role="separator" aria-orientation="vertical" aria-label="调整对话栏宽度" tabindex="0" title="拖动调整宽度（双击恢复默认）"></div>
 			<header id="chat-head" class="chat-head">
 				<button id="chat-model" class="chat-model" type="button" title="切换模型">模型未加载</button>
-				<button id="chat-profile" class="chat-profile" type="button" title="工具权限（切换权限在后续阶段开放）" disabled>只读</button>
+				<button id="chat-profile" class="chat-profile" type="button" title="工具权限" aria-haspopup="menu" aria-expanded="false">只读</button>
+				<button id="chat-new" class="icon-btn chat-new" type="button" title="新对话" aria-label="新对话">+</button>
 			</header>
+			<div id="chat-profile-menu" class="chat-profile-menu" role="menu" hidden></div>
 			<div id="chat-list" class="chat-list" role="log" aria-live="polite" aria-label="对话消息"></div>
 			<div id="chat-announcer" class="chat-sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 			<div class="chat-composer">
@@ -100,6 +102,7 @@
 					</div>
 				</div>
 			</div>
+			<div id="chat-approval" class="chat-approval" hidden role="dialog" aria-modal="true" aria-label="工具审批"></div>
 		</aside>
 	</div>
 	<!-- 详情内联面板：点轨迹行后插到该行下方（app.js 负责挂载位置，随行重渲染重挂）。

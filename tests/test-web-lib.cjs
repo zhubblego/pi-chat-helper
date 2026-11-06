@@ -26,6 +26,9 @@ const check = (label, cond, extra = "") => {
 		normalizeContextIds,
 		mergeContextIds,
 		pruneContextIds,
+		readThreadId,
+		rememberThread,
+		forgetThread,
 	} = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "chat-lib.js")).href);
 	const sseOne = parseSseChunk('event: meta\ndata: {"a":1}\n\n');
 	check("SSE：单事件", sseOne.events.length === 1 && sseOne.events[0].event === "meta" && sseOne.rest === "", JSON.stringify(sseOne));
@@ -118,6 +121,17 @@ const check = (label, cond, extra = "") => {
 		"pruneContextIds：Set/对象两种入参",
 		pruneContextIds(["a", "b", "c"], new Set(["b", "c"])).join(",") === "b,c" &&
 			pruneContextIds(["a", "b"], { a: true }).join(",") === "a",
+	);
+	const threadMap = {};
+	const rememberedThreads = rememberThread(threadMap, "pi:s-1", "thread-a");
+	check(
+		"thread memory：写入/读取不改原 map",
+		readThreadId(rememberedThreads, "pi:s-1") === "thread-a" && readThreadId(threadMap, "pi:s-1") === null,
+	);
+	const forgottenThreads = forgetThread(rememberedThreads, "pi:s-1");
+	check(
+		"thread memory：清除后为空",
+		readThreadId(forgottenThreads, "pi:s-1") === null && readThreadId(rememberedThreads, "pi:s-1") === "thread-a",
 	);
 	check(
 		"formatChars：900 / 1.8k / 236k / 1.2M / 空值",
@@ -546,6 +560,49 @@ const check = (label, cond, extra = "") => {
 			styleSource.includes(".chat-ctx-hint"),
 	);
 	check("勾选列改名 no-select（不再用 no-distill）", styleSource.includes(".ev.no-select") && !appSource.includes("no-distill") && !styleSource.includes("no-distill"));
+	check(
+		"T7 对话头：profile 可点击 + 新对话按钮 + 审批/权限菜单占位",
+		/<button id="chat-profile"[^>]*>/.test(indexSource) &&
+			!/<button id="chat-profile"[^>]*disabled/.test(indexSource) &&
+			indexSource.includes('id="chat-new"') &&
+			indexSource.includes('id="chat-profile-menu"') &&
+			indexSource.includes('id="chat-approval"') &&
+			indexSource.includes('role="dialog"'),
+	);
+	check(
+		"T7 profile 菜单：三档/说明/full 首次确认/POST settings",
+		chatSource.includes("PROFILE_OPTIONS") &&
+			["no-tools", "read-only", "full"].every((profile) => chatSource.includes(`id: "${profile}"`)) &&
+			chatSource.includes("全量工具会真实修改工作区") &&
+			chatSource.includes("function applyProfile") &&
+			chatSource.includes('fetch("/api/chat/settings"') &&
+			chatSource.includes("fullConfirmed"),
+	);
+	check(
+		"T7 审批弹层：队列/倒计时/本会话允许/POST approval/Esc",
+		chatSource.includes("function enqueueApproval") &&
+			chatSource.includes("function respondApproval") &&
+			chatSource.includes('fetch("/api/chat/approval"') &&
+			chatSource.includes("chat-approval-count") &&
+			chatSource.includes("chat-approval-timer") &&
+			chatSource.includes("本会话允许") &&
+			chatSource.indexOf("if (state.approvals.length)") < chatSource.indexOf("if (state.profileMenuOpen)"),
+	);
+	check(
+		"T7 线程记忆：tw.chatThread / 新线程标记 / 以此新开保留选择",
+		chatSource.includes('const CHAT_THREAD_KEY = "tw.chatThread"') &&
+			chatSource.includes('const CHAT_THREAD_NEW_KEY = "tw.chatThreadNew"') &&
+			chatSource.includes("function rememberedThreadFor") &&
+			chatSource.includes("function rememberThreadFor") &&
+			chatSource.includes("function newThread({ preserveSelection = false } = {})") &&
+			chatSource.includes("newThread({ preserveSelection: true })") &&
+			chatSource.includes("deps.setSelectedIds?.([], { silent: true })") &&
+			chatSource.includes("newBtn.disabled = state.streaming"),
+	);
+	check(
+		"T7 样式：权限菜单/审批弹层/full 警示/新对话",
+		[".chat-profile-menu", ".chat-approval", ".chat-approval-card", ".chat-profile.is-full", ".chat-new"].every((sel) => styleSource.includes(sel)),
+	);
 
 	console.log(failed === 0 ? "\nALL PASS" : `\n${failed} FAILED`);
 	process.exit(failed === 0 ? 0 : 1);
