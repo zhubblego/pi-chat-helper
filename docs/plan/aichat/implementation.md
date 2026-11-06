@@ -723,4 +723,4 @@ export function initChatPanel(deps) { ... }
 - [x] R10：Host/Origin/JSON content-type/路径/大小校验全过；禁用态不报错。（T9 安全用例）
 - [ ] 浏览器实测：三档 profile、审批弹层、工具卡片、切项目/线程、重启恢复。CDP 不可用，未做。
 - [ ] Codex send 上下文 e2e：工具层 list/read 已测，send 未做，留后续。
-- [x] 全套测试：test-chat 165、test-server 184、test-web-lib 193、test-extension 88、test-codex 38、test-projection 33、test-sessions 10、test-turn 21、test-tool-origins 11、test-render 28、test-question-panel 8、test-headless-tui 11；`tsc` 0；`pi -ne -e .` 0；模式 B dev 冒烟正常 send/done，无 rpc 残留；ROADMAP 只写已验证内容。
+- [x] 全套测试：test-chat 165、test-server 184、test-web-lib 193、test-extension 88、test-codex 38、test-projection 33、test-sessions 10、test-turn 21、test-tool-origins 10、test-render 28、test-question-panel 8、test-headless-tui 11；合计 789 个断言（按 `^PASS` 计数，不含各文件末尾 `ALL PASS` 汇总）；`tsc` 0；`pi -ne -e .` 0；模式 B dev 冒烟正常 send/done，无 rpc 残留；ROADMAP 只写已验证内容。

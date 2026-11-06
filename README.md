@@ -111,7 +111,7 @@ npm run dev        # 默认 http://127.0.0.1:7788
 - **安全**：仅监听回环地址；所有 POST 校验 Host/Origin，chat POST 要求 `application/json`，失败 403；请求体 >1MB 413，线程/轨迹文件 >32MB 400；不新增 CORS，OPTIONS 405。非回环监听时 chat 自动禁用，轨迹 viewer 不受影响。
 - **存储**：对话线程是独立 pi session，落在 `<chatDir>/<source>/<safeSessionId>/sessions`；`chatDir` 默认 `<agentDir>/pi-chat-helper/chats`，只写这里，删除不影响轨迹历史；`/api/sessions` 与 pi `/resume` 看不到。
 
-已知限制：对话页的浏览器交互尚未做 CDP 实测；Codex 的 `read_trajectory` 工具已支持，但 Codex send 上下文链路未做 e2e；暂无线程列表/重命名/删除 UI；不支持图片/语音/多模态输入。
+已知限制：对话页的浏览器交互尚未做 CDP 实测；Codex 的 `read_trajectory` 工具已支持，但 Codex send 上下文链路未做 e2e；暂无线程列表/重命名/删除 UI；不支持图片/语音/多模态输入。旧 pi stderr 错误仅截断、未全量脱敏；进程池内非 turn 读取没有租约，极端情况下可能被容量 LRU 关闭；pi `/resume` 隔离未直接验证（chatDir 路径隔离与列表排除已测）。
 
 ### 轨迹源
 
