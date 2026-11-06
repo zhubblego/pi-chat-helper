@@ -1086,7 +1086,7 @@ export function initChatPanel(deps) {
 		const label = layer === "model" ? "选择模型" : layer === "skill" ? "选择技能" : "斜杠命令";
 		paletteListEl.setAttribute("aria-label", label);
 		if (paletteSearchEl) {
-			const placeholder = layer === "model" ? "搜索模型" : layer === "skill" ? "搜索技能" : "搜索命令";
+			const placeholder = layer === "model" ? "搜索模型…" : layer === "skill" ? "搜索技能…" : "搜索命令…";
 			paletteSearchEl.placeholder = placeholder;
 			paletteSearchEl.setAttribute("aria-label", placeholder);
 		}

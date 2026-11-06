@@ -503,6 +503,9 @@ const check = (label, cond, extra = "") => {
 		paletteSearchIndex > paletteHeadIndex &&
 			paletteListIndex > paletteSearchIndex &&
 			indexSource.includes('type="search"') &&
+			indexSource.includes('placeholder="搜索命令…"') &&
+			chatSource.includes("搜索模型…") &&
+			chatSource.includes("搜索技能…") &&
 			chatSource.includes("function paletteQuery") &&
 			chatSource.includes("paletteSearchEl?.value") &&
 			chatSource.includes("filterPaletteItems(paletteSkillItems(), query)") &&
