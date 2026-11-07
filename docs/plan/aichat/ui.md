@@ -399,7 +399,7 @@ stateDiagram-v2
 ### 8.3 安全提示
 
 - 首次切到 `full`：弹一次确认 `全量工具会真实修改工作区，每次执行前会请求确认`。
-- `full` 开态在输入卡权限 select 用警示色；关闭页面/切项目自动回到 `只读`？不自动，按项目记忆。
+- `full` 开态在输入卡权限 trigger 用警示色；关闭页面/切项目自动回到 `只读`？不自动，按项目记忆。
 - 审批弹层不接受键盘快捷键「全部允许」；必须显式勾选。
 
 ## 9. 消息渲染
@@ -488,7 +488,7 @@ GLM-5.3 · 2.3s · 1.5K tokens
 ## 13. 响应式
 
 - 对话栏最小 260px：
-  - 模型/权限 select 均 `max-width:220px`；`@container (max-width:560px)` 下 `.chat-tools`/`.chat-modes`/`.chat-trailing` 的 gap 收到 8px，profile 窄窗只显示短词（`仅`/`读`/`全`），`title` 给全称；
+  - 模型+级别 trigger `max-width:360px`、权限 trigger `max-width:220px`；`triggerEffort` 先省略级别；`@container (max-width:560px)` 下 `.chat-tools`/`.chat-modes`/`.chat-trailing` 的 gap 收到 8px；
   - 上下文 chips 横向滚动，不换行；
   - 面板项次文本隐藏。
 - 窄窗口（< 900px）：对话栏仍参与分屏；面板宽度跟随抽屉；审批卡片 `width:min(92%,420px)`。
