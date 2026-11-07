@@ -7,7 +7,7 @@
 
 | 文件 | 类型 | 改动 |
 |---|---|---|
-| `trajectory-web/server/chat-host.mjs` | 新增 | 子进程池、RPC 协议、SSE 映射、审批桥、设置、线程路由分发 |
+| `trajectory-web/server/chat-host.mjs` | 新增 | 子进程池、RPC 协议、SSE 映射、审批桥、设置、线程列表/新建/切换路由分发 |
 | `trajectory-web/server/pi-binary.mjs` | 新增 | pi 可执行文件解析与版本探测 |
 | `trajectory-web/server/chat-session.mjs` | 新增 | 纯函数：pi session 投影 → 对话消息、侧车轮次、清单/delta、路径校验 |
 | `trajectory-web/server/chat-settings.mjs` | 新增 | 纯函数：`settings.json` 原子读写、按项目分键、profile/projectSkills 默认与校验 |
@@ -15,19 +15,19 @@
 | `trajectory-web/server/trajectory-reader.mjs` | 新增 | 子进程扩展共用：按 pi/codex 读轨迹投影与事件查找 |
 | `trajectory-web/server/approval.mjs` | 新增 | 纯函数：审批 toolName 解析、摘要截断、timeout 毫秒→秒、AUTO 常量 |
 | `trajectory-web/server/context-render.mjs` | 新增 | 纯函数：单条轨迹事件渲染（服务端与子进程扩展共用） |
-| `trajectory-web/server/app.mjs` | 修改 | 注入 `chatDir`/`piBin`；挂 `/api/chat/*`；POST 白名单；安全校验；静态资源；close 顺序 |
+| `trajectory-web/server/app.mjs` | 修改 | 注入 `chatDir`/`piBin`；挂 `/api/chat/*`（含 threads/resume）；POST 白名单；安全校验；静态资源；close 顺序 |
 | `trajectory-web/server/main.mjs` | 修改 | `--chat-dir`、`--no-chat`、`--pi-bin`；把解析结果传给 server |
 | `trajectory-web/index.ts` | 修改 | 模式 A 传 `piBin`/`chatDir`；`startInProcess` 选项；close 顺序 |
 | `trajectory-web/chat-trajectory-tool.ts` | 新增 | 子进程扩展：注册 `read_trajectory` 工具（context-as-tool） |
 | `trajectory-web/chat-approval.ts` | 新增 | 子进程扩展：全量档工具审批（`tool_call` + `ctx.ui.confirm`） |
-| `trajectory-web/web/index.html` | 修改 | 对话头、profile chip、上下文 chips、斜杠面板、技能 chip、审批弹层 |
-| `trajectory-web/web/chat.js` | 新增 | 对话 DOM、SSE、斜杠面板、模型/技能/上下文/审批状态 |
+| `trajectory-web/web/index.html` | 修改 | 无顶部对话头；模型纯文本/权限 chip 移入 chat-row；上下文 chips、斜杠面板、技能 chip、审批弹层 |
+| `trajectory-web/web/chat.js` | 新增 | 对话 DOM、SSE、斜杠面板、模型/技能/上下文/审批/线程历史状态 |
 | `trajectory-web/web/chat-lib.js` | 新增 | 纯函数：SSE 解析、面板过滤、上下文持久化、格式化 |
 | `trajectory-web/web/app.js` | 修改 | 接线 `initChatPanel`；`selectMode()`；选中持久化；会话切换；Esc 链；启动 |
-| `trajectory-web/web/style.css` | 修改 | 对话头/chips/面板/工具卡片/审批弹层/流式光标/响应式 |
+| `trajectory-web/web/style.css` | 修改 | 输入卡状态/chips/面板/工具卡片/审批弹层/流式光标/响应式 |
 | `tsconfig.json` | 修改 | `files` 加入 `trajectory-web/chat-trajectory-tool.ts`、`trajectory-web/chat-approval.ts`（只做类型检查） |
 | `tests/test-chat.cjs` | 新增 | 协议解析、路径、清单/delta、渲染、设置、线程映射 |
-| `tests/test-server.cjs` | 修改 | fake child + chat 路由/SSE/审批/安全集成 |
+| `tests/test-server.cjs` | 修改 | fake child + chat 路由/SSE/审批/安全/线程列表/切换集成 |
 | `tests/test-web-lib.cjs` | 修改 | `chat-lib.js` 纯函数 + 源码守卫 |
 | `tests/test-extension.cjs` | 修改 | 真 `pi --mode rpc` 冒烟、两个子进程扩展、模式 A 接线 |
 | `README.md` | 修改 | 对话页能力、子进程模型、工具 profile、chat 目录 |
@@ -416,22 +416,19 @@ profile 差异：
 <aside id="chat-drawer" class="chat-drawer" hidden>
   <div id="chat-resize" ...></div>
 
-  <header id="chat-head" class="chat-head">
-    <button id="chat-model" class="chat-model" type="button" title="切换模型"></button>
-    <button id="chat-profile" class="chat-profile" type="button" title="工具权限"></button>
-    <button id="chat-new" class="icon-btn chat-new" type="button" title="新对话" aria-label="新对话">+</button>
-  </header>
-
   <div id="chat-list" class="chat-list" role="log" aria-live="polite" aria-label="对话消息"></div>
 
   <div class="chat-composer">
     <div id="composer-resize" ...></div>
     <div id="chat-context" class="chat-context" hidden></div>
-    <div id="chat-palette" class="chat-palette" role="listbox" hidden></div>
+    <div id="chat-palette" class="chat-palette" hidden></div>
+    <div id="chat-profile-menu" class="chat-profile-menu" role="menu" hidden></div>
     <div class="chat-card">
       <div id="chat-skill" class="chat-skill" hidden></div>
       <textarea id="chat-input" ...></textarea>
       <div class="chat-row">
+        <span id="chat-model-label" class="chat-model-label"></span>
+        <button id="chat-profile" class="chat-profile" type="button" title="工具权限"></button>
         <button id="chat-send" ...></button>
       </div>
     </div>
@@ -598,7 +595,7 @@ export function initChatPanel(deps) { ... }
 
 ### 4.5 `style.css`
 
-- 对话头：`.chat-head`、`.chat-model`、`.chat-profile`（与模型 chip 同样式，开态用 info 色）。
+- 输入卡状态：`.chat-model-label`（当前模型纯文本）、`.chat-profile`（权限 chip，开态用警示色）。
 - 上下文 chips：`.chat-context`、`.chat-ctx-chip`、`.chat-ctx-label`、`.chat-ctx-preview`、`.chat-ctx-remove`、`.chat-ctx-clear`、`.chat-ctx-new`（以此新开）。
 - 斜杠面板：`.chat-palette`、`.chat-palette-group`、`.chat-palette-item`（`[aria-selected="true"]` 用 hover 底色 + 左侧勾）。
 - 技能 chip：`.chat-skill`。
@@ -649,16 +646,17 @@ export function initChatPanel(deps) { ... }
   14. `server.close()` 后无 child 残留。
   15. 静态 `/chat.js`、`/chat-lib.js` 200。
   16. 虚拟线程（thread 文件未落盘）：GET models 200 + `threadMissing`；POST model 当前虚拟线程 200、不 404/不 switch。
+  17. 线程列表：字段/首条用户/轮数/模型；`/api/chat/resume` 切回旧线程 200、活动 turn 409、未知线程 404。
 
 ### 5.3 `tests/test-web-lib.cjs`
 
 - `chat-lib.js`：`parseSseChunk`（单/多事件、跨 chunk、`\r\n`、多行 `data:`、注释、坏 JSON）、`filterPaletteItems`、`formatContextWindow`、`chatCtxKey/normalize/merge`、`pruneContextIds`、`eventRef`。
 - 源码守卫：
   - checkbox 在 `selectMode()` 时渲染；`no-select` 存在，`no-distill` 不再被新代码使用；
-  - `index.html` 含 `chat-head`、`chat-model`、`chat-profile`、`chat-context`、`chat-palette`、`chat-skill`、`chat-approval`；
+  - `index.html` 含 `chat-model-label`、`chat-profile`、`chat-context`、`chat-palette`、`chat-skill`、`chat-approval`；
   - `app.js` 含 `initChatPanel`、`selectMode()`、`CHAT_CTX_KEY`，不再含 `state.chat.push` / `function sendChat`；
   - `chat.js` 含 `/api/chat/send`、`/api/chat/approval`、`parseSseChunk`、`TextDecoder`、`stream:true`；
-  - `style.css` 含 `.chat-head`、`.chat-tool`、`.chat-approval`、`.chat-msg.ai.is-streaming`。
+  - `style.css` 含 `.chat-model-label`、`.chat-tool`、`.chat-approval`、`.chat-msg.ai.is-streaming`。
 
 ### 5.4 `tests/test-extension.cjs`
 
@@ -724,4 +722,4 @@ export function initChatPanel(deps) { ... }
 - [x] R10：Host/Origin/JSON content-type/路径/大小校验全过；禁用态不报错。（T9 安全用例）
 - [ ] 浏览器实测：三档 profile、审批弹层、工具卡片、切项目/线程、重启恢复。CDP 不可用，未做。
 - [ ] Codex send 上下文 e2e：工具层 list/read 已测，send 未做，留后续。
-- [x] 全套测试：test-chat 165、test-server 187、test-web-lib 195、test-extension 88、test-codex 38、test-projection 33、test-sessions 10、test-turn 21、test-tool-origins 10（带 PI_HOME 时 11）、test-render 28、test-question-panel 8、test-headless-tui 11；合计 794 个断言（按 `^PASS` 计数，不含各文件末尾 `ALL PASS` 汇总；带 PI_HOME 时 795）；`tsc` 0；`pi -ne -e .` 0；模式 B dev 冒烟正常 send/done，无 rpc 残留；ROADMAP 只写已验证内容。
+- [x] 全套测试：test-chat 165、test-server 192、test-web-lib 197、test-extension 88、test-codex 38、test-projection 33、test-sessions 10、test-turn 21、test-tool-origins 10（带 PI_HOME 时 11）、test-render 28、test-question-panel 8、test-headless-tui 11；合计 801 个断言（按 `^PASS` 计数，不含各文件末尾 `ALL PASS` 汇总；带 PI_HOME 时 802）；`tsc` 0；`pi -ne -e .` 0；模式 B dev 冒烟正常 send/done，无 rpc 残留；ROADMAP 只写已验证内容。

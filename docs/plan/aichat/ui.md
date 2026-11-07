@@ -27,20 +27,19 @@
 ```text
 #chat-drawer
 ├── #chat-resize
-├── #chat-head                 对话头
-│   ├── #chat-model            模型 chip（点击开 /model）
-│   ├── #chat-profile          工具权限 chip（仅对话 / 只读 / 全量）
-│   └── #chat-new              新对话
 ├── #chat-list                 消息流（user / ai / tool / notice）
 ├── .chat-composer
 │   ├── #composer-resize
 │   ├── #chat-context          上下文 chips + 计数 + 清空 + 「以此新开」
 │   ├── #chat-palette          斜杠面板（顶部独立搜索框 + 列表，绝对定位在输入卡上方）
+│   ├── #chat-profile-menu     工具权限菜单（popover，隐藏）
 │   └── .chat-card
 │       ├── #chat-skill        技能 chip
 │       ├── #chat-input
 │       └── .chat-row
-│           └── #chat-send     发送/停止二态
+│           ├── #chat-model-label  当前模型（纯文本，不可点）
+│           ├── #chat-profile      工具权限 chip（仅对话 / 只读 / 全量）
+│           └── #chat-send         发送/停止二态
 └── #chat-approval             审批弹层（覆盖抽屉内容，不阻塞轨迹区）
 ```
 
@@ -64,25 +63,32 @@
 ```
 
 - 对话栏宽度、输入区高度沿用现有两个拖拽把手。
-- 对话头高度约 36px，`border-bottom: 1px solid var(--dsw-alias-border-l1)`。
+- 无顶部对话头；输入卡底部 `.chat-row` 承载当前模型纯文本与权限 chip。
 - 上下文 chips 在输入卡上方，横向可滚，最多一行，高度约 28px。
 
-## 2. 对话头
+## 2. 对话头与输入卡状态
+
+v1 **不设顶部对话头**。当前模型和工具权限都在输入卡底部 `.chat-row`，与发送按钮同排；顶部只保留抽屉开关（页面顶栏）。
 
 ```text
-[ GLM-5.3 ▾ ]   [ 只读 ▾ ]                              [ + 新对话 ]
+... 消息流 ...
+┌─────────────────────────────────────┐
+│ 问问这条轨迹…                      │
+│ GLM-5.3              [只读 ▾]  [↑] │
+└─────────────────────────────────────┘
 ```
 
-### 2.1 模型 chip
+### 2.1 当前模型（纯文本）
 
+- 位置：`.chat-row` 左侧 `#chat-model-label`，纯文本，不可点击。
 - 文本：当前线程模型 `name`；过长省略，`title` 给 `provider/id`。
-- 图标：模型名左侧小圆点；`reasoning` 时 info 色，否则中性灰。
-- 点击：等价输入 `/model`，打开模型面板；不弹原生 select。
-- 模型不可用/回退时：chip 左侧警示圆点，`title` 说明原因。
-- 流式中点击：提示「回复中，先停止」，不切模型。
+- 左侧小圆点：`reasoning` 时 info 色，否则中性灰；模型不可用/回退时警示色，`title` 说明原因。
+- 切换模型只走 `/model` 命令（搜索 `model` 后 Enter/选择）；不保留顶部模型菜单。
+- 流式中打开 `/model`：提示「回复中，先停止」，不切模型。
 
 ### 2.2 工具权限 chip
 
+- 位置：`.chat-row` 内、发送按钮左侧；菜单 `#chat-profile-menu` 在输入卡上方弹出。
 - 三态：`仅对话`（no-tools）/ `只读`（read-only，默认）/ `全量`（full）。
 - 点击：弹出小菜单，列出三档与一句说明：
   - 仅对话：只读轨迹工具，不能读项目文件。
@@ -91,13 +97,13 @@
 - 切档：`POST /api/chat/settings`；成功后 toast「对话进程已重启」；若流式中则先提示停止（409）。
 - `全量` 开态用警示色（与裁剪/蒸馏的配色区分），`title` 说明「会真实修改工作区」。
 
-### 2.3 新对话
+### 2.3 新对话（/new）
 
-- 加号按钮，`title="新对话"`；`POST /api/chat/thread`。
+- 不再有加号按钮；命令面板新增「新对话」/`/new`。
+- 选中即调用现有 `POST /api/chat/thread`，不新增接口。
 - 不弹确认；新线程清空消息与上下文选择，模型/profile 保留。
-- 流式中禁用；若用户坚持，先停止再新建。
-- 成功返回新 `threadId` 后写入 `localStorage["tw.chatThread"]["<source>:<sessionId>"]`。
-- 关闭仍走顶栏对话按钮 / Esc，不在对话头放关闭按钮。
+- 流式中提示先停止；成功返回新 `threadId` 后写入 `localStorage["tw.chatThread"]["<source>:<sessionId>"]`。
+- 关闭仍走顶栏对话按钮 / Esc，不在输入卡放关闭按钮。旧线程用 `/resume` 找回。
 
 ## 3. 斜杠面板
 
@@ -107,8 +113,12 @@
 stateDiagram-v2
     [*] --> Closed
     Closed --> Command: textarea 输入 "/"（无空格）
+    Command --> New: 选择「新对话」
+    Command --> Resume: 选择「历史对话」
     Command --> Model: 选择「模型」或在搜索框输入 model + Enter
     Command --> Skill: 选择「技能」或在搜索框输入 skill + Enter
+    New --> Closed: 新建并清空消息
+    Resume --> Closed: 选中历史线程
     Model --> Closed: 选中模型
     Skill --> Closed: 选中技能
     Model --> Command: Esc（回到命令层）
@@ -120,13 +130,13 @@ stateDiagram-v2
 - `/skill:foo args` 有冒号/空格，不触发面板，直接按普通输入发送，由 pi 原生展开。
 - 面板顶部是独立的搜索输入 `#chat-palette-search`（`.chat-palette-head` 内的 `type=search`），列表项在下方 `#chat-palette-list`。
   - 打开面板时搜索框清空并立即 focus；不再从 textarea 读取查询，也不需要剥前导 `/`。
-  - Command 层过滤 `model`、`skill`；Model/Skill 层过滤对应列表。
+  - Command 层过滤 `new`、`resume`、`model`、`skill`；Model/Skill/Resume 层过滤对应列表。
   - 切层清空搜索框并保持搜索框焦点。
   - 选择项后关闭面板，焦点回 textarea；model/skill 选择清空触发用的 `/` 草稿。
   - Esc：子层回到 Command 层并清空搜索；Command 层关闭面板，焦点回 textarea 并恢复进入面板前的草稿。
   - 点击面板外或点击 textarea（搜索框失焦）关闭面板，不抢回焦点；textarea 保留/恢复草稿。
 - 定位：`.chat-composer` 内 `position:absolute; left:10px; right:10px; bottom:calc(100% + 6px)`；`max-height:min(280px,50vh)`，搜索行固定，列表内部滚动。
-- 层级：高于消息流，低于对话头；点击面板外关闭。
+- 层级：高于消息流，低于页面顶栏/审批弹层；点击面板外关闭。
 
 ### 3.2 外观
 
@@ -170,7 +180,7 @@ stateDiagram-v2
 1. 输入 `/` → Command 层。
 2. 选「模型」或 `/model` + Enter → `GET /api/chat/models?refresh=1`，显示 loading 行。
 3. 列表到达 → 按 provider 分组；当前线程模型打勾。
-4. 选中 → `POST /api/chat/model`；成功后更新 chip、关闭面板、插入居中 notice `已切换到 GLM-5.3`。
+4. 选中 → `POST /api/chat/model`；成功后更新输入卡模型纯文本、关闭面板、插入居中 notice `已切换到 GLM-5.3`。
 5. 失败 → 面板内错误行，保持打开；不改 chip。
 
 展示：
@@ -216,16 +226,37 @@ stateDiagram-v2
 - `/skill:name args` 回车：不经过面板，服务端做大小守卫后原样发送；找不到技能按 pi 行为透传。
 - `/skill` 后 Enter：进入技能列表，不发送。
 
-## 6. 上下文管理
+## 6. 线程历史（/resume）
 
-### 6.1 勾选框显示条件
+- 命令面板新增「历史对话」/`/resume`；打开独立 resume 层，不新增线程列表按钮。
+- 数据：`GET /api/chat/threads?source=&session=`；按 mtime 倒序，最多 50 条；跳过超过 32MB 的文件。
+- 每项展示：首条用户消息摘要（截断）、时间、模型名、用户轮数；当前线程左侧 `✓`。
+- 空态：`还没有历史对话`。加载失败单独错误行，不影响命令层。
+- 选中后：`POST /api/chat/resume` 复用 `switch_session`，不新建线程；成功后更新 `tw.chatThread`、消息列表与 `#chat-context` chips。
+- 键盘与模型/技能层一致：搜索框 ↑↓ 高亮、Enter 选中、Esc 回 Command 层；搜索框独立，textarea 草稿不动。
+- 边界：流式中 409；线程文件已被删 404；同项目有活动 turn 时 409。
+
+```text
+┌────────────────────────────────────┐
+│ 搜索历史对话…                       │
+├────────────────────────────────────┤
+│ 历史对话                            │
+│  帮我看看这个报错      10:24 · 3 轮 │
+│  GLM-5.3                            │
+│ ✓ 模型切换失败        09:12 · 1 轮 │
+└────────────────────────────────────┘
+```
+
+## 7. 上下文管理
+
+### 7.1 勾选框显示条件
 
 - 显示：**对话栏打开** 或 **蒸馏模式开启**。
 - 隐藏：两者都关。
 - 实现：`selectMode = chatOpen || distillMode`；`renderEvent`/`renderMain` 用 `selectMode` 控制 `.ev-check`/`.q-check` 与 `no-select` 网格列。
 - 打开/关闭对话栏时 `renderMain()` 一次；勾选状态在隐藏期间保留。
 
-### 6.2 交互
+### 7.2 交互
 
 - 行级 checkbox：勾选/取消该事件；点击不展开详情。
 - 轮次头 checkbox：全选/取消全选本轮所有事件（含折叠、被过滤的）；三态 `all/some/none`。
@@ -237,15 +268,15 @@ stateDiagram-v2
 - 上限 50；超出时忽略新勾选并提示。
 - 切会话/切源：按 `source:sessionId` 保存/恢复。
 
-### 6.3 增删语义（context-as-tool）
+### 7.3 增删语义（context-as-tool）
 
 - 勾选变化只影响**下一轮**；流式中的请求使用发送时的快照。
 - 加 4/5/6：下一轮清单出现，模型可读。
 - 反选 2/3：下一轮清单消失；模型再按 id 读取会得到「不在当前选中集」。
 - **反选不抹历史**：模型之前读过的内容仍在 session 里。UI 在 chips 旁给一句轻提示：`取消勾选只影响之后的读取`。
-- 需要彻底失忆：用「以此新开」按钮（保留当前选择新开线程）或「新对话」（清空选择）。
+- 需要彻底失忆：用「以此新开」按钮（保留当前选择新开线程）或 `/new`（清空选择）。
 
-### 6.4 Chips
+### 7.4 Chips
 
 ```text
 上下文 3  [提问 · 帮我改… ×] [工具 · bash … ×] [回答 · 因为… ×]  清空  以此新开
@@ -259,9 +290,9 @@ stateDiagram-v2
   - 点击 `×`：从选中集移除。
 - 清空：清空当前会话所有选中；不弹确认。
 - 失效条目（投影里已被裁剪/分支变化）：chip 显示 `失效条目` + `×`，发送时服务端跳过。
-- `以此新开`：`POST /api/chat/thread` 后**保留**当前选中集；与对话头的「新对话」（清空选择）区分。
+- `以此新开`：`POST /api/chat/thread` 后**保留**当前选中集；与 `/new`（清空选择）区分。
 
-### 6.5 持久化
+### 7.5 持久化
 
 ```json
 {
@@ -277,9 +308,9 @@ stateDiagram-v2
 - 线程记忆：`tw.chatThread`，值 `{ "<source>:<sessionId>": "<pi session id>" }`；meta/「新对话」/「以此新开」后写入；没有记忆值时由服务端取最新。
 - 新建未落盘的虚拟线程另用 `tw.chatThreadNew` 标记：刷新后仍保留该空线程；`GET thread` 返回 `exists:true` 后清除标记。记住的旧线程文件真的不存在时清除记忆并回退最新。
 
-## 7. 工具调用与审批
+## 8. 工具调用与审批
 
-### 7.1 工具卡片
+### 8.1 工具卡片
 
 ```text
 ┌ 工具 · read_trajectory ────────────── ✓ ┐
@@ -294,7 +325,7 @@ stateDiagram-v2
 - 工具卡片复用轨迹页的等宽/markdown 样式；`read_trajectory` 的结果按普通文本渲染。
 - 同一 turn 内多个工具按顺序排列；不合并。
 
-### 7.2 审批弹层
+### 8.2 审批弹层
 
 ```text
 ┌──────────────────────────────────────┐
@@ -319,15 +350,15 @@ stateDiagram-v2
 - 断连/刷新：服务端把所有 pending 视为拒绝；前端重新 `GET thread` 后不再显示弹层。
 - `full` profile 才可能出现；`read-only`/`no-tools` 不弹。
 
-### 7.3 安全提示
+### 8.3 安全提示
 
 - 首次切到 `full`：弹一次确认 `全量工具会真实修改工作区，每次执行前会请求确认`。
-- `full` 开态在对话头 chip 用警示色；关闭页面/切项目自动回到 `只读`？不自动，按项目记忆。
+- `full` 开态在输入卡权限 chip 用警示色；关闭页面/切项目自动回到 `只读`？不自动，按项目记忆。
 - 审批弹层不接受键盘快捷键「全部允许」；必须显式勾选。
 
-## 8. 消息渲染
+## 9. 消息渲染
 
-### 8.1 用户消息
+### 9.1 用户消息
 
 ```text
                                    ┌─────────────────────────┐
@@ -341,7 +372,7 @@ stateDiagram-v2
 - meta：`上下文 N`（有 context 时）、`技能 <name>`（有 skill 时）；模型名不重复显示。
 - `上下文 N` 的 `title` 列出条目预览；点击可打开第一个条目（可选）。
 
-### 8.2 AI 消息
+### 9.2 AI 消息
 
 ```text
 因为：
@@ -358,24 +389,24 @@ GLM-5.3 · 2.3s · 1.5K tokens
 - 只有 thinking 没有 text：显示「模型没有返回可见文本」。
 - 错误/中断：气泡内保留部分文本，末尾红色 `生成中断：<message>` 或 `已停止`。
 
-### 8.3 Notice
+### 9.3 Notice
 
 - 居中、caption 色、无气泡：`已切换到 GLM-5.3`、`已回退到 GLM-5.3`、`对话进程已重启`、`审批超时，已拒绝 bash`。
 - 来自 SSE `notice` 或前端本地动作；不写入 pi session（模型切换本身由 pi 记录）。
 
-### 8.4 空态与禁用态
+### 9.4 空态与禁用态
 
 | 状态 | 展示 |
 |---|---|
-| 对话未启用 | 消息流显示 `对话不可用：<reason>`；输入区 disabled；模型/profile chip 灰色 |
+| 对话未启用 | 消息流显示 `对话不可用：<reason>`；输入区 disabled；模型文本/profile chip 灰色 |
 | 未选择会话 | `先在左侧选择一个会话`；输入区禁用 |
 | 线程为空 | `选中左侧轨迹条目，然后提问。输入 / 选择模型或技能。` |
 | 模型列表为空 | `pi 没有可用模型，先在 models.json / 登录里配置` |
 | 加载线程 | 3 条骨架气泡，不转圈遮挡整个抽屉 |
 | 发送失败 | 保留已输入内容；错误气泡；输入区恢复 |
-| 流式中 | 发送按钮变停止；`#chat-new`/profile/模型 chip 禁用或提示「回复中」 |
+| 流式中 | 发送按钮变停止；profile 菜单/`/new`/`/resume` 提示「回复中」 |
 
-## 9. 流式与滚动
+## 10. 流式与滚动
 
 - 发送后立即乐观渲染 user 消息，再等 `meta`；`meta` 前失败则移除或标记失败。
 - 滚动：发送前距底部 `< 80px` 则自动跟随；用户上滚则显示「回到底部」小按钮；结束后若原本在底部则滚到最终位置。
@@ -383,7 +414,7 @@ GLM-5.3 · 2.3s · 1.5K tokens
 - 窗口隐藏时不断流；回来若流已结束，`GET thread` 刷新一次最终状态。
 - `done` 后整表替换消息列表，按消息 id 去重，避免乐观消息与服务器投影重复。
 
-## 10. 键盘与可访问性
+## 11. 键盘与可访问性
 
 - 输入框：Enter 发送；Shift+Enter 换行；IME 组合中不发送。
 - 面板：↑↓ 移动，Enter 选择，Esc 逐层关闭；`role="listbox"`、`role="option"`、`aria-selected`；`aria-activedescendant` 指向高亮项。
@@ -393,10 +424,10 @@ GLM-5.3 · 2.3s · 1.5K tokens
 - 发送/停止：`aria-label` + `title`；流式中 `aria-busy="true"` 挂在消息流容器；**流式期间 `aria-live="off"`**，结束后恢复 `polite` 并播报最后一条。
 - 颜色对比：沿用现有 token；profile 全量态用警示色 + 文案，不只靠颜色。
 
-## 11. 样式约定
+## 12. 样式约定
 
 - 复用 `trajectory-web/web/tokens.css` 的 deepseek token，不新增色板。
-- 新增规则放在 `style.css` 的对话栏区块内，顺序：对话头 → 上下文 chips → 面板 → 消息/工具卡片 → 输入卡 → 审批弹层。
+- 新增规则放在 `style.css` 的对话栏区块内，顺序：输入卡状态 → 上下文 chips → 面板 → 消息/工具卡片 → 输入卡 → 审批弹层。
 - 建议：
   - 面板/卡片背景：`--dsw-alias-bg-layer-1`；
   - 发丝线：`--dsw-alias-border-l1` / `--dsw-alias-border-l2`；
@@ -408,10 +439,10 @@ GLM-5.3 · 2.3s · 1.5K tokens
 - 暗色：全部走 token；审批遮罩固定 `rgba(0,0,0,.32)`，卡片用 layer-1。
 - 动效：面板 120ms 淡入/上移 4px；流式光标 1s 闪烁；尊重 `prefers-reduced-motion`。
 
-## 12. 响应式
+## 13. 响应式
 
 - 对话栏最小 260px：
-  - 模型 chip `max-width:140px`，profile chip 只显示图标或短词（`仅`/`读`/`全`），`title` 给全称；
+  - 当前模型纯文本 `max-width:140px`，profile chip 只显示图标或短词（`仅`/`读`/`全`），`title` 给全称；
   - 上下文 chips 横向滚动，不换行；
   - 面板项次文本隐藏。
 - 窄窗口（< 900px）：对话栏仍参与分屏；面板宽度跟随抽屉；审批卡片 `width:min(92%,420px)`。

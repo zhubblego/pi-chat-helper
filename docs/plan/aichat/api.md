@@ -301,7 +301,53 @@ Content-Type: application/json
 - 若 child 有活动 turn：409（不隐式中断）。
 - `model` 可省略：沿用当前 child 模型；没有 child 时用 pi 默认。
 - 旧 session 文件保留；前端把新 id 写入 `localStorage["tw.chatThread"]["<source>:<sessionId>"]`。
-- v1 不提供线程列表；旧线程仍可通过显式 `thread` 访问。
+- 历史线程列表见 §5.3；切换到旧线程用 §5.4 `/api/chat/resume`。
+
+### 5.3 线程列表
+
+```http
+GET /api/chat/threads?source=pi&session=<id>
+```
+
+响应：
+
+```json
+{
+  "threads": [
+    {
+      "id": "20261105T090000-abc",
+      "mtime": "2026-11-05T09:03:00.000Z",
+      "size": 12345,
+      "model": { "provider": "litellm", "id": "glm-5.3", "name": "GLM-5.3" },
+      "firstUserText": "帮我看看这个报错",
+      "turns": 3
+    }
+  ],
+  "current": "20261105T090000-abc",
+  "warnings": []
+}
+```
+
+- 扫描 `<chatDir>/<source>/<safeSessionId>/sessions/*.jsonl`，按 mtime 倒序；最多返回 50 条。
+- `firstUserText` 取投影里第一条用户消息，截断 120 字符；`turns` 为用户轮数；`model` 取线程最新 model。
+- 单文件超过 32MB 跳过并写入 `warnings`，不解析。
+- `current` 是 child 当前 session id（没有 child 时 null）。
+
+### 5.4 切换线程（/resume）
+
+```http
+POST /api/chat/resume
+Content-Type: application/json
+
+{ "source": "pi", "session": "<id>", "threadId": "20261105T090000-abc" }
+```
+
+响应：同 §5.1 的 `thread` + `pending` + `warnings`，表示已切到该 pi session。
+
+- 只接受已存在的线程文件；文件不存在 404，超过 32MB 400。
+- 复用 `switch_session`，不新建线程；成功后前端写回 `tw.chatThread`。
+- 流式中 409；同项目有活动 turn 时 409；线程文件被删 404。
+- 新建线程仍用 `POST /api/chat/thread`，两个路由语义分开。
 
 ## 6. 设置
 
