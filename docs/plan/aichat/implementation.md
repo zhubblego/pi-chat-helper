@@ -20,6 +20,7 @@
 | `trajectory-web/index.ts` | 修改 | 模式 A 传 `piBin`/`chatDir`；`startInProcess` 选项；close 顺序 |
 | `trajectory-web/chat-trajectory-tool.ts` | 新增 | 子进程扩展：注册 `read_trajectory` 工具（context-as-tool） |
 | `trajectory-web/chat-approval.ts` | 新增 | 子进程扩展：全量档工具审批（`tool_call` + `ctx.ui.confirm`） |
+| `trajectory-web/server/chat-models.mjs` | 新增 | 模型列表纯函数：`models.json.providers` 过滤、当前模型补首位、重复 provider+id 去重 |
 | `trajectory-web/web/index.html` | 修改 | 无顶部对话头；模型+级别 trigger、权限 trigger 与 + 按钮移入 chat-row；上下文 chips/技能 chip 在 accessory，菜单挂在 overlayAnchor，审批弹层 |
 | `trajectory-web/web/chat.js` | 新增 | 对话 DOM、SSE、斜杠面板、模型/技能/上下文/审批/线程历史状态 |
 | `trajectory-web/web/chat-lib.js` | 新增 | 纯函数：SSE 解析、面板过滤、上下文持久化、格式化 |
@@ -722,4 +723,4 @@ export function initChatPanel(deps) { ... }
 - [x] R10：Host/Origin/JSON content-type/路径/大小校验全过；禁用态不报错。（T9 安全用例）
 - [ ] 浏览器实测：三档 profile、审批弹层、工具卡片、切项目/线程、重启恢复。CDP 不可用，未做。
 - [ ] Codex send 上下文 e2e：工具层 list/read 已测，send 未做，留后续。
-- [x] 全套测试：test-chat 168、test-server 199、test-web-lib 211、test-extension 88、test-codex 38、test-projection 33、test-sessions 10、test-turn 21、test-tool-origins 10（带 PI_HOME 时 11）、test-render 28、test-question-panel 8、test-headless-tui 11；合计 825 个断言（按 `^PASS` 计数，不含各文件末尾 `ALL PASS` 汇总；带 PI_HOME 时 826）；`tsc` 0；`pi -ne -e .` 0；模式 B dev 冒烟正常 send/done，无 rpc 残留；ROADMAP 只写已验证内容。
+- [x] 全套测试：test-chat 172、test-server 205、test-web-lib 211、test-extension 88、test-codex 38、test-projection 33、test-sessions 10、test-turn 21、test-tool-origins 10（带 PI_HOME 时 11）、test-render 28、test-question-panel 8、test-headless-tui 11；合计 835 个断言（按 `^PASS` 计数，不含各文件末尾 `ALL PASS` 汇总；带 PI_HOME 时 836）；`tsc` 0；`pi -ne -e .` 0；模式 B dev 冒烟正常 send/done，无 rpc 残留；ROADMAP 只写已验证内容。
