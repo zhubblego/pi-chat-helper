@@ -48,6 +48,8 @@ export function initChatPanel(deps) {
 	const mdNode = deps.mdNode;
 	const list = el("chat-list");
 	const input = el("chat-input");
+	const addBtn = el("chat-add");
+	const modelBtn = el("chat-model-label");
 	const sendBtn = el("chat-send");
 	const announcer = el("chat-announcer");
 	const paletteEl = el("chat-palette");
@@ -1355,6 +1357,11 @@ export function initChatPanel(deps) {
 		paletteListEl.replaceChildren(...nodes);
 	}
 
+	function syncPaletteButtons() {
+		addBtn?.setAttribute("aria-expanded", String(Boolean(state.palette)));
+		modelBtn?.setAttribute("aria-expanded", String(state.palette?.layer === "model"));
+	}
+
 	function openPalette(layer, { draft = null, clearOnSelect = null, initialIndex = 0 } = {}) {
 		if (!currentSession() || state.enabled !== true) return;
 		closeProfileMenu();
@@ -1381,6 +1388,7 @@ export function initChatPanel(deps) {
 			void loadThreads();
 		}
 		renderPalette();
+		syncPaletteButtons();
 		updateSendButton();
 		paletteSearchEl?.focus();
 	}
@@ -1390,6 +1398,7 @@ export function initChatPanel(deps) {
 		state.palette = null;
 		if (paletteSearchEl) paletteSearchEl.value = "";
 		renderPalette();
+		syncPaletteButtons();
 		if (input) {
 			if (clearInput) input.value = "";
 			else if (restore) input.value = draft;
@@ -1407,6 +1416,7 @@ export function initChatPanel(deps) {
 		state.palette.loading = false;
 		if (paletteSearchEl) paletteSearchEl.value = "";
 		renderPalette();
+		syncPaletteButtons();
 		paletteSearchEl?.focus();
 	}
 
@@ -2048,6 +2058,25 @@ export function initChatPanel(deps) {
 			void send();
 		});
 	}
+	if (addBtn) {
+		addBtn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			if (state.palette?.layer === "command") closePalette({ restore: true });
+			else openPalette("command", { draft: input?.value ?? "", clearOnSelect: false });
+		});
+	}
+	if (modelBtn) {
+		modelBtn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			if (state.streaming) {
+				pushNotice("回复中，先停止", "warn");
+				flushRender();
+				return;
+			}
+			if (state.palette?.layer === "model") closePalette({ restore: true });
+			else openPalette("model", { draft: input?.value ?? "", clearOnSelect: false });
+		});
+	}
 	if (sendBtn) {
 		sendBtn.addEventListener("click", () => {
 			if (state.palette) return;
@@ -2132,7 +2161,7 @@ export function initChatPanel(deps) {
 		if (!state.palette) return;
 		const path = typeof e.composedPath === "function" ? e.composedPath() : [];
 		const inside = (node) => node && (path.includes(node) || (typeof node.contains === "function" && node.contains(e.target)));
-		if (inside(paletteEl)) return;
+		if (inside(paletteEl) || inside(addBtn) || inside(modelBtn)) return;
 		closePalette({ restore: true, focus: false });
 	});
 	// 点击权限菜单外关闭

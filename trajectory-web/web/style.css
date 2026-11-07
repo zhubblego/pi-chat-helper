@@ -1284,37 +1284,55 @@ mark.ev-hit {
 }
 
 /* 输入卡状态：当前模型 chip + 工具权限 chip（无顶部对话头） */
+/* 权限 / 模型控件：dsh InputBar 的 select 外观（非 chip 边框）。 */
+.chat-profile,
+.chat-model-label {
+	max-width: 220px;
+	height: 28px;
+	padding: 0 20px 0 8px;
+	border: none;
+	border-radius: var(--dsw-radius-sm);
+	outline: none;
+	background-color: transparent;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: right 4px center;
+	background-size: 12px 12px;
+	color: var(--dsw-alias-label-secondary);
+	font-size: 13px;
+	line-height: 20px;
+	font-weight: 500;
+	white-space: nowrap;
+	cursor: pointer;
+	appearance: none;
+}
+
 .chat-profile {
+	flex: none;
 	min-width: 0;
-	max-width: 100%;
 	overflow: hidden;
 	text-overflow: ellipsis;
-	white-space: nowrap;
-	border: 0;
-	border-radius: 999px;
-	padding: 3px 10px;
-	background: var(--dsw-alias-bg-layer-2);
-	color: var(--dsw-alias-label-secondary);
-	font: var(--dsw-font-xs-13);
-	flex: none;
-	color: var(--dsw-alias-label-tertiary);
-	cursor: pointer;
 }
 
 .chat-model-label {
 	flex: 0 1 auto;
-	max-width: 45%;
-	margin-right: auto;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
-	white-space: nowrap;
-	padding: 3px 10px;
-	border-radius: 999px;
-	background: var(--dsw-alias-bg-layer-2);
-	box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l2);
-	color: var(--dsw-alias-label-tertiary);
-	font: var(--dsw-font-xs-13);
+	text-align: left;
+}
+
+@media (hover: hover) {
+	.chat-profile:hover:not(:disabled),
+	.chat-model-label:hover:not(:disabled) {
+		background-color: var(--dsw-alias-interactive-bg-hover);
+	}
+}
+
+.chat-profile:disabled,
+.chat-model-label:disabled {
+	opacity: 0.5;
+	cursor: default;
 }
 
 /* 模型 chip 左侧小圆点：reasoning=info 色，普通=中性灰，error=警示色 */
@@ -1337,40 +1355,35 @@ mark.ev-hit {
 	background: var(--dsw-alias-state-warn-primary);
 }
 
-.chat-profile[aria-expanded="true"] {
-	background: var(--dsw-alias-interactive-bg-hover);
+.chat-profile[aria-expanded="true"],
+.chat-model-label[aria-expanded="true"] {
+	background-color: var(--dsw-alias-interactive-bg-hover);
 	color: var(--dsw-alias-label-primary);
 }
 
 .chat-profile.is-full {
 	color: var(--dsw-alias-state-warn-label);
-	box-shadow: inset 0 0 0 1px var(--dsw-alias-state-warn-primary);
 }
 
 /* 工具权限菜单（三档 + full 首次确认） */
-.chat-profile-menu {
-	position: absolute;
-	bottom: calc(100% - 2px);
-	left: 12px;
-	right: 12px;
-	z-index: 7;
-	padding: 4px 0;
-	border: 1px solid var(--dsw-alias-border-l2);
-	border-radius: var(--dsw-radius-lg);
-	background: var(--dsw-alias-bg-layer-1);
-	box-shadow: var(--dsw-elevation-soft);
-}
-
 .chat-profile-option {
 	display: flex;
-	align-items: flex-start;
-	gap: 8px;
+	align-items: center;
+	gap: 6px;
 	width: 100%;
-	padding: 8px 10px;
+	min-height: 34px;
+	padding: 6px 8px;
 	border: 0;
+	border-radius: var(--dsw-radius-md);
 	background: transparent;
 	text-align: left;
 	cursor: pointer;
+}
+
+@media (hover: hover) {
+	.chat-profile-option:hover:not(:disabled) {
+		background: var(--dsw-alias-interactive-bg-hover);
+	}
 }
 
 .chat-profile-option:disabled {
@@ -1567,6 +1580,17 @@ mark.ev-hit {
 .chat-drawer[data-composer="manual"] .chat-card {
 	flex: 1;
 	min-height: 0;
+}
+
+.chat-drawer[data-composer="manual"] .chat-scroll {
+	flex: 1;
+	min-height: 0;
+	max-height: none;
+	overflow-y: auto;
+}
+
+.chat-drawer[data-composer="manual"] .chat-grow {
+	height: 100%;
 }
 
 .chat-drawer[data-composer="manual"] .chat-input {
@@ -1779,14 +1803,6 @@ mark.ev-hit {
 	color: var(--dsw-alias-state-error-primary);
 }
 
-/* 窄窗口：模型/profile chip 收窄，不挤占消息宽度 */
-@media (max-width: 900px) {
-	.chat-model-label,
-	.chat-profile {
-		max-width: 45%;
-	}
-}
-
 /* 输入卡（复刻上游 InputBar：输入面 token 填充 + 面板圆角 + l2 发丝线/软阴影；textarea 透明无边框） */
 .chat-composer {
 	position: relative;
@@ -1795,15 +1811,28 @@ mark.ev-hit {
 	border-top: 1px solid var(--dsw-alias-border-l1);
 }
 
-/* 占位：上下文 chips / 斜杠面板 / 技能 chip（T5/T6 接入，先占好定位与视觉） */
+/* 输入卡 accessory：上下文 / 技能 chips，位于 textarea 上方 */
+.chat-accessory {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 12px 0;
+	min-width: 0;
+}
+
+.chat-accessory:not(:has(> :not([hidden]))) {
+	display: none;
+}
+
 .chat-context {
 	display: flex;
 	align-items: center;
+	flex: 1;
+	min-width: 0;
 	flex-wrap: nowrap;
 	gap: 6px;
-	margin-bottom: 8px;
 	overflow-x: auto;
-	padding-bottom: 2px;
+	padding-bottom: 0;
 	scrollbar-width: thin;
 }
 
@@ -1897,43 +1926,53 @@ mark.ev-hit {
 	}
 }
 
-.chat-palette {
+.chat-palette,
+.chat-profile-menu {
 	position: absolute;
-	left: 12px;
-	right: 12px;
-	bottom: calc(100% - 2px);
+	left: 0;
+	right: 0;
+	bottom: calc(100% + 4px);
+	z-index: 100;
+	box-sizing: border-box;
 	display: flex;
 	flex-direction: column;
-	max-height: min(280px, 50vh);
+	gap: 0;
+	max-height: 400px;
 	overflow: hidden;
-	border: 1px solid var(--dsw-alias-border-l2);
+	padding: 0;
+	border: 0;
 	border-radius: var(--dsw-radius-lg);
-	background: var(--dsw-alias-bg-layer-1);
-	box-shadow: var(--dsw-elevation-soft);
-	z-index: 4;
+	background: var(--dsw-menu-surface-fill);
+	backdrop-filter: var(--dsw-menu-backdrop-filter);
+	box-shadow: var(--dsw-elevation-prominent);
+	--dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
 }
 
-.chat-palette[hidden] {
+.chat-profile-menu {
+	padding: 4px;
+}
+
+.chat-palette[hidden],
+.chat-profile-menu[hidden] {
 	display: none;
 }
 
 .chat-palette-head {
 	flex: none;
-	padding: 8px 10px;
-	border-bottom: 1px solid var(--dsw-alias-border-l1);
-	background: var(--dsw-alias-bg-layer-1);
+	padding: 4px 4px 0;
 }
 
 .chat-palette-search {
 	box-sizing: border-box;
 	width: 100%;
-	height: 30px;
-	padding: 0 9px;
-	border: 1px solid var(--dsw-alias-border-l2);
+	height: auto;
+	padding: 5px 7px;
+	border: 0;
 	border-radius: var(--dsw-radius-md);
-	background: var(--dsw-alias-bg-layer-2);
+	background: transparent;
 	color: var(--dsw-alias-label-primary);
-	font: var(--dsw-font-s-14);
+	font-size: 12px;
+	line-height: 18px;
 	outline: none;
 }
 
@@ -1942,39 +1981,42 @@ mark.ev-hit {
 }
 
 .chat-palette-search:focus {
-	border-color: var(--dsw-alias-state-business-primary);
-	box-shadow: 0 0 0 2px var(--dsw-alias-interactive-bg-hover);
+	background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .chat-palette-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0;
 	flex: 1 1 auto;
 	min-height: 0;
 	overflow-y: auto;
-	padding: 4px 0;
+	padding: 4px;
 	overscroll-behavior: contain;
 }
 
 .chat-palette-group {
-	position: sticky;
-	top: 0;
-	padding: 6px 10px 4px;
-	background: var(--dsw-alias-bg-layer-1);
-	color: var(--dsw-alias-label-caption);
-	font: var(--dsw-font-xxs-strong-12);
+	padding: 6px 8px;
+	color: var(--dsw-alias-label-tertiary);
+	font-size: 11px;
+	line-height: 15px;
 }
 
 .chat-palette-item {
 	display: flex;
 	align-items: center;
-	gap: 8px;
+	gap: 6px;
 	width: 100%;
-	padding: 6px 10px;
-	border: 0;
+	min-height: 34px;
+	padding: 6px 8px;
+	border: none;
+	border-radius: var(--dsw-radius-md);
 	background: transparent;
-	color: var(--dsw-alias-label-primary);
-	font: var(--dsw-font-s-14);
-	text-align: left;
 	cursor: pointer;
+	font-size: 13px;
+	line-height: 20px;
+	color: var(--dsw-alias-label-primary);
+	text-align: left;
 }
 
 .chat-palette-item.is-active {
@@ -1985,7 +2027,7 @@ mark.ev-hit {
 	width: 14px;
 	flex: none;
 	text-align: center;
-	color: var(--dsw-alias-state-business-primary);
+	color: var(--dsw-alias-label-primary);
 }
 
 .chat-palette-label {
@@ -1996,14 +2038,15 @@ mark.ev-hit {
 }
 
 .chat-palette-hint {
-	margin-left: auto;
-	flex: none;
-	max-width: 55%;
+	flex: 1;
+	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	color: var(--dsw-alias-label-caption);
-	font: var(--dsw-font-xxs-12);
+	text-align: right;
+	color: var(--dsw-alias-label-tertiary);
+	font-size: 12px;
+	line-height: 18px;
 }
 
 .chat-palette-loading,
@@ -2136,8 +2179,9 @@ mark.ev-hit {
 .chat-skill {
 	display: flex;
 	align-items: center;
+	flex: none;
 	gap: 6px;
-	padding: 6px 10px 0;
+	padding: 0;
 	color: var(--dsw-alias-label-secondary);
 	font: var(--dsw-font-xs-13);
 }
@@ -2172,14 +2216,33 @@ mark.ev-hit {
 }
 
 .chat-card {
+	position: relative;
 	display: flex;
 	flex-direction: column;
-	gap: 2px;
+	gap: 12px;
+	padding-top: 8px;
 	/* 输入卡用 16px：28px 的 panel 圆角在小尺寸输入框上显得过圆 */
 	border-radius: var(--dsw-radius-lg);
 	background: var(--dsw-specific-input-major);
 	--dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
 	box-shadow: var(--dsw-elevation-soft);
+}
+
+/* 菜单锚点：贴住卡片顶部，菜单本身向上弹出 */
+.chat-overlay-anchor {
+	position: absolute;
+	inset: 0 0 auto;
+	height: 0;
+}
+
+.chat-scroll {
+	max-height: 132px;
+	overflow-y: auto;
+	margin-right: 4px;
+}
+
+.chat-grow {
+	position: relative;
 }
 
 .chat-input {
@@ -2188,7 +2251,7 @@ mark.ev-hit {
 	box-sizing: border-box;
 	min-height: 36px;
 	max-height: 132px; /* 约 6 行封顶后内部滚动 */
-	padding: 7px 12px 0 14px;
+	padding: 4px 8px 0 14px;
 	border: 0;
 	/* 与输入卡同圆角，否则四角会露出卡片底色 */
 	border-radius: var(--dsw-radius-lg);
@@ -2208,10 +2271,76 @@ mark.ev-hit {
 
 .chat-row {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
-	gap: 8px;
-	justify-content: flex-end;
-	padding: 2px 6px 6px 0;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 2px 8px 6px;
+	min-width: 0;
+	container-type: inline-size;
+}
+
+.chat-tools,
+.chat-modes,
+.chat-trailing {
+	display: flex;
+	align-items: center;
+	min-width: 0;
+}
+
+.chat-tools,
+.chat-modes,
+.chat-standard-controls {
+	gap: 12px;
+}
+
+.chat-trailing {
+	flex: none;
+	margin-left: auto;
+	gap: 12px;
+}
+
+.chat-standard-controls {
+	display: flex;
+	align-items: center;
+	min-width: 0;
+}
+
+@container (max-width: 560px) {
+	.chat-tools,
+	.chat-modes,
+	.chat-trailing {
+		gap: 8px;
+	}
+}
+
+#chat-add {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 28px;
+	height: 28px;
+	border: none;
+	border-radius: 999px;
+	background: var(--dsw-specific-selector);
+	color: var(--dsw-alias-label-primary);
+	cursor: pointer;
+}
+
+#chat-add svg {
+	width: 14px;
+	height: 14px;
+}
+
+@media (hover: hover) {
+	#chat-add:hover:not(:disabled) {
+		background: var(--dsw-alias-interactive-bg-hover-solid);
+	}
+}
+
+#chat-add:disabled {
+	opacity: 0.5;
+	cursor: default;
 }
 
 /* 发送圆钮（复刻上游 IconButton：34px 圆、info 填充、白色箭头、空文案 0.4 透明度） */
@@ -2226,6 +2355,7 @@ mark.ev-hit {
 	color: #fff;
 	cursor: pointer;
 	transition: background-color 100ms ease;
+	transform: translateY(-2px);
 }
 
 .chat-send svg {
