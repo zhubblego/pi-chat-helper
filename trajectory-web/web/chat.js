@@ -38,6 +38,7 @@ const COMMAND_ITEMS = Object.freeze([
 	{ id: "new", label: "新对话", hint: "开一个新线程（旧线程可用 /resume 找回）", group: "命令", search: "new 新对话" },
 	{ id: "resume", label: "历史对话", hint: "切换回旧线程", group: "命令", search: "resume 历史 对话 线程" },
 	{ id: "model", label: "模型", hint: "选择当前线程的模型", group: "命令", search: "model 模型" },
+	{ id: "thinking", label: "思考级别", hint: "off / low / medium / high / max", group: "命令", search: "thinking 思考 级别 level" },
 	{ id: "skill", label: "技能", hint: "选择技能（发送时由 pi 展开）", group: "命令", search: "skill 技能" },
 ]);
 
@@ -71,6 +72,9 @@ export function initChatPanel(deps) {
 		thread: null,
 		threadId: null,
 		model: null,
+		thinkingLevel: null,
+		thinkingLevels: [],
+		thinkingError: null,
 		profile: "read-only",
 		messages: [],
 		loading: false,
@@ -272,6 +276,7 @@ export function initChatPanel(deps) {
 			if (state.threadId) rememberThreadFor(key, state.threadId);
 			if (data.thread?.exists === true) clearNewThread(key);
 			state.model = data.thread?.model ?? state.model;
+			state.thinkingLevel = data.thread?.thinkingLevel ?? state.thinkingLevel;
 			setMessages(data.thread?.messages ?? []);
 			state.loadedKey = key;
 		} catch (err) {
@@ -414,6 +419,55 @@ export function initChatPanel(deps) {
 			}
 			renderHead();
 			renderPalette();
+		}
+	}
+
+	/** 思考级别：打开 Thinking 层时拉取；无 child 时服务端只读 settings，不 spawn。 */
+	async function loadThinking({ refresh = false } = {}) {
+		const session = currentSession();
+		if (!session || state.enabled !== true) return;
+		const key = currentKey();
+		const palette = state.palette;
+		if (palette && palette.layer === "thinking") {
+			if (palette.loading) return;
+			palette.loading = true;
+			palette.error = null;
+			renderPalette();
+		}
+		try {
+			const params = new URLSearchParams({ source: session.source, session: session.id });
+			if (state.threadId && !isNewThread(key, state.threadId)) params.set("thread", state.threadId);
+			if (refresh) params.set("refresh", "1");
+			const res = await fetch(`/api/chat/thinking?${params}`);
+			if (!res.ok) {
+				let message = `HTTP ${res.status}`;
+				try {
+					message = (await res.json())?.error ?? message;
+				} catch {
+					/* 非 JSON 错误体 */
+				}
+				throw new Error(message);
+			}
+			const data = await res.json();
+			if (currentKey() !== key) return;
+			state.thinkingLevel = typeof data.level === "string" ? data.level : state.thinkingLevel;
+			state.thinkingLevels = Array.isArray(data.levels) ? data.levels.filter((level) => typeof level === "string" && level) : [];
+			state.thinkingError = null;
+			if (palette) {
+				palette.loading = false;
+				palette.error = null;
+			}
+			renderHead();
+			if (state.palette?.layer === "thinking") renderPalette();
+		} catch (err) {
+			if (currentKey() !== key) return;
+			state.thinkingError = err.message;
+			if (palette) {
+				palette.loading = false;
+				palette.error = `读取思考级别失败：${err.message}`;
+			}
+			renderHead();
+			if (state.palette?.layer === "thinking") renderPalette();
 		}
 	}
 
@@ -578,18 +632,28 @@ export function initChatPanel(deps) {
 
 	function renderHead() {
 		const modelEl = el("chat-model-label");
+		const modelNameEl = el("chat-model-name");
+		const effortEl = el("chat-thinking");
+		if (modelNameEl) {
+			modelNameEl.textContent = state.model ? modelLabel(state.model) : state.loading ? "读取模型中…" : "默认模型";
+		}
+		if (effortEl) {
+			effortEl.textContent = state.thinkingLevel ?? "—";
+			effortEl.title = state.thinkingLevel ? `思考级别：${state.thinkingLevel}` : "思考级别";
+		}
 		if (modelEl) {
-			modelEl.textContent = state.model ? modelLabel(state.model) : state.loading ? "读取模型中…" : "默认模型";
 			const provider = state.model?.provider ?? "";
 			const id = state.model?.id ?? "";
-			modelEl.title = id ? `${provider}/${id}` : state.loading ? "读取模型中…" : "默认模型";
-			modelEl.classList.toggle("is-reasoning", state.model?.reasoning === true);
-			modelEl.classList.toggle("is-warn", Boolean(state.modelsError));
+			const modelPart = id ? `${provider}/${id}` : state.loading ? "读取模型中…" : "默认模型";
+			modelEl.title = state.thinkingLevel ? `${modelPart} · 思考级别：${state.thinkingLevel}` : modelPart;
+			modelEl.classList.toggle("is-warn", Boolean(state.modelsError || state.thinkingError));
 			if (state.modelsError) modelEl.title = `${modelEl.title} · ${state.modelsError}`;
+			if (state.thinkingError) modelEl.title = `${modelEl.title} · ${state.thinkingError}`;
 		}
 		const profileEl = el("chat-profile");
+		const profileLabelEl = el("chat-profile-label");
+		if (profileLabelEl) profileLabelEl.textContent = PROFILE_LABEL[state.profile] ?? state.profile;
 		if (profileEl) {
-			profileEl.textContent = PROFILE_LABEL[state.profile] ?? state.profile;
 			profileEl.classList.toggle("is-full", state.profile === "full");
 			profileEl.title = state.profile === "full" ? "全量工具：会真实修改工作区，每次执行前审批" : "工具权限";
 		}
@@ -1162,12 +1226,46 @@ export function initChatPanel(deps) {
 			.sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label));
 	}
 
+	function paletteThinkingItems() {
+		return state.thinkingLevels.map((level) => ({
+			kind: "thinking",
+			id: level,
+			label: level,
+			group: "思考级别",
+			hint: level === state.thinkingLevel ? "当前" : "",
+			search: level,
+		}));
+	}
+
+	function paletteModelRootItems() {
+		return [
+			{
+				kind: "modelRoot",
+				id: "model",
+				label: "模型",
+				group: "模型 / 级别",
+				hint: state.model ? modelLabel(state.model) : "—",
+				search: "模型 model",
+			},
+			{
+				kind: "modelRoot",
+				id: "effort",
+				label: "级别",
+				group: "模型 / 级别",
+				hint: state.thinkingLevel ?? "—",
+				search: "级别 effort thinking",
+			},
+		];
+	}
+
 	function paletteItems() {
 		if (!state.palette) return [];
 		const query = paletteQuery();
 		if (state.palette.layer === "command") return filterPaletteItems(COMMAND_ITEMS, query);
+		if (state.palette.layer === "modelRoot") return filterPaletteItems(paletteModelRootItems(), query);
 		if (state.palette.layer === "skill") return filterPaletteItems(paletteSkillItems(), query);
 		if (state.palette.layer === "resume") return filterPaletteItems(paletteThreadItems(), query);
+		if (state.palette.layer === "thinking") return filterPaletteItems(paletteThinkingItems(), query);
 		return filterPaletteItems(paletteModelItems(), query);
 	}
 
@@ -1224,11 +1322,31 @@ export function initChatPanel(deps) {
 		paletteEl.hidden = false;
 		const layer = state.palette.layer;
 		const label =
-			layer === "model" ? "选择模型" : layer === "skill" ? "选择技能" : layer === "resume" ? "选择历史对话" : "斜杠命令";
+			layer === "modelRoot"
+				? "模型 / 级别"
+				: layer === "model"
+					? "选择模型"
+					: layer === "thinking"
+					? "选择思考级别"
+					: layer === "skill"
+						? "选择技能"
+						: layer === "resume"
+							? "选择历史对话"
+							: "斜杠命令";
 		paletteListEl.setAttribute("aria-label", label);
 		if (paletteSearchEl) {
 			const placeholder =
-				layer === "model" ? "搜索模型…" : layer === "skill" ? "搜索技能…" : layer === "resume" ? "搜索历史对话…" : "搜索命令…";
+				layer === "modelRoot"
+					? "搜索模型 / 级别…"
+					: layer === "model"
+						? "搜索模型…"
+					: layer === "thinking"
+						? "搜索级别…"
+						: layer === "skill"
+							? "搜索技能…"
+							: layer === "resume"
+								? "搜索历史对话…"
+								: "搜索命令…";
 			paletteSearchEl.placeholder = placeholder;
 			paletteSearchEl.setAttribute("aria-label", placeholder);
 		}
@@ -1281,22 +1399,20 @@ export function initChatPanel(deps) {
 		if (layer === "skill" && state.skillsError) nodes.push(h("div", { class: "chat-palette-error", text: `技能刷新失败：${state.skillsError}` }));
 		if (!items.length && !state.palette.loading) {
 			// 模型空态只看「是否真的没有模型」：有错误时错误行单独显示，不污染空态文案。
-			const text =
-				layer === "model"
-					? state.models.length
-						? "没有匹配的模型"
-						: state.modelsError
-							? null
-							: "pi 没有可用模型，先在 models.json / 登录里配置"
-					: layer === "skill"
-						? state.skills.length || state.skillsError
-							? "没有匹配的技能"
-							: "pi 没有发现技能（检查 ~/.pi/agent/skills 或项目 .pi/skills）"
-						: layer === "resume"
-							? state.threads.length
-								? "没有匹配的历史对话"
-								: "还没有历史对话"
-							: "没有匹配的命令";
+			let text = "没有匹配的命令";
+			if (layer === "modelRoot") {
+				text = "没有匹配的模型 / 级别";
+			} else if (layer === "model") {
+				if (state.models.length) text = "没有匹配的模型";
+				else if (!state.modelsError) text = "pi 没有可用模型，先在 models.json / 登录里配置";
+				else text = null;
+			} else if (layer === "thinking") {
+				text = state.thinkingLevels.length ? "没有匹配的思考级别" : "没有可用的思考级别";
+			} else if (layer === "skill") {
+				text = state.skills.length || state.skillsError ? "没有匹配的技能" : "pi 没有发现技能（检查 ~/.pi/agent/skills 或项目 .pi/skills）";
+			} else if (layer === "resume") {
+				text = state.threads.length ? "没有匹配的历史对话" : "还没有历史对话";
+			}
 			if (text) nodes.push(h("div", { class: "chat-palette-empty", text }));
 		}
 		let group = null;
@@ -1305,6 +1421,25 @@ export function initChatPanel(deps) {
 			if (item.group !== group) {
 				nodes.push(h("div", { class: "chat-palette-group", text: item.group }));
 				group = item.group;
+			}
+			if (layer === "modelRoot") {
+				nodes.push(
+					h(
+						"button",
+						{
+							class: `chat-palette-item chat-model-root-row${index === state.palette.index ? " is-active" : ""}`,
+							type: "button",
+							role: "menuitem",
+							"aria-selected": String(index === state.palette.index),
+							dataset: { paletteIndex: String(index) },
+						},
+						h("span", { class: "chat-model-root-label", text: item.label }),
+						h("span", { class: "chat-model-root-value", text: item.hint }),
+						h("span", { class: "chat-model-root-chevron", "aria-hidden": "true", text: "›" }),
+					),
+				);
+				index++;
+				continue;
 			}
 			if (layer === "skill") {
 				const current = state.skill?.name === item.name;
@@ -1336,7 +1471,9 @@ export function initChatPanel(deps) {
 			const current =
 				layer === "resume"
 					? item.id === state.threadId
-					: layer === "model" && state.model && item.provider === state.model.provider && item.id === state.model.id;
+					: layer === "thinking"
+						? item.id === state.thinkingLevel
+						: layer === "model" && state.model && item.provider === state.model.provider && item.id === state.model.id;
 			nodes.push(
 				h(
 					"button",
@@ -1358,16 +1495,18 @@ export function initChatPanel(deps) {
 	}
 
 	function syncPaletteButtons() {
+		const modelLayer = Boolean(state.palette && ["modelRoot", "model", "thinking"].includes(state.palette.layer));
 		addBtn?.setAttribute("aria-expanded", String(Boolean(state.palette)));
-		modelBtn?.setAttribute("aria-expanded", String(state.palette?.layer === "model"));
+		modelBtn?.setAttribute("aria-expanded", String(modelLayer));
 	}
 
-	function openPalette(layer, { draft = null, clearOnSelect = null, initialIndex = 0 } = {}) {
+	function openPalette(layer, { draft = null, clearOnSelect = null, initialIndex = 0, back = null } = {}) {
 		if (!currentSession() || state.enabled !== true) return;
 		closeProfileMenu();
 		const previousDraft = draft ?? state.palette?.draft ?? input?.value ?? "";
 		state.palette = {
 			layer,
+			back,
 			index: Number.isInteger(initialIndex) ? initialIndex : 0,
 			draft: previousDraft,
 			clearOnSelect: clearOnSelect ?? state.palette?.clearOnSelect ?? false,
@@ -1377,8 +1516,9 @@ export function initChatPanel(deps) {
 			confirm: null,
 		};
 		if (paletteSearchEl) paletteSearchEl.value = "";
-		if (layer === "model" || layer === "skill") {
+		if (layer === "model" || layer === "thinking" || layer === "skill") {
 			if (layer === "model") void loadModels({ refresh: true });
+			else if (layer === "thinking") void loadThinking({ refresh: true });
 			else {
 				// 首次/切会话带 refresh=1（重新发现技能）；同一会话用服务端 60s 缓存
 				const first = state.skillsKey !== currentKey();
@@ -1408,12 +1548,15 @@ export function initChatPanel(deps) {
 		updateSendButton();
 	}
 
-	function backToCommandLayer() {
+	function backToParentLayer() {
 		if (!state.palette) return;
-		state.palette.layer = "command";
+		const parent = state.palette.back ?? "command";
+		state.palette.layer = parent;
+		state.palette.back = null;
 		state.palette.index = 0;
 		state.palette.error = null;
 		state.palette.loading = false;
+		state.palette.confirm = null;
 		if (paletteSearchEl) paletteSearchEl.value = "";
 		renderPalette();
 		syncPaletteButtons();
@@ -1427,7 +1570,7 @@ export function initChatPanel(deps) {
 			renderPalette();
 			return;
 		}
-		if (state.palette.layer !== "command") backToCommandLayer();
+		if (state.palette.layer !== "command" && state.palette.layer !== "modelRoot") backToParentLayer();
 		else closePalette({ restore: true });
 	}
 
@@ -1441,7 +1584,7 @@ export function initChatPanel(deps) {
 		}
 		if (e.key === "Tab" && e.shiftKey) {
 			e.preventDefault();
-			closePalette({ restore: true });
+			paletteEscape();
 			return true;
 		}
 		if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
@@ -1490,11 +1633,18 @@ export function initChatPanel(deps) {
 				return;
 			}
 			if (item.id === "resume") {
-				openPalette("resume", { draft: state.palette.draft, clearOnSelect });
+				openPalette("resume", { draft: state.palette.draft, clearOnSelect, back: "command" });
 				return;
 			}
-			if (item.id === "model") openPalette("model", { draft: state.palette.draft, clearOnSelect });
-			else if (item.id === "skill") openPalette("skill", { draft: state.palette.draft, clearOnSelect });
+			if (item.id === "model") openPalette("model", { draft: state.palette.draft, clearOnSelect, back: "command" });
+			else if (item.id === "thinking") openPalette("thinking", { draft: state.palette.draft, clearOnSelect, back: "command" });
+			else if (item.id === "skill") openPalette("skill", { draft: state.palette.draft, clearOnSelect, back: "command" });
+			return;
+		}
+		if (state.palette.layer === "modelRoot") {
+			const clearOnSelect = state.palette.clearOnSelect === true;
+			if (item.id === "model") openPalette("model", { draft: state.palette.draft, clearOnSelect, back: "modelRoot" });
+			else openPalette("thinking", { draft: state.palette.draft, clearOnSelect, back: "modelRoot" });
 			return;
 		}
 		if (state.palette.layer === "skill") {
@@ -1503,6 +1653,10 @@ export function initChatPanel(deps) {
 		}
 		if (state.palette.layer === "resume") {
 			await resumeThread(item.thread);
+			return;
+		}
+		if (state.palette.layer === "thinking") {
+			await selectThinking(item.id);
 			return;
 		}
 		await selectModel(item.model);
@@ -1659,6 +1813,62 @@ export function initChatPanel(deps) {
 		}
 	}
 
+
+	async function selectThinking(level) {
+		if (!level || !state.palette || state.palette.busy) return;
+		const session = currentSession();
+		if (!session) return;
+		if (state.streaming) {
+			state.palette.error = "回复中，先停止";
+			renderPalette();
+			return;
+		}
+		if (level === state.thinkingLevel) {
+			closePalette({ clearInput: state.palette.clearOnSelect === true });
+			return;
+		}
+		const key = currentKey();
+		state.palette.busy = true;
+		state.palette.error = null;
+		renderPalette();
+		try {
+			const res = await fetch("/api/chat/thinking", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					source: session.source,
+					session: session.id,
+					threadId: state.threadId ?? null,
+					level,
+				}),
+			});
+			if (!res.ok) {
+				let message = `HTTP ${res.status}`;
+				try {
+					message = (await res.json())?.error ?? message;
+				} catch {
+					/* 非 JSON 错误体 */
+				}
+				throw new Error(message);
+			}
+			const data = await res.json();
+			if (currentKey() !== key) return;
+			state.thinkingLevel = typeof data.level === "string" ? data.level : level;
+			state.thinkingLevels = Array.isArray(data.levels) ? data.levels : state.thinkingLevels;
+			state.thinkingError = null;
+			if (state.thread) state.thread.thinkingLevel = state.thinkingLevel;
+			closePalette({ clearInput: state.palette?.clearOnSelect === true });
+			pushNotice(`已切换到思考级别 ${state.thinkingLevel}`);
+			flushRender();
+		} catch (err) {
+			if (!state.palette) return;
+			state.palette.busy = false;
+			state.palette.error = `切换失败：${err.message}`;
+			state.thinkingError = err.message;
+			renderPalette();
+			renderHead();
+		}
+	}
 
 	// ------------------------------------------------------------------
 	// 流式
@@ -2073,8 +2283,11 @@ export function initChatPanel(deps) {
 				flushRender();
 				return;
 			}
-			if (state.palette?.layer === "model") closePalette({ restore: true });
-			else openPalette("model", { draft: input?.value ?? "", clearOnSelect: false });
+			if (state.palette && ["modelRoot", "model", "thinking"].includes(state.palette.layer)) {
+				closePalette({ restore: true });
+			} else {
+				openPalette("modelRoot", { draft: input?.value ?? "", clearOnSelect: false });
+			}
 		});
 	}
 	if (sendBtn) {
@@ -2219,6 +2432,9 @@ export function initChatPanel(deps) {
 			state.models = [];
 			state.modelsAt = 0;
 			state.modelsError = null;
+			state.thinkingLevel = null;
+			state.thinkingLevels = [];
+			state.thinkingError = null;
 			state.threads = [];
 			state.threadsAt = 0;
 			state.threadsError = null;

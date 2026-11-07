@@ -412,6 +412,7 @@ export function createTrajectoryServer(options) {
 
 	const CHAT_POSTS = new Set([
 		"/api/chat/model",
+		"/api/chat/thinking",
 		"/api/chat/thread",
 		"/api/chat/settings",
 		"/api/chat/send",

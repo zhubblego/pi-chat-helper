@@ -119,12 +119,19 @@
 								<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
 							</button>
 							<div class="chat-modes">
-								<button id="chat-profile" class="chat-profile" type="button" title="工具权限" aria-haspopup="menu" aria-expanded="false">只读</button>
+								<button id="chat-profile" class="chat-profile" type="button" title="工具权限" aria-haspopup="menu" aria-expanded="false">
+									<span id="chat-profile-label" class="chat-trigger-label">只读</span>
+									<svg class="chat-trigger-chevron" viewBox="0 0 12 12" width="12" height="12" fill="none" aria-hidden="true"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+								</button>
 							</div>
 						</div>
 						<div class="chat-trailing">
 							<div class="chat-standard-controls">
-								<button id="chat-model-label" class="chat-model-label" type="button" aria-haspopup="listbox" aria-expanded="false">读取模型中…</button>
+								<button id="chat-model-label" class="chat-model-label" type="button" aria-haspopup="menu" aria-expanded="false" title="模型与思考级别">
+									<span id="chat-model-name" class="chat-trigger-label">读取模型中…</span>
+									<span id="chat-thinking" class="chat-model-effort" title="思考级别">—</span>
+									<svg class="chat-trigger-chevron" viewBox="0 0 12 12" width="12" height="12" fill="none" aria-hidden="true"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+								</button>
 							</div>
 							<button id="chat-send" class="chat-send" type="button" title="发送（Enter）" aria-label="发送" disabled>
 								<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 12V4M8 4 4.5 7.5M8 4l3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>

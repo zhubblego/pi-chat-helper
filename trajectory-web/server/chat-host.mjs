@@ -54,6 +54,7 @@ import { IDLE_TTL_MS, MAX_CHILDREN, SWEEP_MS, isIdleExpired, selectLruIdle } fro
 const CAP_TTL_MS = 30_000;
 const STDERR_LIMIT = 8 * 1024;
 const PROMPT_MAX_CHARS = 32_000;
+const DEFAULT_THINKING_LEVELS = Object.freeze(["off", "low", "medium", "high", "max"]);
 const SSE_PING_MS = 15_000;
 const PREVIEW_CHARS = 400;
 const SKILLS_TTL_MS = 60_000;
@@ -780,16 +781,27 @@ export function createChatHost(deps = {}) {
 		}
 	}
 
-	/** 只读 <agentDir>/settings.json 的默认模型；不 spawn pi。 */
-	function readPiDefaultModel() {
+	/** 只读 <agentDir>/settings.json；不 spawn pi。 */
+	function readPiSettings() {
 		try {
-			const parsed = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8"));
-			const provider = typeof parsed?.defaultProvider === "string" ? parsed.defaultProvider : "";
-			const id = typeof parsed?.defaultModel === "string" ? parsed.defaultModel : "";
-			return provider && id ? { provider, id } : null;
+			return JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8"));
 		} catch {
 			return null;
 		}
+	}
+
+	function readPiDefaultModel() {
+		const parsed = readPiSettings();
+		const provider = typeof parsed?.defaultProvider === "string" ? parsed.defaultProvider : "";
+		const id = typeof parsed?.defaultModel === "string" ? parsed.defaultModel : "";
+		return provider && id ? { provider, id } : null;
+	}
+
+	function readPiDefaultThinkingLevel() {
+		const parsed = readPiSettings();
+		return typeof parsed?.defaultThinkingLevel === "string" && parsed.defaultThinkingLevel
+			? parsed.defaultThinkingLevel
+			: null;
 	}
 
 	/** 新对话的默认模型；先取 settings，再尝试用已缓存的模型列表补展示字段。 */
@@ -806,7 +818,7 @@ export function createChatHost(deps = {}) {
 		};
 	}
 
-	function virtualThread(source, sessionId, id, warnings = []) {
+	function virtualThread(source, sessionId, id, warnings = [], thinkingLevel = readPiDefaultThinkingLevel()) {
 		return {
 			thread: {
 				id: id ?? null,
@@ -818,6 +830,7 @@ export function createChatHost(deps = {}) {
 				createdAt: null,
 				updatedAt: null,
 				model: defaultThreadModel(),
+				thinkingLevel,
 				profile: DEFAULT_PROFILE,
 				messages: [],
 			},
@@ -826,7 +839,7 @@ export function createChatHost(deps = {}) {
 		};
 	}
 
-	function threadPayload({ source, sessionId, fileRecord, target, record, profile }) {
+	function threadPayload({ source, sessionId, fileRecord, target, record, profile, thinkingLevel = null }) {
 		assertThreadFileSize(fileRecord);
 		let projection;
 		try {
@@ -851,6 +864,7 @@ export function createChatHost(deps = {}) {
 				createdAt: mapped.createdAt ?? null,
 				updatedAt: mapped.updatedAt ?? null,
 				model: mapped.model,
+				thinkingLevel,
 				profile,
 				messages: mapped.messages,
 			},
@@ -1069,8 +1083,34 @@ export function createChatHost(deps = {}) {
 		const state = await record.child.send({ type: "get_state" }, { timeoutMs: 15_000 });
 		record.piSessionId = state.data?.sessionId ?? record.piSessionId;
 		record.sessionFile = state.data?.sessionFile ?? null;
+		if (typeof state.data?.thinkingLevel === "string") record.thinkingLevel = state.data.thinkingLevel;
 		touch(record);
 		return state;
+	}
+
+	/** 线程页展示用级别：有 child 读状态，否则读 settings；不 spawn。 */
+	async function resolveThreadThinkingLevel(record) {
+		const fallback = readPiDefaultThinkingLevel();
+		if (!record || record.state === "dead") return fallback;
+		if (record.currentTurn) return record.thinkingLevel ?? fallback;
+		try {
+			const state = await readChildState(record);
+			return typeof state.data?.thinkingLevel === "string" ? state.data.thinkingLevel : record.thinkingLevel ?? fallback;
+		} catch {
+			return record.thinkingLevel ?? fallback;
+		}
+	}
+
+	async function fetchThinkingLevels(record) {
+		try {
+			const response = await record.child.send({ type: "get_available_thinking_levels" }, { timeoutMs: 15_000 });
+			const levels = Array.isArray(response.data?.levels)
+				? response.data.levels.filter((level) => typeof level === "string" && level)
+				: [];
+			return levels.length ? levels : [...DEFAULT_THINKING_LEVELS];
+		} catch {
+			return [...DEFAULT_THINKING_LEVELS];
+		}
 	}
 
 	/** 回收超过空闲 TTL 的 child；定时器与服务关闭都会调用。 */
@@ -1735,7 +1775,9 @@ export function createChatHost(deps = {}) {
 		const record = await ensureChild(target.source, target.sessionId, { target, threadId: requestedThread });
 		touch(record);
 		if (record.currentTurn) throw httpError(409, "回复中，先停止再切换线程");
-		if (record.piSessionId !== requestedThread) await switchThread(record, fileRecord);
+		let state = null;
+		if (record.piSessionId !== requestedThread) state = await switchThread(record, fileRecord);
+		const thinkingLevel = state?.data?.thinkingLevel ?? (await resolveThreadThinkingLevel(record));
 		sendJson(
 			res,
 			200,
@@ -1746,6 +1788,7 @@ export function createChatHost(deps = {}) {
 				target,
 				record,
 				profile: record.profile,
+				thinkingLevel,
 			}),
 		);
 	}
@@ -1766,10 +1809,11 @@ export function createChatHost(deps = {}) {
 		let threadId = requested ?? null;
 		if (!requested && fileRecord) threadId = readSessionId(fileRecord.file) ?? null;
 		if (!requested && !fileRecord) threadId = record?.piSessionId ?? null;
+		const thinkingLevel = await resolveThreadThinkingLevel(record);
 
 		if (!fileRecord) {
 			const warnings = requested ? [`线程 ${requested} 的文件不存在；发送第一条消息时会新建。`] : [];
-			sendJson(res, 200, virtualThread(target.source, target.sessionId, threadId, warnings));
+			sendJson(res, 200, virtualThread(target.source, target.sessionId, threadId, warnings, thinkingLevel));
 			return;
 		}
 		sendJson(
@@ -1782,6 +1826,7 @@ export function createChatHost(deps = {}) {
 				target,
 				record,
 				profile: record?.profile ?? projectOf(target, record).profile,
+				thinkingLevel,
 			}),
 		);
 	}
@@ -1814,6 +1859,7 @@ export function createChatHost(deps = {}) {
 				createdAt: new Date().toISOString(),
 				updatedAt: new Date().toISOString(),
 				model: modelOfState(state.data?.model),
+				thinkingLevel: state.data?.thinkingLevel ?? readPiDefaultThinkingLevel(),
 				profile: record.profile,
 				messages: [],
 			},
@@ -1951,6 +1997,71 @@ export function createChatHost(deps = {}) {
 		});
 	}
 
+	async function handleGetThinking(url, res, sendJson) {
+		const cap = await capabilities();
+		if (!cap.enabled) throw httpError(501, cap.reason ?? "对话未启用");
+		const target = resolveTarget(url.searchParams.get("source"), url.searchParams.get("session"));
+		const requestedThread = url.searchParams.get("thread");
+		if (requestedThread !== null && !isSafeThreadId(requestedThread)) throw httpError(400, "非法线程 id");
+
+		const key = `${target.source}:${target.sessionId}`;
+		const record = children.get(key) ?? null;
+		let level = readPiDefaultThinkingLevel();
+		let levels = [...DEFAULT_THINKING_LEVELS];
+		if (record && record.state !== "dead") {
+			touch(record);
+			try {
+				const state = await readChildState(record);
+				if (typeof state.data?.thinkingLevel === "string") level = state.data.thinkingLevel;
+			} catch {
+				level = record.thinkingLevel ?? level;
+			}
+			levels = await fetchThinkingLevels(record);
+		}
+		sendJson(res, 200, { level, levels });
+	}
+
+	async function handlePostThinking(rawBody, res, sendJson) {
+		let payload;
+		try {
+			payload = JSON.parse(rawBody || "{}");
+		} catch {
+			throw httpError(400, "请求体不是合法 JSON");
+		}
+		const target = resolveTarget(payload.source, payload.session);
+		const requestedThread = payload.threadId ?? null;
+		if (requestedThread !== null && !isSafeThreadId(requestedThread)) throw httpError(400, "非法线程 id");
+		const level = typeof payload.level === "string" ? payload.level : "";
+		if (!level) throw httpError(400, "缺少 level");
+		const cap = await capabilities();
+		if (!cap.enabled) throw httpError(501, cap.reason ?? "对话未启用");
+
+		const dirs = chatSessionDirs(chatDir, target.source, target.sessionId);
+		let threadFile = null;
+		if (requestedThread !== null) {
+			threadFile = findThreadFile(dirs.sessionsDir, requestedThread);
+			assertThreadFileSize(threadFile);
+		}
+		const record = await ensureChild(target.source, target.sessionId, {
+			target,
+			threadId: requestedThread ?? undefined,
+		});
+		touch(record);
+		if (record.currentTurn) throw httpError(409, "回复中，先停止再切换思考级别");
+		if (requestedThread !== null && record.piSessionId !== requestedThread) {
+			if (!threadFile) throw httpError(404, `线程 ${requestedThread} 不存在`);
+			await switchThread(record, threadFile);
+		}
+
+		const levels = await fetchThinkingLevels(record);
+		if (!levels.includes(level)) throw httpError(400, `思考级别不存在：${level}`);
+		const response = await record.child.send({ type: "set_thinking_level", level }, { timeoutMs: 15_000 });
+		const next = typeof response.data?.level === "string" ? response.data.level : level;
+		record.thinkingLevel = next;
+		touch(record);
+		sendJson(res, 200, { ok: true, level: next, levels });
+	}
+
 	/**
 	 * 路由分发；返回 true 表示已处理。
 	 * @param {import("node:http").IncomingMessage} req
@@ -2032,6 +2143,18 @@ export function createChatHost(deps = {}) {
 					return true;
 				}
 				await handlePostModel(body, res, sendJson);
+				return true;
+			}
+			if (url.pathname === "/api/chat/thinking") {
+				if (req.method === "GET") {
+					await handleGetThinking(url, res, sendJson);
+					return true;
+				}
+				if (req.method === "POST") {
+					await handlePostThinking(body, res, sendJson);
+					return true;
+				}
+				sendJson(res, 405, { error: "method not allowed" });
 				return true;
 			}
 			if (url.pathname === "/api/chat/approval") {
