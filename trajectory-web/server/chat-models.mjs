@@ -87,7 +87,7 @@ export function filterConfiguredModels(models, providers) {
 }
 
 /**
- * 当前模型不在过滤结果里时补到首位；已在列表里则不动。
+ * 当前模型置首；不在过滤结果里时补一条，已在列表里时移动到首位。
  * @param {Array<object>} models 已过滤的模型列表（列表项形状）
  * @param {object|null} current 当前模型（可带 providerName；缺字段用 id 兜底）
  */
@@ -96,7 +96,12 @@ export function ensureCurrentModelFirst(models, current) {
 	if (!current || typeof current.provider !== "string" || !current.provider || typeof current.id !== "string" || !current.id) {
 		return list;
 	}
-	if (list.some((model) => model && model.provider === current.provider && model.id === current.id)) return list;
+	const index = list.findIndex((model) => model && model.provider === current.provider && model.id === current.id);
+	if (index === 0) return list;
+	if (index > 0) {
+		const [listed] = list.splice(index, 1);
+		return [listed, ...list];
+	}
 	return [
 		{
 			provider: current.provider,
