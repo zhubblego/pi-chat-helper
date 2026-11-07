@@ -45,7 +45,8 @@
 │           │       └── #chat-profile  权限 select（仅对话 / 只读 / 全量）
 │           └── .chat-trailing
 │               ├── .chat-standard-controls
-│               │   └── #chat-model-label  模型 select
+│               │   ├── #chat-model-label  模型 select
+│               │   └── #chat-thinking     思考级别 select
 │               └── #chat-send        发送/停止二态
 └── #chat-approval             审批弹层（覆盖抽屉内容，不阻塞轨迹区）
 ```
@@ -70,7 +71,7 @@
 ```
 
 - 对话栏宽度、输入区高度沿用现有两个拖拽把手。
-- 无顶部对话头；`.chat-row` 左起 `+`、权限 select，右侧模型 select 与发送按钮。
+- 无顶部对话头；`.chat-row` 左起 `+`、权限 select，右侧模型/思考级别 select 与发送按钮。
 - 上下文/技能 chips 在 `.chat-accessory`，横向可滚，最多一行，高度约 28px。
 - `+` 不贴边：`.chat-row` 使用 space-between + 左右 8px padding；菜单锚点 `.chat-overlay-anchor` 贴在卡片顶部。
 
@@ -82,7 +83,7 @@ v1 **不设顶部对话头**。当前模型和工具权限都在输入卡底部 
 ... 消息流 ...
 ┌─────────────────────────────────────┐
 │ 问问这条轨迹…                      │
-│ [+] [只读▾]        [GLM-5.3▾] [↑]  │
+│ [+] [只读▾]     [GLM-5.3▾] [max▾] [↑] │
 └─────────────────────────────────────┘
 ```
 
@@ -90,9 +91,9 @@ v1 **不设顶部对话头**。当前模型和工具权限都在输入卡底部 
 - 菜单外壳挂在 `.chat-card` 的 `.chat-overlay-anchor` 上，向上弹出：`bottom: calc(100% + 4px)`、左右贴齐卡片。
 - 打开菜单后焦点仍在 `#chat-palette-search`；textarea 草稿不被清空。
 
-### 2.1 当前模型 select
+### 2.1 模型 / 思考级别 select
 
-- 位置：`.chat-row > .chat-trailing > .chat-standard-controls`，在发送按钮左侧、权限 select 右侧。
+- 位置：`.chat-row > .chat-trailing > .chat-standard-controls`，模型在发送按钮左侧，级别紧随模型右侧；权限 select 在 `+` 右侧。
 - 外观：dsh `.select`（28px 高、`--dsw-radius-sm`、透明底、右侧 12px chevron、13/20 中等字重）；**不使用胶囊底 + inset 边框**。
 - 来源：当前线程模型；新对话尚未落盘时取 `<agentDir>/settings.json` 的 `defaultProvider/defaultModel`，不为此启动 pi 子进程。
 - 文案：加载中显示「读取模型中…」；确实没有模型时显示「默认模型」，不显示「模型未加载」这类报错式文案。
@@ -100,6 +101,10 @@ v1 **不设顶部对话头**。当前模型和工具权限都在输入卡底部 
 - 左侧小圆点：`reasoning` 时 info 色，否则中性灰；模型不可用/回退时警示色，`title` 说明原因。
 - 点击模型控件直接打开 Model 层；`/model` 命令仍保留，二者是同一个菜单。
 - 流式中点击模型控件或 `/model`：提示「回复中，先停止」，不切模型。
+- 级别控件（`#chat-thinking`）复用同一套 dsh select 外观，但 `max-width:none; width:auto; min-width:64px`；值直接用 pi 原始级别名 `off/low/medium/high/max`，不翻译，`title` 为「思考级别：<level>」。
+- 新对话的级别取 `thread.thinkingLevel`（服务端优先 child `get_state().thinkingLevel`，否则 `<agentDir>/settings.json` 的 `defaultThinkingLevel`）；不为此额外 spawn。
+- 点击级别控件打开 Thinking 层；列出可用 levels，当前项打勾；选中 `POST /api/chat/thinking` 后就地更新文本并插入 notice。
+- 流式中点击级别控件：提示「回复中，先停止」，直接返回。
 
 ### 2.2 工具权限 select
 
@@ -131,13 +136,16 @@ stateDiagram-v2
     Closed --> Command: textarea 输入 "/"（无空格）
     Command --> New: 选择「新对话」
     Command --> Resume: 选择「历史对话」
-    Command --> Model: 选择「模型」或在搜索框输入 model + Enter
+    Command --> Model: 选择「模型」或点击模型控件，/model + Enter
+    Command --> Thinking: 选择「思考级别」或点击级别控件，/thinking + Enter
     Command --> Skill: 选择「技能」或在搜索框输入 skill + Enter
     New --> Closed: 新建并清空消息
     Resume --> Closed: 选中历史线程
     Model --> Closed: 选中模型
+    Thinking --> Closed: 选中级别
     Skill --> Closed: 选中技能
     Model --> Command: Esc（回到命令层）
+    Thinking --> Command: Esc（回到命令层）
     Skill --> Command: Esc（回到命令层）
     Command --> Closed: Esc / 点击面板外 / 搜索框失焦
 ```
@@ -146,7 +154,7 @@ stateDiagram-v2
 - `/skill:foo args` 有冒号/空格，不触发面板，直接按普通输入发送，由 pi 原生展开。
 - 面板顶部是独立的搜索输入 `#chat-palette-search`（`.chat-palette-head` 内的 `type=search`），列表项在下方 `#chat-palette-list`。
   - 打开面板时搜索框清空并立即 focus；不再从 textarea 读取查询，也不需要剥前导 `/`。
-  - Command 层过滤 `new`、`resume`、`model`、`skill`；Model/Skill/Resume 层过滤对应列表。
+  - Command 层过滤 `new`、`resume`、`model`、`thinking`、`skill`；Model/Thinking/Skill/Resume 层过滤对应列表。
   - 切层清空搜索框并保持搜索框焦点。
   - 选择项后关闭面板，焦点回 textarea；model/skill 选择清空触发用的 `/` 草稿。
   - Esc：子层回到 Command 层并清空搜索；Command 层关闭面板，焦点回 textarea 并恢复进入面板前的草稿。
@@ -176,13 +184,14 @@ stateDiagram-v2
 - 每行（`.chat-palette-item`）：`min-height:34px`、`padding:6px 8px`、`border-radius: var(--dsw-radius-md)`、13/20；高亮/键盘选中用 `--dsw-alias-interactive-bg-hover`，不用选中蓝。
 - 分组标题（`.chat-palette-group`）：`padding:6px 8px`、11/15、`--dsw-alias-label-tertiary`。次文本（`.chat-palette-hint`）：右对齐、12/18、单行省略。
 - 顶部搜索行固定：`.chat-palette-head` 包 `#chat-palette-search`；下方 `#chat-palette-list` 单独滚动。
+- Thinking 层：搜索框 placeholder 为「搜索级别…」，每行显示原始 level；当前项左侧 `✓`；无结果「没有匹配的思考级别」。
 - 每行：主文本 + 次文本；当前项左侧 `✓`。
 - 空结果：搜索词把非空列表过滤空时显示 `没有匹配的模型` / `没有匹配的技能`；模型列表本身为空且无错误时给配置指引「pi 没有可用模型，先在 models.json / 登录里配置」。`modelsError` 只作为单独错误行，不参与空态判定。
 - 新对话尚未落盘（虚拟线程）时模型面板照常可用，不因线程文件不存在报错。
 
 ### 3.3 键盘
 
-| 键 | 搜索框（Command 层） | 搜索框（Model/Skill 层） | 面板关闭时（textarea） |
+| 键 | 搜索框（Command 层） | 搜索框（Model/Thinking/Skill 层） | 面板关闭时（textarea） |
 |---|---|---|---|
 | `↑` / `↓` | 移动高亮 | 移动高亮 | 无 |
 | `Enter` | 进入子层 / 选择命令 | 选中并关闭 | 发送消息 |
@@ -194,7 +203,9 @@ stateDiagram-v2
 - IME 组合中（`e.isComposing`）不处理 Enter；搜索框与 textarea 的 keydown 都要判断。
 - 面板打开时 Enter 不发送消息；先在搜索框/textarea 的 keydown 里判断面板状态。
 
-## 4. 模型选择
+## 4. 模型与思考级别选择
+
+### 4.1 模型
 
 1. 输入 `/` 或点击 `#chat-add` → Command 层。
 2. 选「模型」、点击模型控件或 `/model` + Enter → `GET /api/chat/models?refresh=1`，显示 loading 行。
@@ -209,6 +220,14 @@ stateDiagram-v2
 - 当前项左侧勾，行背景保持普通。
 - 搜索匹配 `name/id/provider/providerName`；多词 AND。
 - 每次打开带 `refresh=1`；前端 5 秒内重复打开复用缓存。
+
+### 4.2 思考级别
+
+1. 点击 `#chat-thinking`、Command 层选「思考级别」，或 `/thinking` + Enter → Thinking 层。
+2. `GET /api/chat/thinking?source&session[&thread]` 返回 `{ level, levels }`；无 child 时服务端读 settings.json / 回落后端默认 levels，不 spawn。
+3. 列表按原始 level 展示（`off/low/medium/high/max`），当前项打勾；搜索框过滤 level。
+4. 选中 → `POST /api/chat/thinking`；成功就地更新 `#chat-thinking` 文本并插入 notice；失败在面板内显示错误。
+5. 流式中 409 / 前端先提示「回复中，先停止」；不重启 child。
 
 ## 5. 技能选择
 

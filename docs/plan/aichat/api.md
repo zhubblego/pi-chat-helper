@@ -166,6 +166,41 @@ Content-Type: application/json
 - 如果 `threadId` 是已存在的线程文件且不是 child 当前 session，先 `switch_session`（需先 `abort` 且无活动 turn），再 `set_model`。
 - 持久化由 pi session 的 model 条目承担，不额外写业务文件。
 
+### 3.3 思考级别
+
+```http
+GET /api/chat/thinking?source=pi&session=<id>[&thread=<id>][&refresh=1]
+```
+
+响应：
+
+```json
+{ "level": "max", "levels": ["off", "low", "medium", "high", "max"] }
+```
+
+- `levels` 来自 child `get_available_thinking_levels`；没有 child 或调用失败时回落为 `["off","low","medium","high","max"]`。
+- `level` 优先取 child `get_state().thinkingLevel`；没有 child 时取 `<agentDir>/settings.json` 的 `defaultThinkingLevel`；都没有则 `null`。
+- **不为了展示级别而 spawn**：GET 只在已有 child 时调用 RPC；没有 child 时只读 settings.json。
+- `thread` 只用于合法性校验/路由上下文，不切换 child。
+
+```http
+POST /api/chat/thinking
+Content-Type: application/json
+
+{ "source": "pi", "session": "<id>", "threadId": "20261105T090000-abc", "level": "low" }
+```
+
+响应：
+
+```json
+{ "ok": true, "level": "low", "levels": ["off", "low", "medium", "high", "max"] }
+```
+
+- `level` 必须是该 child `get_available_thinking_levels` 的返回值之一，否则 400。
+- child 有活动 turn 时 409；流式中不切换。
+- 走 `set_thinking_level`，不重启 child；持久化由 pi 负责。
+- `threadId` 指向尚未落盘的虚拟线程：先按该线程建 child（首次选择级别的用户动作可以 spawn），再设置；不创建新线程。
+
 ## 4. 技能
 
 ### 4.1 列表
@@ -241,6 +276,7 @@ GET /api/chat/thread?source=pi&session=<id>[&thread=<id>]
     "createdAt": "2026-11-05T09:00:00.000Z",
     "updatedAt": "2026-11-05T09:03:00.000Z",
     "model": { "provider": "litellm", "id": "glm-5.3", "name": "GLM-5.3" },
+    "thinkingLevel": "max",
     "profile": "read-only",
     "messages": [
       {
@@ -286,6 +322,7 @@ GET /api/chat/thread?source=pi&session=<id>[&thread=<id>]
 - `pending`：child 存活时取 `get_state().isStreaming`；child 不存在时 `false`。
 - `warnings`：session 解析告警、缺失 sidecar、无效 context id 等非致命情况。
 - `thread.model`：模型引用。`exists:false` 时若 `<agentDir>/settings.json` 有 `defaultProvider/defaultModel`，返回该默认模型（只读文件，不 spawn），否则 `null`；能命中已加载的模型列表时补 `name/reasoning/contextWindow/maxTokens`，否则至少给 `provider/providerName/id/name`。
+- `thread.thinkingLevel`：当前思考级别。有 child 时取 `get_state().thinkingLevel`；没有 child 时取 `<agentDir>/settings.json` 的 `defaultThinkingLevel`；都没有则 `null`。虚拟线程也返回该字段，不为此 spawn。
 - 单线程文件读取上限 **32MB**；超过返回 **400**，提示手动清理（stat 前置，不解析）。
 
 ### 5.2 新建线程
