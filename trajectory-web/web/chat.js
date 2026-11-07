@@ -7,6 +7,7 @@
  */
 import {
 	computeAnchoredMenuPosition,
+	contextSummaryLabel,
 	filterPaletteItems,
 	forgetThread,
 	formatChars,
@@ -48,6 +49,13 @@ const MODEL_MENU_ANCHOR = Object.freeze({
 	minWidth: "min(240px, calc(100vw - 24px))",
 	maxWidth: "min(420px, calc(100vw - 24px))",
 });
+const CONTEXT_MENU_ANCHOR = Object.freeze({
+	offset: 4,
+	align: "left",
+	minWidth: "min(260px, calc(100vw - 24px))",
+	maxWidth: "min(420px, calc(100vw - 24px))",
+	maxHeight: 360,
+});
 const COMMAND_ITEMS = Object.freeze([
 	{ id: "new", label: "新对话", hint: "开一个新线程（旧线程可用 /resume 找回）", group: "命令", search: "new 新对话" },
 	{ id: "resume", label: "历史对话", hint: "切换回旧线程", group: "命令", search: "resume 历史 对话 线程" },
@@ -71,6 +79,8 @@ export function initChatPanel(deps) {
 	const paletteListEl = el("chat-palette-list");
 	const paletteSearchEl = el("chat-palette-search");
 	const profileMenuEl = el("chat-profile-menu");
+	const contextBtn = el("chat-context");
+	const contextMenuEl = el("chat-context-menu");
 	const overlayAnchorEl = paletteEl?.closest?.(".chat-overlay-anchor") ?? profileMenuEl?.closest?.(".chat-overlay-anchor") ?? null;
 	const approvalEl = el("chat-approval");
 	const sendIcon = sendBtn?.firstElementChild?.cloneNode(true) ?? null;
@@ -119,6 +129,7 @@ export function initChatPanel(deps) {
 		skill: null,
 		// profile 菜单与审批
 		profileMenuOpen: false,
+		contextMenuOpen: false,
 		profileConfirm: false,
 		profileBusy: false,
 		fullConfirmed: false,
@@ -719,7 +730,7 @@ export function initChatPanel(deps) {
 		return list.map((id) => refs.find((ref) => ref.id === id) ?? { id, kind: "unknown", label: "失效条目", preview: "", invalid: true });
 	}
 
-	/** 上下文 chips：标签/预览/打开/移除/清空/以此新开 + 轻提示。 */
+	/** 上下文摘要按钮 + 独立弹层；摘要永不横向溢出。 */
 	function renderContext() {
 		const box = el("chat-context");
 		if (!box) return;
@@ -727,41 +738,133 @@ export function initChatPanel(deps) {
 		if (!state.open || ids.length === 0) {
 			box.hidden = true;
 			box.replaceChildren();
+			box.setAttribute("aria-expanded", "false");
+			closeContextMenu({ focus: false });
 			return;
 		}
+		const refs = contextRefs(ids);
+		const meta = contextSummaryLabel(ids, refs);
 		box.hidden = false;
-		const nodes = [h("span", { class: "chat-ctx-label", text: `上下文 ${ids.length}` })];
-		for (const ref of contextRefs(ids)) {
-			nodes.push(
-				h(
-					"span",
-					{ class: `chat-ctx-chip${ref.invalid ? " is-invalid" : ""}`, title: ref.preview || ref.label },
-					h(
-						"button",
-						{ class: "chat-ctx-main", type: "button", title: ref.preview || ref.label, onClick: () => deps.openEvent?.(ref.id) },
-						h("span", { class: "chat-ctx-tag", text: ref.label }),
-						ref.preview ? h("span", { class: "chat-ctx-preview", text: String(ref.preview).slice(0, 24) }) : null,
-					),
-					h("button", {
-						class: "chat-ctx-remove",
-						type: "button",
-						title: "移除",
-						"aria-label": `移除 ${ref.label}`,
-						text: "×",
-						onClick: (event) => {
-							event.stopPropagation();
-							setContextIds(ids.filter((id) => id !== ref.id));
-						},
-					}),
-				),
-			);
-		}
-		nodes.push(
-			h("button", { class: "chat-ctx-clear", type: "button", text: "清空", onClick: () => setContextIds([]) }),
-			h("button", { class: "chat-ctx-new", type: "button", text: "以此新开", onClick: () => void newThreadPreservingSelection() }),
-			h("span", { class: "chat-ctx-hint", text: "取消勾选只影响之后的读取" }),
+		box.setAttribute("aria-expanded", String(state.contextMenuOpen));
+		box.setAttribute("aria-label", `上下文 ${meta.count}：${meta.summary}`);
+		const children = [
+			h("span", { class: "chat-context-count", text: `上下文 ${meta.count}` }),
+			h("span", { class: "chat-context-sep", text: "·" }),
+			h("span", { class: "chat-context-summary", text: meta.summary }),
+		];
+		if (meta.moreLabel) children.push(h("span", { class: "chat-context-more", text: meta.moreLabel }));
+		children.push(h("span", { class: "chat-context-chevron", "aria-hidden": "true", text: "▸" }));
+		box.replaceChildren(...children);
+		renderContextMenu();
+	}
+
+	function contextRow(ref) {
+		const label = ref.invalid ? "失效条目" : ref.label || "失效条目";
+		const preview = ref.invalid ? "失效条目" : ref.preview || ref.label || "";
+		return h(
+			"div",
+			{ class: `chat-context-row${ref.invalid ? " is-invalid" : ""}`, role: "listitem" },
+			h(
+				"button",
+				{
+					class: "chat-context-row-main",
+					type: "button",
+					title: preview || label,
+					onClick: () => deps.openEvent?.(ref.id),
+				},
+				h("span", { class: "chat-context-row-tag", text: label }),
+				h("span", { class: "chat-context-row-preview", text: preview }),
+			),
+			h("button", {
+				class: "chat-context-row-remove",
+				type: "button",
+				title: "移除",
+				"aria-label": `移除 ${label} ${preview}`,
+				text: "×",
+				onClick: (event) => {
+					event.stopPropagation();
+					const next = contextIds().filter((id) => id !== ref.id);
+					setContextIds(next);
+					if (next.length === 0) closeContextMenu({ focus: false });
+				},
+			}),
 		);
-		box.replaceChildren(...nodes);
+	}
+
+	function renderContextMenu() {
+		if (!contextMenuEl) return;
+		const ids = contextIds();
+		if (!state.open || !state.contextMenuOpen || ids.length === 0) {
+			state.contextMenuOpen = false;
+			contextMenuEl.hidden = true;
+			contextMenuEl.replaceChildren();
+			contextBtn?.setAttribute("aria-expanded", "false");
+			clearAnchoredMenu(contextMenuEl);
+			return;
+		}
+		const refs = contextRefs(ids);
+		const meta = contextSummaryLabel(ids, refs);
+		contextMenuEl.hidden = false;
+		contextMenuEl.replaceChildren(
+			h(
+				"div",
+				{ class: "chat-context-menu-head" },
+				h("span", { class: "chat-context-menu-title", text: `上下文 ${meta.count}` }),
+				h("button", {
+					class: "chat-context-menu-clear",
+					type: "button",
+					"aria-label": "清空对话上下文",
+					text: "清空",
+					onClick: () => {
+						setContextIds([]);
+						closeContextMenu({ focus: false });
+					},
+				}),
+			),
+			h("div", { class: "chat-context-menu-sep", "aria-hidden": "true" }),
+			h("div", { class: "chat-context-menu-list", role: "list" }, ...refs.map(contextRow)),
+			h("div", { class: "chat-context-menu-sep", "aria-hidden": "true" }),
+			h(
+				"div",
+				{ class: "chat-context-menu-foot" },
+				h("button", {
+					class: "chat-context-menu-new",
+					type: "button",
+					text: "以此新开",
+					onClick: () => {
+						closeContextMenu({ focus: false });
+						void newThreadPreservingSelection();
+					},
+				}),
+			),
+		);
+		contextBtn?.setAttribute("aria-expanded", "true");
+		positionContextMenu();
+	}
+
+	function positionContextMenu() {
+		if (!state.contextMenuOpen) {
+			clearAnchoredMenu(contextMenuEl);
+			return;
+		}
+		positionAnchoredMenu(contextMenuEl, contextBtn, CONTEXT_MENU_ANCHOR);
+	}
+
+	function openContextMenu() {
+		if (!state.open || contextIds().length === 0) return;
+		if (state.palette) closePalette({ restore: true, focus: false });
+		closeProfileMenu();
+		state.contextMenuOpen = true;
+		renderContextMenu();
+		const first = contextMenuEl?.querySelector("button, [href], input, [tabindex]:not([tabindex='-1'])");
+		first?.focus?.();
+	}
+
+	function closeContextMenu({ focus = true } = {}) {
+		const wasOpen = state.contextMenuOpen;
+		state.contextMenuOpen = false;
+		renderContextMenu();
+		if (focus && wasOpen && state.open && contextIds().length) contextBtn?.focus?.();
 	}
 
 	function setContextIds(ids) {
@@ -896,6 +999,7 @@ export function initChatPanel(deps) {
 			return;
 		}
 		if (state.palette) closePalette({ restore: true, focus: false });
+		closeContextMenu({ focus: false });
 		state.profileMenuOpen = true;
 		state.profileConfirm = false;
 		renderProfileMenu();
@@ -1530,7 +1634,7 @@ export function initChatPanel(deps) {
 	}
 
 	/** 把菜单定位到 trigger：坐标换算到 .chat-overlay-anchor，避免 CSS anchor 的包含块问题。 */
-	function positionAnchoredMenu(menu, trigger, { offset, align, minWidth, maxWidth }) {
+	function positionAnchoredMenu(menu, trigger, { offset, align, minWidth, maxWidth, maxHeight = 400 }) {
 		if (!menu || !trigger || !overlayAnchorEl) return;
 		const ar = overlayAnchorEl.getBoundingClientRect();
 		const tr = trigger.getBoundingClientRect();
@@ -1556,7 +1660,7 @@ export function initChatPanel(deps) {
 			menu.style.right = "auto";
 		}
 		menu.style.bottom = `${pos.bottom}px`;
-		menu.style.maxHeight = `min(400px, ${pos.maxHeight}px)`;
+		menu.style.maxHeight = `min(${maxHeight}px, ${pos.maxHeight}px)`;
 	}
 
 	function positionPalette() {
@@ -1579,11 +1683,13 @@ export function initChatPanel(deps) {
 	function positionOpenMenus() {
 		if (state.palette) positionPalette();
 		if (state.profileMenuOpen) positionProfileMenu();
+		if (state.contextMenuOpen) positionContextMenu();
 	}
 
 	function openPalette(layer, { draft = null, clearOnSelect = null, initialIndex = 0, back = null } = {}) {
 		if (!currentSession() || state.enabled !== true) return;
 		closeProfileMenu();
+		closeContextMenu({ focus: false });
 		const previousDraft = draft ?? state.palette?.draft ?? input?.value ?? "";
 		state.palette = {
 			layer,
@@ -2379,6 +2485,13 @@ export function initChatPanel(deps) {
 			}
 		});
 	}
+	if (contextBtn) {
+		contextBtn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			if (state.contextMenuOpen) closeContextMenu({ focus: true });
+			else openContextMenu();
+		});
+	}
 	if (sendBtn) {
 		sendBtn.addEventListener("click", () => {
 			if (state.palette) return;
@@ -2474,6 +2587,14 @@ export function initChatPanel(deps) {
 		if (inside(profileMenuEl) || inside(el("chat-profile"))) return;
 		closeProfileMenu();
 	});
+	// 点击上下文弹层外关闭（不改 textarea 草稿，焦点回摘要按钮）
+	document.addEventListener("click", (e) => {
+		if (!state.contextMenuOpen) return;
+		const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+		const inside = (node) => node && (path.includes(node) || (typeof node.contains === "function" && node.contains(e.target)));
+		if (inside(contextMenuEl) || inside(contextBtn)) return;
+		closeContextMenu({ focus: true });
+	});
 	window.addEventListener("resize", positionOpenMenus);
 	document.addEventListener("scroll", positionOpenMenus, true);
 	if (typeof ResizeObserver === "function" && overlayAnchorEl?.parentElement) {
@@ -2489,6 +2610,7 @@ export function initChatPanel(deps) {
 			if (!state.open) {
 				closePalette({ restore: true, focus: false });
 				closeProfileMenu();
+				closeContextMenu({ focus: false });
 			}
 			if (state.open) void ensureLoaded();
 			renderContext();
@@ -2496,6 +2618,10 @@ export function initChatPanel(deps) {
 		handleEscape() {
 			if (state.approvals.length) {
 				void respondApproval(false);
+				return true;
+			}
+			if (state.contextMenuOpen) {
+				closeContextMenu({ focus: true });
 				return true;
 			}
 			if (state.profileMenuOpen) {
@@ -2524,6 +2650,7 @@ export function initChatPanel(deps) {
 			closePalette({ restore: false, clearInput: true, focus: false });
 			clearApprovals();
 			closeProfileMenu();
+			closeContextMenu({ focus: false });
 			state.models = [];
 			state.modelsAt = 0;
 			state.modelsError = null;

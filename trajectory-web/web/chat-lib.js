@@ -237,3 +237,80 @@ export function computeAnchoredMenuPosition(input = {}) {
 		maxHeight: round(maxHeight),
 	};
 }
+
+/** 上下文摘要的 preview 最大显示宽度（终端/浏览器列宽近似）。 */
+const CONTEXT_SUMMARY_WIDTH = 32;
+
+function isWideCodePoint(cp) {
+	return (
+		cp >= 0x1100 &&
+		(cp <= 0x115f ||
+			cp === 0x2329 ||
+			cp === 0x232a ||
+			(cp >= 0x2e80 && cp <= 0xa4cf) ||
+			(cp >= 0xac00 && cp <= 0xd7a3) ||
+			(cp >= 0xf900 && cp <= 0xfaff) ||
+			(cp >= 0xfe10 && cp <= 0xfe19) ||
+			(cp >= 0xfe30 && cp <= 0xfe6f) ||
+			(cp >= 0xff00 && cp <= 0xff60) ||
+			(cp >= 0xffe0 && cp <= 0xffe6) ||
+			(cp >= 0x1f300 && cp <= 0x1faff))
+	);
+}
+
+function displayWidth(text) {
+	let width = 0;
+	for (const ch of String(text ?? "")) {
+		const cp = ch.codePointAt(0);
+		if (cp === 0x200d || (cp >= 0x0300 && cp <= 0x036f)) continue;
+		width += isWideCodePoint(cp) ? 2 : 1;
+	}
+	return width;
+}
+
+function truncateDisplay(text, maxWidth) {
+	if (displayWidth(text) <= maxWidth) return text;
+	const limit = Math.max(0, maxWidth - 1);
+	let width = 0;
+	let out = "";
+	for (const ch of text) {
+		const cp = ch.codePointAt(0);
+		const w = cp === 0x200d || (cp >= 0x0300 && cp <= 0x036f) ? 0 : isWideCodePoint(cp) ? 2 : 1;
+		if (width + w > limit) break;
+		out += ch;
+		width += w;
+	}
+	return `${out}…`;
+}
+
+/** preview 已带标签前缀时剥掉，避免摘要出现「模型模型 → litellm」。 */
+function stripPreviewLabel(label, preview) {
+	if (!label || !preview.startsWith(label)) return preview;
+	const rest = preview.slice(label.length);
+	if (!rest) return "";
+	if (/^[\s→:：·-]/.test(rest)) return rest.replace(/^[\s→:：·-]+/, "").trim();
+	return preview;
+}
+
+/**
+ * 上下文摘要按钮文案：首个条目标签+preview，N>1 时给 +K。
+ * @param {string[]} ids
+ * @param {Array<{id:string,label?:string,preview?:string,invalid?:boolean}>} refs
+ * @returns {{count:number, summary:string, moreLabel:string}}
+ */
+export function contextSummaryLabel(ids, refs) {
+	const list = Array.isArray(ids) ? ids : [];
+	const count = list.length;
+	if (count === 0) return { count: 0, summary: "", moreLabel: "" };
+	const byId = new Map((Array.isArray(refs) ? refs : []).map((ref) => [ref?.id, ref]));
+	const first = byId.get(list[0]);
+	const invalid = first?.invalid === true || !first;
+	const label = invalid ? "失效条目" : String(first.label || "失效条目").trim();
+	const preview = invalid ? "" : String(first.preview ?? "").trim();
+	const stripped = preview ? truncateDisplay(stripPreviewLabel(label, preview), CONTEXT_SUMMARY_WIDTH) : "";
+	return {
+		count,
+		summary: stripped ? `${label}→${stripped}` : label,
+		moreLabel: count > 1 ? `+${count - 1}` : "",
+	};
+}
