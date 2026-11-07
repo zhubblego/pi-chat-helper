@@ -648,6 +648,7 @@ export function initChatPanel(deps) { ... }
   13. `chatDir` 位于 `sessionsRoot` 下 → `enabled:false`；非回环监听且 chat 启用 → `enabled:false` + reason。
   14. `server.close()` 后无 child 残留。
   15. 静态 `/chat.js`、`/chat-lib.js` 200。
+  16. 虚拟线程（thread 文件未落盘）：GET models 200 + `threadMissing`；POST model 当前虚拟线程 200、不 404/不 switch。
 
 ### 5.3 `tests/test-web-lib.cjs`
 
@@ -723,4 +724,4 @@ export function initChatPanel(deps) { ... }
 - [x] R10：Host/Origin/JSON content-type/路径/大小校验全过；禁用态不报错。（T9 安全用例）
 - [ ] 浏览器实测：三档 profile、审批弹层、工具卡片、切项目/线程、重启恢复。CDP 不可用，未做。
 - [ ] Codex send 上下文 e2e：工具层 list/read 已测，send 未做，留后续。
-- [x] 全套测试：test-chat 165、test-server 184、test-web-lib 194、test-extension 88、test-codex 38、test-projection 33、test-sessions 10、test-turn 21、test-tool-origins 10（带 PI_HOME 时 11）、test-render 28、test-question-panel 8、test-headless-tui 11；合计 790 个断言（按 `^PASS` 计数，不含各文件末尾 `ALL PASS` 汇总；带 PI_HOME 时 791）；`tsc` 0；`pi -ne -e .` 0；模式 B dev 冒烟正常 send/done，无 rpc 残留；ROADMAP 只写已验证内容。
+- [x] 全套测试：test-chat 165、test-server 187、test-web-lib 195、test-extension 88、test-codex 38、test-projection 33、test-sessions 10、test-turn 21、test-tool-origins 10（带 PI_HOME 时 11）、test-render 28、test-question-panel 8、test-headless-tui 11；合计 794 个断言（按 `^PASS` 计数，不含各文件末尾 `ALL PASS` 汇总；带 PI_HOME 时 795）；`tsc` 0；`pi -ne -e .` 0；模式 B dev 冒烟正常 send/done，无 rpc 残留；ROADMAP 只写已验证内容。
