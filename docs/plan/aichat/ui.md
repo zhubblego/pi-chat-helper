@@ -35,7 +35,7 @@
 │       │   ├── #chat-palette          斜杠/模型/技能/历史菜单（挂在卡片上方）
 │       │   └── #chat-profile-menu     工具权限菜单（同锚点，隐藏）
 │       ├── .chat-accessory
-│       │   ├── #chat-context          上下文 chips
+│       │   ├── #chat-context          上下文摘要按钮
 │       │   └── #chat-skill            技能 chip
 │       ├── .chat-scroll > .chat-grow > #chat-input
 │       └── .chat-row
@@ -71,7 +71,7 @@
 
 - 对话栏宽度、输入区高度沿用现有两个拖拽把手。
 - 无顶部对话头；`.chat-row` 左起 `+`、权限 trigger，右侧模型+级别 trigger 与发送按钮。
-- 上下文/技能 chips 在 `.chat-accessory`，横向可滚，最多一行，高度约 28px。
+- 上下文摘要按钮/技能 chip 在 `.chat-accessory`，单行，高度约 24/28px。
 - `+` 不贴边：`.chat-row` 使用 space-between + 左右 8px padding；菜单锚点 `.chat-overlay-anchor` 贴在卡片顶部。
 
 ## 2. 对话头与输入卡状态
@@ -328,10 +328,10 @@ stateDiagram-v2
 - 行级 checkbox：勾选/取消该事件；点击不展开详情。
 - 轮次头 checkbox：全选/取消全选本轮所有事件（含折叠、被过滤的）；三态 `all/some/none`。
 - 勾选后：
-  - `#chat-context` 立即出现 chip；
+  - `#chat-context` 立即出现摘要按钮，弹层内同步出现对应行；
   - 写 `localStorage["tw.chatCtx"]`；
   - 不触发网络请求。
-- 取消/清空：同步移除 chips 与存储；不影响已发送的历史。
+- 取消/清空：同步移除摘要/弹层行与存储；不影响已发送的历史。
 - 不限制条数；选中集可超过 200 条。勾选时不做静默截断。
 - 切会话/切源：按 `source:sessionId` 保存/恢复。
 
@@ -342,24 +342,53 @@ stateDiagram-v2
 - `read_trajectory` 的 `list` 支持 `offset`/`limit` 分页；默认每页 20 条、上限 50 条，避免一次输出全部 200+ 条。
 - 加 4/5/6：下一轮清单出现，模型可读。
 - 反选 2/3：下一轮清单消失；模型再按 id 读取会得到「不在当前选中集」。
-- **反选不抹历史**：模型之前读过的内容仍在 session 里。UI 在 chips 旁给一句轻提示：`取消勾选只影响之后的读取`。
+- **反选不抹历史**：模型之前读过的内容仍在 session 里。摘要按钮的 `title` 给一句轻提示：`取消勾选只影响之后的读取`。
 - 需要彻底失忆：用「以此新开」按钮（保留当前选择新开线程）或 `/new`（清空选择）。
 
-### 7.4 Chips
+### 7.4 折叠摘要 + 弹层
+
+**为什么不用 chips 行**：常驻操作（清空、以此新开）和提示文字会把内容挤出可视区；实测 1440 宽视口只勾 1 条时，`.chat-context` 的 `scrollWidth` 已大于 `clientWidth`，两个操作都在横向滚动区之外。改为单行摘要 + 弹层后，摘要按钮必须永不溢出。
 
 ```text
-上下文 3  [提问 · 帮我改… ×] [工具 · bash … ×] [回答 · 因为… ×]  清空  以此新开
+上下文 3 · 模型→litellm +2 ▸
 ```
 
-- 容器：`#chat-context`，`display:flex; flex-wrap:nowrap; overflow-x:auto; gap:6px;`。
-- 单个 chip：
-  - 主文本：`eventTagLabel(ev)`（提问/思考/工具/回答/命令/…）。
-  - 次文本：`ev.preview` 截断 24 字，`title` 全文。
-  - 点击 chip 主体：`openPanel(id)` 打开轨迹详情。
-  - 点击 `×`：从选中集移除。
-- 清空：清空当前会话所有选中；不弹确认。
-- 失效条目（投影里已被裁剪/分支变化）：chip 显示 `失效条目` + `×`，发送时服务端跳过。
-- `以此新开`：`POST /api/chat/thread` 后**保留**当前选中集；与 `/new`（清空选择）区分。
+摘要按钮：
+
+- `#chat-context` 是 `button`，位于 `.chat-accessory` 内；`aria-haspopup="dialog"`、`aria-expanded`、`aria-controls="chat-context-menu"`。
+- 内容：`上下文 N` ｜ `·` ｜ 首个条目摘要 ｜ `+K`（K=N−1，仅 N>1）｜ chevron（真实 SVG，≥12px，`--dsw-alias-label-caption`）。
+- 尺寸：`inline-flex; align-items:center; gap:4px; height:24px; padding:0 6px; border-radius:var(--dsw-radius-sm); background:transparent; color:var(--dsw-alias-label-secondary); font-size:12px; line-height:18px; cursor:pointer`。
+- `max-width:100%; min-width:0`；文字段 `overflow:hidden; text-overflow:ellipsis; white-space:nowrap`。按钮永久单行，不横向滚动。
+- hover 上 `--dsw-alias-interactive-bg-hover`；`:focus-visible` 一圈 focus ring。
+- `ids.length === 0` 或 `!state.open`：`hidden` 且清空内容。
+- `title` = `取消勾选只影响之后的读取`。
+- 首个摘要由 `contextSummaryLabel(ids, refs)` 生成：标签 + `→` + preview；preview 为空只显示标签；preview 与标签重复的前缀要剥掉（避免「模型模型 → litellm」）；preview 按显示宽度截断；失效条目显示「失效条目」。
+
+弹层 `#chat-context-menu`：
+
+- 放在 `.chat-overlay-anchor` 内，与 `#chat-palette`、`#chat-profile-menu` 同级；`role="dialog"`。
+- 锚定复用 `positionAnchoredMenu()` / `computeAnchoredMenuPosition()`：anchor = `#chat-context` 按钮，`offset:4`、`align:"left"`（按钮在输入区左侧）。
+- 宽度：`width:fit-content`；`min-width:min(260px, calc(100vw - 24px))`；`max-width:min(420px, calc(100vw - 24px))`。
+- 外观与其它菜单一致：`border-radius:var(--dsw-radius-lg)`、`background:var(--dsw-menu-surface-fill)`、`backdrop-filter:var(--dsw-menu-backdrop-filter)`、`box-shadow:var(--dsw-elevation-prominent)`、`border:0`、`z-index:100`。
+- 结构：
+  - 头行：左 `上下文 N`（caption 色），右「清空」文字按钮。
+  - 分隔线 1px `--dsw-alias-border-l1`。
+  - 列表：每条一行，`display:flex; align-items:center; gap:6px; height:30px; padding:0 6px; border-radius:var(--dsw-radius-sm)`；hover 上 `--dsw-alias-interactive-bg-hover`。
+    - 行主体是按钮：tag（caption 色，`flex:none`）+ preview（primary 色，`flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap`）；点击 `deps.openEvent?.(ref.id)`。
+    - 行尾 `×` 移除按钮，`aria-label="移除 <tag> <preview>"`；点击 `stopPropagation()` 后移除。
+    - 失效条目保留红边/红字，preview 显示「失效条目」，仍可移除。
+  - 分隔线。
+  - 底行：「以此新开」文字按钮，左对齐。
+- 列表区 `max-height:min(360px, 可用空间)`；内部 `overflow-y:auto; overscroll-behavior:contain`。
+
+交互：
+
+- 点摘要按钮打开弹层，焦点移到弹层第一个可聚焦元素。
+- 移除单项：弹层不关闭，列表原地更新；移除到 0 条时自动关闭，摘要行 `hidden`。
+- 清空：清空后关闭弹层，摘要行 `hidden`。
+- 以此新开：走现有 `newThreadPreservingSelection()`，关闭弹层。
+- Esc：关闭弹层，焦点回摘要按钮。该弹层是独立 popover，不属于 palette 层栈；打开 context 弹层或 palette/profile 任一方时先关另一方，保证 Esc 只关最上层。
+- 点击外部关闭；关闭/打开都不动 textarea 草稿，焦点不抢回 textarea。打开不触发 pi 子进程调用。
 
 ### 7.5 持久化
 
@@ -489,7 +518,7 @@ GLM-5.3 · 2.3s · 1.5K tokens
 - 面板：↑↓ 移动，Enter 选择，Esc 逐层关闭；`role="listbox"`、`role="option"`、`aria-selected`；`aria-activedescendant` 指向高亮项。
 - 面板打开时 textarea 保持焦点，不把焦点移到面板。
 - 审批弹层：打开时焦点移到弹层；Tab 在三个操作间循环；Esc = 拒绝；关闭后焦点回输入框。
-- 上下文 chips：每个 chip 是 button；`×` 独立 button，`aria-label="移除上下文：<label>"`；清空按钮 `aria-label="清空对话上下文"`。
+- 上下文摘要：`#chat-context` 是 button，`aria-haspopup="dialog"`、`aria-expanded`、`aria-controls`；弹层 `#chat-context-menu` 是 dialog，行主体与 `×` 是两个独立 button，移除按钮 `aria-label="移除 <tag> <preview>"`；清空按钮 `aria-label="清空对话上下文"`。
 - 发送/停止：`aria-label` + `title`；流式中 `aria-busy="true"` 挂在消息流容器；**流式期间 `aria-live="off"`**，结束后恢复 `polite` 并播报最后一条。
 - 颜色对比：沿用现有 token；profile 全量态用警示色 + 文案，不只靠颜色。
 
@@ -512,7 +541,7 @@ GLM-5.3 · 2.3s · 1.5K tokens
 
 - 对话栏最小 260px：
   - 模型+级别 trigger `max-width:360px`、权限 trigger `max-width:220px`；`triggerEffort` 先省略级别；`@container (max-width:560px)` 下 `.chat-tools`/`.chat-modes`/`.chat-trailing` 的 gap 收到 8px；
-  - 上下文 chips 横向滚动，不换行；
+  - 上下文摘要按钮单行省略，不横向滚动；弹层宽度 min 260 / max 420；
   - 面板项次文本隐藏。
 - 窄窗口（< 900px）：对话栏仍参与分屏；面板宽度跟随抽屉；审批卡片 `width:min(92%,420px)`。
 - 输入区手动拖高时，面板仍锚定在输入卡上方；可视高度不足时 `max-height:40vh`。
