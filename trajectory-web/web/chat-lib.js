@@ -190,3 +190,50 @@ export function forgetThread(map, key) {
 	delete next[key];
 	return next;
 }
+
+/**
+ * trigger 锚定菜单的坐标换算（纯函数，零 DOM）。
+ *
+ * 菜单是 .chat-overlay-anchor 的绝对定位子元素，而 anchor 贴在卡片顶部、
+ * 高度为 0；因此要把 trigger 的视口坐标换算成相对 anchor 的 bottom/left/right。
+ *
+ * @param {object} input
+ * @param {{left:number,right:number,top:number,bottom:number}} input.anchorRect
+ * @param {{left:number,right:number,top:number,bottom:number}} input.triggerRect
+ * @param {number} [input.offset] 菜单底边距 trigger 顶边的距离（权限 4、模型 8）
+ * @param {"left"|"right"} [input.align] 水平对齐方向
+ * @param {number} [input.menuWidth] 菜单测量宽度，用于视口 clamp
+ * @param {number} [input.viewportWidth] 视口宽度
+ * @param {number} [input.margin] 视口安全边距
+ * @returns {{left:number|null,right:number|null,bottom:number,maxHeight:number}}
+ */
+export function computeAnchoredMenuPosition(input = {}) {
+	const anchorRect = input.anchorRect ?? {};
+	const triggerRect = input.triggerRect ?? {};
+	const offset = Number(input.offset) || 0;
+	const margin = Number.isFinite(input.margin) ? Number(input.margin) : 12;
+	const menuWidth = Math.max(0, Number(input.menuWidth) || 0);
+	const viewportWidth = Math.max(0, Number(input.viewportWidth) || 0);
+	const bottom = Number(anchorRect.bottom) - Number(triggerRect.top) + offset;
+	const maxHeight = Math.min(400, Math.max(120, Number(triggerRect.top) - offset - margin));
+	const round = (value) => Math.round(value * 100) / 100;
+	const maxLeft = Math.max(margin, viewportWidth - margin - menuWidth);
+	const viewportLeft = Math.min(
+		Math.max(input.align === "right" ? Number(triggerRect.right) - menuWidth : Number(triggerRect.left), margin),
+		maxLeft,
+	);
+	if (input.align === "right") {
+		return {
+			left: null,
+			right: round(Number(anchorRect.right) - (viewportLeft + menuWidth)),
+			bottom: round(bottom),
+			maxHeight: round(maxHeight),
+		};
+	}
+	return {
+		left: round(viewportLeft - Number(anchorRect.left)),
+		right: null,
+		bottom: round(bottom),
+		maxHeight: round(maxHeight),
+	};
+}

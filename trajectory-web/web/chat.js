@@ -6,6 +6,7 @@
  * 本阶段（T3）只做流式与消息渲染；模型/技能/上下文/审批在后续阶段接入。
  */
 import {
+	computeAnchoredMenuPosition,
 	filterPaletteItems,
 	forgetThread,
 	formatChars,
@@ -34,6 +35,19 @@ const CHAT_THREAD_KEY = "tw.chatThread";
 const CHAT_THREAD_NEW_KEY = "tw.chatThreadNew";
 const SKILL_SCOPE_LABEL = { user: "全局技能", project: "项目技能", temporary: "临时技能", path: "路径技能" };
 const SKILL_SCOPE_ORDER = { user: 0, project: 1, temporary: 2, path: 3 };
+const ANCHORED_PALETTE_LAYERS = new Set(["modelRoot", "model", "thinking"]);
+const PROFILE_MENU_ANCHOR = Object.freeze({
+	offset: 4,
+	align: "left",
+	minWidth: "min(144px, calc(100vw - 24px))",
+	maxWidth: "min(360px, calc(100vw - 24px))",
+});
+const MODEL_MENU_ANCHOR = Object.freeze({
+	offset: 8,
+	align: "right",
+	minWidth: "min(240px, calc(100vw - 24px))",
+	maxWidth: "min(420px, calc(100vw - 24px))",
+});
 const COMMAND_ITEMS = Object.freeze([
 	{ id: "new", label: "新对话", hint: "开一个新线程（旧线程可用 /resume 找回）", group: "命令", search: "new 新对话" },
 	{ id: "resume", label: "历史对话", hint: "切换回旧线程", group: "命令", search: "resume 历史 对话 线程" },
@@ -57,6 +71,7 @@ export function initChatPanel(deps) {
 	const paletteListEl = el("chat-palette-list");
 	const paletteSearchEl = el("chat-palette-search");
 	const profileMenuEl = el("chat-profile-menu");
+	const overlayAnchorEl = paletteEl?.closest?.(".chat-overlay-anchor") ?? profileMenuEl?.closest?.(".chat-overlay-anchor") ?? null;
 	const approvalEl = el("chat-approval");
 	const sendIcon = sendBtn?.firstElementChild?.cloneNode(true) ?? null;
 	let localSeq = 0;
@@ -900,6 +915,7 @@ export function initChatPanel(deps) {
 		if (!state.profileMenuOpen) {
 			profileMenuEl.hidden = true;
 			profileMenuEl.replaceChildren();
+			clearAnchoredMenu(profileMenuEl);
 			return;
 		}
 		profileMenuEl.hidden = false;
@@ -917,6 +933,7 @@ export function initChatPanel(deps) {
 					),
 				),
 			);
+			positionProfileMenu();
 			return;
 		}
 		const nodes = [];
@@ -944,6 +961,7 @@ export function initChatPanel(deps) {
 			);
 		}
 		profileMenuEl.replaceChildren(...nodes);
+		positionProfileMenu();
 	}
 
 	async function selectProfile(profile) {
@@ -1317,6 +1335,7 @@ export function initChatPanel(deps) {
 		if (!state.palette) {
 			paletteEl.hidden = true;
 			paletteListEl.replaceChildren();
+			clearAnchoredMenu(paletteEl);
 			return;
 		}
 		paletteEl.hidden = false;
@@ -1368,6 +1387,7 @@ export function initChatPanel(deps) {
 				),
 			);
 			paletteListEl.replaceChildren(...nodes);
+			positionPalette();
 			return;
 		}
 
@@ -1492,12 +1512,73 @@ export function initChatPanel(deps) {
 			index++;
 		}
 		paletteListEl.replaceChildren(...nodes);
+		positionPalette();
 	}
 
 	function syncPaletteButtons() {
 		const modelLayer = Boolean(state.palette && ["modelRoot", "model", "thinking"].includes(state.palette.layer));
 		addBtn?.setAttribute("aria-expanded", String(Boolean(state.palette)));
 		modelBtn?.setAttribute("aria-expanded", String(modelLayer));
+	}
+
+	function clearAnchoredMenu(menu) {
+		if (!menu) return;
+		menu.classList.remove("is-anchored");
+		for (const prop of ["left", "right", "bottom", "width", "minWidth", "maxWidth", "maxHeight"]) {
+			menu.style[prop] = "";
+		}
+	}
+
+	/** 把菜单定位到 trigger：坐标换算到 .chat-overlay-anchor，避免 CSS anchor 的包含块问题。 */
+	function positionAnchoredMenu(menu, trigger, { offset, align, minWidth, maxWidth }) {
+		if (!menu || !trigger || !overlayAnchorEl) return;
+		const ar = overlayAnchorEl.getBoundingClientRect();
+		const tr = trigger.getBoundingClientRect();
+		menu.classList.add("is-anchored");
+		menu.style.left = "auto";
+		menu.style.right = "auto";
+		menu.style.width = "fit-content";
+		menu.style.minWidth = minWidth;
+		menu.style.maxWidth = maxWidth;
+		const pos = computeAnchoredMenuPosition({
+			anchorRect: { left: ar.left, right: ar.right, top: ar.top, bottom: ar.bottom },
+			triggerRect: { left: tr.left, right: tr.right, top: tr.top, bottom: tr.bottom },
+			offset,
+			align,
+			menuWidth: menu.offsetWidth || 0,
+			viewportWidth: window.innerWidth,
+		});
+		if (pos.left === null) {
+			menu.style.left = "auto";
+			menu.style.right = `${pos.right}px`;
+		} else {
+			menu.style.left = `${pos.left}px`;
+			menu.style.right = "auto";
+		}
+		menu.style.bottom = `${pos.bottom}px`;
+		menu.style.maxHeight = `min(400px, ${pos.maxHeight}px)`;
+	}
+
+	function positionPalette() {
+		if (!state.palette) return;
+		if (!ANCHORED_PALETTE_LAYERS.has(state.palette.layer)) {
+			clearAnchoredMenu(paletteEl);
+			return;
+		}
+		positionAnchoredMenu(paletteEl, modelBtn, MODEL_MENU_ANCHOR);
+	}
+
+	function positionProfileMenu() {
+		if (!state.profileMenuOpen) {
+			clearAnchoredMenu(profileMenuEl);
+			return;
+		}
+		positionAnchoredMenu(profileMenuEl, el("chat-profile"), PROFILE_MENU_ANCHOR);
+	}
+
+	function positionOpenMenus() {
+		if (state.palette) positionPalette();
+		if (state.profileMenuOpen) positionProfileMenu();
 	}
 
 	function openPalette(layer, { draft = null, clearOnSelect = null, initialIndex = 0, back = null } = {}) {
@@ -2393,6 +2474,12 @@ export function initChatPanel(deps) {
 		if (inside(profileMenuEl) || inside(el("chat-profile"))) return;
 		closeProfileMenu();
 	});
+	window.addEventListener("resize", positionOpenMenus);
+	document.addEventListener("scroll", positionOpenMenus, true);
+	if (typeof ResizeObserver === "function" && overlayAnchorEl?.parentElement) {
+		const resizeObserver = new ResizeObserver(positionOpenMenus);
+		resizeObserver.observe(overlayAnchorEl.parentElement);
+	}
 
 	render();
 

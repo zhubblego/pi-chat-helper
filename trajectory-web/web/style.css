@@ -1931,13 +1931,28 @@ mark.ev-hit {
 	}
 }
 
-.chat-palette,
-.chat-profile-menu {
+.chat-palette {
 	position: absolute;
 	left: 0;
 	right: 0;
 	bottom: calc(100% + 4px);
 	z-index: 100;
+}
+
+.chat-profile-menu {
+	position: absolute;
+	z-index: 100;
+}
+
+.chat-palette.is-anchored,
+.chat-profile-menu.is-anchored {
+	left: auto;
+	right: auto;
+	bottom: auto;
+}
+
+.chat-palette,
+.chat-profile-menu {
 	box-sizing: border-box;
 	display: flex;
 	flex-direction: column;
