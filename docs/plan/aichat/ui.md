@@ -37,7 +37,7 @@
 │       ├── #chat-skill        技能 chip
 │       ├── #chat-input
 │       └── .chat-row
-│           ├── #chat-model-label  当前模型（纯文本，不可点）
+│           ├── #chat-model-label  当前模型 chip（含边框，不可点）
 │           ├── #chat-profile      工具权限 chip（仅对话 / 只读 / 全量）
 │           └── #chat-send         发送/停止二态
 └── #chat-approval             审批弹层（覆盖抽屉内容，不阻塞轨迹区）
@@ -63,7 +63,7 @@
 ```
 
 - 对话栏宽度、输入区高度沿用现有两个拖拽把手。
-- 无顶部对话头；输入卡底部 `.chat-row` 承载当前模型纯文本与权限 chip。
+- 无顶部对话头；输入卡底部 `.chat-row` 承载当前模型 chip 与权限 chip。
 - 上下文 chips 在输入卡上方，横向可滚，最多一行，高度约 28px。
 
 ## 2. 对话头与输入卡状态
@@ -78,9 +78,11 @@ v1 **不设顶部对话头**。当前模型和工具权限都在输入卡底部 
 └─────────────────────────────────────┘
 ```
 
-### 2.1 当前模型（纯文本）
+### 2.1 当前模型 chip
 
-- 位置：`.chat-row` 左侧 `#chat-model-label`，纯文本，不可点击。
+- 位置：`.chat-row` 左侧 `#chat-model-label`，chip 外观（胶囊尺寸 + 1px 中性边框），不可点击。
+- 来源：当前线程模型；新对话尚未落盘时取 `<agentDir>/settings.json` 的 `defaultProvider/defaultModel`，不为此启动 pi 子进程。
+- 文案：加载中显示「读取模型中…」；确实没有模型时显示「默认模型」，不显示「模型未加载」这类报错式文案。
 - 文本：当前线程模型 `name`；过长省略，`title` 给 `provider/id`。
 - 左侧小圆点：`reasoning` 时 info 色，否则中性灰；模型不可用/回退时警示色，`title` 说明原因。
 - 切换模型只走 `/model` 命令（搜索 `model` 后 Enter/选择）；不保留顶部模型菜单。
@@ -180,7 +182,7 @@ stateDiagram-v2
 1. 输入 `/` → Command 层。
 2. 选「模型」或 `/model` + Enter → `GET /api/chat/models?refresh=1`，显示 loading 行。
 3. 列表到达 → 按 provider 分组；当前线程模型打勾。
-4. 选中 → `POST /api/chat/model`；成功后更新输入卡模型纯文本、关闭面板、插入居中 notice `已切换到 GLM-5.3`。
+4. 选中 → `POST /api/chat/model`；成功后更新输入卡模型 chip、关闭面板、插入居中 notice `已切换到 GLM-5.3`。
 5. 失败 → 面板内错误行，保持打开；不改 chip。
 
 展示：
@@ -401,7 +403,7 @@ GLM-5.3 · 2.3s · 1.5K tokens
 
 | 状态 | 展示 |
 |---|---|
-| 对话未启用 | 消息流显示 `对话不可用：<reason>`；输入区 disabled；模型文本/profile chip 灰色 |
+| 对话未启用 | 消息流显示 `对话不可用：<reason>`；输入区 disabled；模型 chip/profile chip 灰色 |
 | 未选择会话 | `先在左侧选择一个会话`；输入区禁用 |
 | 线程为空 | `选中左侧轨迹条目，然后提问。输入 / 选择模型或技能。` |
 | 模型列表为空 | `pi 没有可用模型，先在 models.json / 登录里配置` |
@@ -445,7 +447,7 @@ GLM-5.3 · 2.3s · 1.5K tokens
 ## 13. 响应式
 
 - 对话栏最小 260px：
-  - 当前模型纯文本 `max-width:140px`，profile chip 只显示图标或短词（`仅`/`读`/`全`），`title` 给全称；
+  - 当前模型 chip 与 profile chip 均 `max-width:45%`，profile 窄窗只显示图标或短词（`仅`/`读`/`全`），`title` 给全称；
   - 上下文 chips 横向滚动，不换行；
   - 面板项次文本隐藏。
 - 窄窗口（< 900px）：对话栏仍参与分屏；面板宽度跟随抽屉；审批卡片 `width:min(92%,420px)`。

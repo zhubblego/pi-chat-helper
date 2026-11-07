@@ -20,7 +20,7 @@
 | `trajectory-web/index.ts` | 修改 | 模式 A 传 `piBin`/`chatDir`；`startInProcess` 选项；close 顺序 |
 | `trajectory-web/chat-trajectory-tool.ts` | 新增 | 子进程扩展：注册 `read_trajectory` 工具（context-as-tool） |
 | `trajectory-web/chat-approval.ts` | 新增 | 子进程扩展：全量档工具审批（`tool_call` + `ctx.ui.confirm`） |
-| `trajectory-web/web/index.html` | 修改 | 无顶部对话头；模型纯文本/权限 chip 移入 chat-row；上下文 chips、斜杠面板、技能 chip、审批弹层 |
+| `trajectory-web/web/index.html` | 修改 | 无顶部对话头；模型 chip（带边框）/权限 chip 移入 chat-row；上下文 chips、斜杠面板、技能 chip、审批弹层 |
 | `trajectory-web/web/chat.js` | 新增 | 对话 DOM、SSE、斜杠面板、模型/技能/上下文/审批/线程历史状态 |
 | `trajectory-web/web/chat-lib.js` | 新增 | 纯函数：SSE 解析、面板过滤、上下文持久化、格式化 |
 | `trajectory-web/web/app.js` | 修改 | 接线 `initChatPanel`；`selectMode()`；选中持久化；会话切换；Esc 链；启动 |
@@ -595,7 +595,7 @@ export function initChatPanel(deps) { ... }
 
 ### 4.5 `style.css`
 
-- 输入卡状态：`.chat-model-label`（当前模型纯文本）、`.chat-profile`（权限 chip，开态用警示色）。
+- 输入卡状态：`.chat-model-label`（当前模型 chip，带 1px 中性边框）、`.chat-profile`（权限 chip，开态用警示色）。
 - 上下文 chips：`.chat-context`、`.chat-ctx-chip`、`.chat-ctx-label`、`.chat-ctx-preview`、`.chat-ctx-remove`、`.chat-ctx-clear`、`.chat-ctx-new`（以此新开）。
 - 斜杠面板：`.chat-palette`、`.chat-palette-group`、`.chat-palette-item`（`[aria-selected="true"]` 用 hover 底色 + 左侧勾）。
 - 技能 chip：`.chat-skill`。

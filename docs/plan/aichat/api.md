@@ -285,6 +285,7 @@ GET /api/chat/thread?source=pi&session=<id>[&thread=<id>]
 - `displayText/context/skill` 来自 `meta/turns.jsonl`（按 user 消息序号对齐）；缺失时回退为「去掉已知 `<trajectory_index>`/`<trajectory_index_delta>` 块后的文本」。
 - `pending`：child 存活时取 `get_state().isStreaming`；child 不存在时 `false`。
 - `warnings`：session 解析告警、缺失 sidecar、无效 context id 等非致命情况。
+- `thread.model`：模型引用。`exists:false` 时若 `<agentDir>/settings.json` 有 `defaultProvider/defaultModel`，返回该默认模型（只读文件，不 spawn），否则 `null`；能命中已加载的模型列表时补 `name/reasoning/contextWindow/maxTokens`，否则至少给 `provider/providerName/id/name`。
 - 单线程文件读取上限 **32MB**；超过返回 **400**，提示手动清理（stat 前置，不解析）。
 
 ### 5.2 新建线程
