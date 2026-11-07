@@ -555,6 +555,7 @@ const check = (label, cond, extra = "") => {
 			chatSource.includes('back: "modelRoot"') &&
 			chatSource.includes("state.palette.back") &&
 			chatSource.includes("function backToParentLayer") &&
+			chatSource.includes("returnToTrigger") &&
 			chatSource.includes("layer !== \"command\" && state.palette.layer !== \"modelRoot\""),
 	);
 
