@@ -30,16 +30,23 @@
 ├── #chat-list                 消息流（user / ai / tool / notice）
 ├── .chat-composer
 │   ├── #composer-resize
-│   ├── #chat-context          上下文 chips + 计数 + 清空 + 「以此新开」
-│   ├── #chat-palette          斜杠面板（顶部独立搜索框 + 列表，绝对定位在输入卡上方）
-│   ├── #chat-profile-menu     工具权限菜单（popover，隐藏）
 │   └── .chat-card
-│       ├── #chat-skill        技能 chip
-│       ├── #chat-input
+│       ├── .chat-overlay-anchor
+│       │   ├── #chat-palette          斜杠/模型/技能/历史菜单（挂在卡片上方）
+│       │   └── #chat-profile-menu     工具权限菜单（同锚点，隐藏）
+│       ├── .chat-accessory
+│       │   ├── #chat-context          上下文 chips
+│       │   └── #chat-skill            技能 chip
+│       ├── .chat-scroll > .chat-grow > #chat-input
 │       └── .chat-row
-│           ├── #chat-model-label  当前模型 chip（含边框，不可点）
-│           ├── #chat-profile      工具权限 chip（仅对话 / 只读 / 全量）
-│           └── #chat-send         发送/停止二态
+│           ├── .chat-tools
+│           │   ├── #chat-add          + 按钮（打开 Command 层）
+│           │   └── .chat-modes
+│           │       └── #chat-profile  权限 select（仅对话 / 只读 / 全量）
+│           └── .chat-trailing
+│               ├── .chat-standard-controls
+│               │   └── #chat-model-label  模型 select
+│               └── #chat-send        发送/停止二态
 └── #chat-approval             审批弹层（覆盖抽屉内容，不阻塞轨迹区）
 ```
 
@@ -48,7 +55,7 @@
 ```text
 ┌ 轨迹观察 ─────────────────────────────────────────── [主题] [对话] ┐
 │ π │ 会话        │ 轨迹主区                          │ 对话        │
-│   │ 会话 A      │                                   │ [GLM-5.3▾][只读▾][+]│
+│   │ 会话 A      │                                   │ [+] [只读▾] [GLM-5.3▾] [↑]│
 │   │ 会话 B      │  第 1 轮  ▾                       │             │
 │   │             │   [x] 提问  帮我改…               │  用户气泡    │
 │   │             │   [x] 工具  bash …                │  AI 回答     │
@@ -63,8 +70,9 @@
 ```
 
 - 对话栏宽度、输入区高度沿用现有两个拖拽把手。
-- 无顶部对话头；输入卡底部 `.chat-row` 承载当前模型 chip 与权限 chip。
-- 上下文 chips 在输入卡上方，横向可滚，最多一行，高度约 28px。
+- 无顶部对话头；`.chat-row` 左起 `+`、权限 select，右侧模型 select 与发送按钮。
+- 上下文/技能 chips 在 `.chat-accessory`，横向可滚，最多一行，高度约 28px。
+- `+` 不贴边：`.chat-row` 使用 space-between + 左右 8px padding；菜单锚点 `.chat-overlay-anchor` 贴在卡片顶部。
 
 ## 2. 对话头与输入卡状态
 
@@ -74,23 +82,29 @@ v1 **不设顶部对话头**。当前模型和工具权限都在输入卡底部 
 ... 消息流 ...
 ┌─────────────────────────────────────┐
 │ 问问这条轨迹…                      │
-│ GLM-5.3              [只读 ▾]  [↑] │
+│ [+] [只读▾]        [GLM-5.3▾] [↑]  │
 └─────────────────────────────────────┘
 ```
 
-### 2.1 当前模型 chip
+- `+` 按钮（`#chat-add`）打开与 `/` 相同的 Command 层；不另做菜单。
+- 菜单外壳挂在 `.chat-card` 的 `.chat-overlay-anchor` 上，向上弹出：`bottom: calc(100% + 4px)`、左右贴齐卡片。
+- 打开菜单后焦点仍在 `#chat-palette-search`；textarea 草稿不被清空。
 
-- 位置：`.chat-row` 左侧 `#chat-model-label`，chip 外观（胶囊尺寸 + 1px 中性边框），不可点击。
+### 2.1 当前模型 select
+
+- 位置：`.chat-row > .chat-trailing > .chat-standard-controls`，在发送按钮左侧、权限 select 右侧。
+- 外观：dsh `.select`（28px 高、`--dsw-radius-sm`、透明底、右侧 12px chevron、13/20 中等字重）；**不使用胶囊底 + inset 边框**。
 - 来源：当前线程模型；新对话尚未落盘时取 `<agentDir>/settings.json` 的 `defaultProvider/defaultModel`，不为此启动 pi 子进程。
 - 文案：加载中显示「读取模型中…」；确实没有模型时显示「默认模型」，不显示「模型未加载」这类报错式文案。
 - 文本：当前线程模型 `name`；过长省略，`title` 给 `provider/id`。
 - 左侧小圆点：`reasoning` 时 info 色，否则中性灰；模型不可用/回退时警示色，`title` 说明原因。
-- 切换模型只走 `/model` 命令（搜索 `model` 后 Enter/选择）；不保留顶部模型菜单。
-- 流式中打开 `/model`：提示「回复中，先停止」，不切模型。
+- 点击模型控件直接打开 Model 层；`/model` 命令仍保留，二者是同一个菜单。
+- 流式中点击模型控件或 `/model`：提示「回复中，先停止」，不切模型。
 
-### 2.2 工具权限 chip
+### 2.2 工具权限 select
 
-- 位置：`.chat-row` 内、发送按钮左侧；菜单 `#chat-profile-menu` 在输入卡上方弹出。
+- 位置：`.chat-row > .chat-tools > .chat-modes`，紧挨 `+` 按钮右侧；菜单 `#chat-profile-menu` 与主菜单同锚点向上弹出。
+- 外观：与模型控件同一套 dsh `.select`，不使用胶囊 chip。
 - 三态：`仅对话`（no-tools）/ `只读`（read-only，默认）/ `全量`（full）。
 - 点击：弹出小菜单，列出三档与一句说明：
   - 仅对话：只读轨迹工具，不能读项目文件。
@@ -101,7 +115,7 @@ v1 **不设顶部对话头**。当前模型和工具权限都在输入卡底部 
 
 ### 2.3 新对话（/new）
 
-- 不再有加号按钮；命令面板新增「新对话」/`/new`。
+- `+` 按钮打开命令层；命令面板仍提供「新对话」/`/new`，二者不是两套菜单。
 - 选中即调用现有 `POST /api/chat/thread`，不新增接口。
 - 不弹确认；新线程清空消息与上下文选择，模型/profile 保留。
 - 流式中提示先停止；成功返回新 `threadId` 后写入 `localStorage["tw.chatThread"]["<source>:<sessionId>"]`。
@@ -128,7 +142,7 @@ stateDiagram-v2
     Command --> Closed: Esc / 点击面板外 / 搜索框失焦
 ```
 
-- 触发条件：textarea 输入值 trim 后匹配 `^/[A-Za-z]*$`（`/` 开头、没有空格）。这只是**触发器**：textarea 的草稿不被读取为搜索词，也不被清空；`/model`、`/skill` 等文本也不会自动过滤，过滤词在搜索框里输入。
+- 触发条件：textarea 输入值 trim 后匹配 `^/[A-Za-z]*$`（`/` 开头、没有空格），或点击 `.chat-tools` 的 `#chat-add`（始终打开 Command 层）。这只是**触发器**：textarea 的草稿不被读取为搜索词，也不被清空；`/model`、`/skill` 等文本也不会自动过滤，过滤词在搜索框里输入。
 - `/skill:foo args` 有冒号/空格，不触发面板，直接按普通输入发送，由 pi 原生展开。
 - 面板顶部是独立的搜索输入 `#chat-palette-search`（`.chat-palette-head` 内的 `type=search`），列表项在下方 `#chat-palette-list`。
   - 打开面板时搜索框清空并立即 focus；不再从 textarea 读取查询，也不需要剥前导 `/`。
@@ -157,9 +171,12 @@ stateDiagram-v2
 └─────────────────────────────────────┘
 ```
 
+- 菜单外壳：`border-radius: var(--dsw-radius-lg)`、`background: var(--dsw-menu-surface-fill)`、`backdrop-filter: var(--dsw-menu-backdrop-filter)`、`box-shadow: var(--dsw-elevation-prominent)`，无边框；列表容器 padding 4px。
+- 菜单位置：`.chat-overlay-anchor` 挂在 `.chat-card` 顶部，菜单 `bottom: calc(100% + 4px); left:0; right:0; z-index:100; max-height:400px; overflow:hidden`。
+- 每行（`.chat-palette-item`）：`min-height:34px`、`padding:6px 8px`、`border-radius: var(--dsw-radius-md)`、13/20；高亮/键盘选中用 `--dsw-alias-interactive-bg-hover`，不用选中蓝。
+- 分组标题（`.chat-palette-group`）：`padding:6px 8px`、11/15、`--dsw-alias-label-tertiary`。次文本（`.chat-palette-hint`）：右对齐、12/18、单行省略。
 - 顶部搜索行固定：`.chat-palette-head` 包 `#chat-palette-search`；下方 `#chat-palette-list` 单独滚动。
 - 每行：主文本 + 次文本；当前项左侧 `✓`。
-- 键盘高亮用 `--dsw-alias-interactive-bg-hover`，不用选中蓝。
 - 空结果：搜索词把非空列表过滤空时显示 `没有匹配的模型` / `没有匹配的技能`；模型列表本身为空且无错误时给配置指引「pi 没有可用模型，先在 models.json / 登录里配置」。`modelsError` 只作为单独错误行，不参与空态判定。
 - 新对话尚未落盘（虚拟线程）时模型面板照常可用，不因线程文件不存在报错。
 
@@ -179,11 +196,11 @@ stateDiagram-v2
 
 ## 4. 模型选择
 
-1. 输入 `/` → Command 层。
-2. 选「模型」或 `/model` + Enter → `GET /api/chat/models?refresh=1`，显示 loading 行。
+1. 输入 `/` 或点击 `#chat-add` → Command 层。
+2. 选「模型」、点击模型控件或 `/model` + Enter → `GET /api/chat/models?refresh=1`，显示 loading 行。
 3. 列表到达 → 按 provider 分组；当前线程模型打勾。
-4. 选中 → `POST /api/chat/model`；成功后更新输入卡模型 chip、关闭面板、插入居中 notice `已切换到 GLM-5.3`。
-5. 失败 → 面板内错误行，保持打开；不改 chip。
+4. 选中 → `POST /api/chat/model`；成功后更新输入卡模型 select、关闭面板、插入居中 notice `已切换到 GLM-5.3`。
+5. 失败 → 面板内错误行，保持打开；不改模型 select。
 
 展示：
 
@@ -358,7 +375,7 @@ stateDiagram-v2
 ### 8.3 安全提示
 
 - 首次切到 `full`：弹一次确认 `全量工具会真实修改工作区，每次执行前会请求确认`。
-- `full` 开态在输入卡权限 chip 用警示色；关闭页面/切项目自动回到 `只读`？不自动，按项目记忆。
+- `full` 开态在输入卡权限 select 用警示色；关闭页面/切项目自动回到 `只读`？不自动，按项目记忆。
 - 审批弹层不接受键盘快捷键「全部允许」；必须显式勾选。
 
 ## 9. 消息渲染
@@ -403,7 +420,7 @@ GLM-5.3 · 2.3s · 1.5K tokens
 
 | 状态 | 展示 |
 |---|---|
-| 对话未启用 | 消息流显示 `对话不可用：<reason>`；输入区 disabled；模型 chip/profile chip 灰色 |
+| 对话未启用 | 消息流显示 `对话不可用：<reason>`；输入区 disabled；模型 select/权限 select 灰色 |
 | 未选择会话 | `先在左侧选择一个会话`；输入区禁用 |
 | 线程为空 | `选中左侧轨迹条目，然后提问。输入 / 选择模型或技能。` |
 | 模型列表为空 | `pi 没有可用模型，先在 models.json / 登录里配置` |
@@ -447,7 +464,7 @@ GLM-5.3 · 2.3s · 1.5K tokens
 ## 13. 响应式
 
 - 对话栏最小 260px：
-  - 当前模型 chip 与 profile chip 均 `max-width:45%`，profile 窄窗只显示图标或短词（`仅`/`读`/`全`），`title` 给全称；
+  - 模型/权限 select 均 `max-width:220px`；`@container (max-width:560px)` 下 `.chat-tools`/`.chat-modes`/`.chat-trailing` 的 gap 收到 8px，profile 窄窗只显示短词（`仅`/`读`/`全`），`title` 给全称；
   - 上下文 chips 横向滚动，不换行；
   - 面板项次文本隐藏。
 - 窄窗口（< 900px）：对话栏仍参与分屏；面板宽度跟随抽屉；审批卡片 `width:min(92%,420px)`。
