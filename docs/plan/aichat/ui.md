@@ -125,6 +125,7 @@ v1 **不设顶部对话头**。当前模型和工具权限都在输入卡底部 
 - 打开后量一次菜单宽度，若左对齐时右边缘或右对齐时左边缘超出视口 12px，用 `left/right` clamp 回 12px 边距内。
 - modelRoot / Model / Thinking 共用同一个 `#chat-palette` 元素，切层不重建容器；每次切层、窗口 resize、对话区滚动时重算，因此位置和宽度不跳变。
 - 关闭菜单或回到 Command 层时清除内联定位，恢复 `left:0; right:0; bottom:calc(100% + 4px)`；`/` 层位置不退化。
+- 权限/模型菜单会盖住卡片上部内容（包括 textarea 区域）：trigger 在卡片底部行，菜单底边又钉在 trigger 上方，这是 dsh 的预期行为，不是裁剪或定位 bug。
 
 ### 2.2 工具权限 trigger
 
