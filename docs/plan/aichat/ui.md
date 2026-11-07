@@ -237,7 +237,7 @@ stateDiagram-v2
 
 1. 输入 `/` 或点击 `#chat-add` → Command 层。
 2. 选「模型」、点击模型控件或 `/model` + Enter → `GET /api/chat/models?refresh=1`，显示 loading 行。
-3. 列表到达 → 按 provider 分组；当前线程模型打勾。
+3. 列表到达 → 按 provider 分组；只显示 `<agentDir>/models.json` 的 `providers` 中显式配置的 provider，不显示仅因环境变量凭据被 pi 目录带出的 provider；当前线程模型打勾。若当前模型不在配置集合里，仍补在列表首位并打勾。
 4. 选中 → `POST /api/chat/model`；成功后更新输入卡模型 trigger、关闭面板、插入居中 notice `已切换到 GLM-5.3`。
 5. 失败 → 面板内错误行，保持打开；不改模型 trigger。
 
