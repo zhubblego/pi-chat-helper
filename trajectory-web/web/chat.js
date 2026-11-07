@@ -928,7 +928,12 @@ export function initChatPanel(deps) {
 			closeProfileMenu();
 			pushNotice("对话进程已重启");
 			flushRender();
-			await refreshThread();
+			try {
+				await loadThread({ force: true });
+			} catch (err) {
+				pushNotice(`刷新对话失败：${err.message}`, "error");
+				flushRender();
+			}
 		} catch (err) {
 			state.profileBusy = false;
 			renderProfileMenu();
