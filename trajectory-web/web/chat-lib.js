@@ -142,25 +142,23 @@ export function formatChars(n) {
 	return `${Number((value / 1_000_000).toFixed(1))}M`;
 }
 
-/** 从 tw.chatCtx 读取某会话的 id：去重、上限 50。 */
-export function normalizeContextIds(map, source, sessionId, limit = 50) {
+/** 从 tw.chatCtx 读取某会话的 id：去重，不限制条数。 */
+export function normalizeContextIds(map, source, sessionId) {
 	const key = `${source}:${sessionId ?? ""}`;
 	const raw = map && typeof map === "object" && Array.isArray(map[key]) ? map[key] : [];
 	const ids = [];
 	for (const id of raw) {
 		if (typeof id === "string" && id && !ids.includes(id)) ids.push(id);
-		if (ids.length >= limit) break;
 	}
 	return ids;
 }
 
-/** 写回某会话的 id：不改原 map；去重、上限 50。 */
-export function mergeContextIds(map, key, ids, limit = 50) {
+/** 写回某会话的 id：不改原 map；去重，不限制条数。 */
+export function mergeContextIds(map, key, ids) {
 	const next = { ...(map && typeof map === "object" ? map : {}) };
 	const merged = [];
 	for (const id of Array.isArray(ids) ? ids : []) {
 		if (typeof id === "string" && id && !merged.includes(id)) merged.push(id);
-		if (merged.length >= limit) break;
 	}
 	next[key] = merged;
 	return next;

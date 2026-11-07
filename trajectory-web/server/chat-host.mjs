@@ -59,7 +59,6 @@ const PREVIEW_CHARS = 400;
 const SKILLS_TTL_MS = 60_000;
 const SKILL_WARN_CHARS = 32_000;
 const SKILL_MAX_CHARS = 200_000;
-const MAX_CONTEXT_IDS = 50;
 const TRAJECTORY_TOOL_PATH = fileURLToPath(new URL("../chat-trajectory-tool.ts", import.meta.url));
 const APPROVAL_TOOL_PATH = fileURLToPath(new URL("../chat-approval.ts", import.meta.url));
 
@@ -1333,7 +1332,6 @@ export function createChatHost(deps = {}) {
 		const contextIds = [];
 		if (rawContextIds !== undefined && rawContextIds !== null) {
 			if (!Array.isArray(rawContextIds)) throw httpError(400, "contextIds 需为数组");
-			if (rawContextIds.length > MAX_CONTEXT_IDS) throw httpError(400, `contextIds 超过 ${MAX_CONTEXT_IDS} 条`);
 			for (const id of rawContextIds) {
 				if (typeof id !== "string" || !id) throw httpError(400, "contextIds 需为非空字符串");
 				if (!contextIds.includes(id)) contextIds.push(id);
@@ -1406,9 +1404,14 @@ export function createChatHost(deps = {}) {
 			const delta = selectionDelta(previousItems, context.items);
 			const changed = delta.added.length > 0 || delta.removed.length > 0;
 			const firstIndex = previousItems.length === 0 && context.items.length > 0;
+			const indexBudget = Math.max(2_000, PROMPT_MAX_CHARS - prompt.length - 2_000);
 			const indexText =
 				context.items.length && (firstIndex || changed)
-					? buildTrajectoryIndex(context.items, { source: target.source, sessionId: target.sessionId })
+					? buildTrajectoryIndex(context.items, {
+						source: target.source,
+						sessionId: target.sessionId,
+						maxChars: indexBudget,
+					})
 					: "";
 			const deltaText = changed && !firstIndex ? buildTrajectoryDelta(delta) : "";
 

@@ -38,6 +38,8 @@ interface ActiveSnapshot {
 }
 
 const MAX_TRAJECTORY_BYTES = 32 * 1024 * 1024;
+const LIST_DEFAULT_LIMIT = 20;
+const LIST_MAX_LIMIT = 50;
 
 /** 轨迹文件过大时拒绝读取，避免把整份投影塞进模型上下文。 */
 function assertTrajectorySize(file: string) {
@@ -139,10 +141,19 @@ export default function (pi: ExtensionAPI) {
 				if (!items.length) {
 					return { content: [{ type: "text", text: "当前没有选中条目。" }], details: { selected: 0, items: [] } };
 				}
-				const lines = items.map((item) => `- [${item.id}] ${item.label}${item.preview ? ` · ${item.preview}` : ""}（${item.chars} 字符）`);
+				const offset = Math.max(0, Math.trunc(Number(params.offset) || 0));
+				const requested = Number(params.limit);
+				const limit = Number.isInteger(requested) ? Math.min(LIST_MAX_LIMIT, Math.max(1, requested)) : LIST_DEFAULT_LIMIT;
+				const page = items.slice(offset, offset + limit);
+				const lines = page.map((item) => `- [${item.id}] ${item.label}${item.preview ? ` · ${item.preview}` : ""}（${item.chars} 字符）`);
+				const nextOffset = offset + page.length < items.length ? offset + page.length : null;
+				const notes = [`当前选中 ${items.length} 条，本页 ${page.length} 条（offset=${offset}，limit=${limit}）。`];
+				if (!page.length) notes.push("offset 超出当前选中集。");
+				if (nextOffset !== null) notes.push(`还有 ${items.length - nextOffset} 条，用 offset=${nextOffset} 继续。`);
+				notes.push('用 action="read" 取正文。');
 				return {
-					content: [{ type: "text", text: `当前选中 ${items.length} 条：\n${lines.join("\n")}\n用 action="read" 取正文。` }],
-					details: { selected: items.length, items: items.map((item) => item.id) },
+					content: [{ type: "text", text: [...notes, ...lines].join("\n") }],
+					details: { selected: items.length, items: page.map((item) => item.id), nextOffset, truncated: nextOffset !== null },
 				};
 			}
 

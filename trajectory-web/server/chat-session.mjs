@@ -247,18 +247,37 @@ function eventKindLabel(kind) {
 	return labels[kind] ?? String(kind ?? "事件");
 }
 
+/** 清单文本预算与详细行数；超过后降级为无 preview 的短行。 */
+export const TRAJECTORY_INDEX_MAX_CHARS = 16_000;
+export const TRAJECTORY_INDEX_DETAIL_LIMIT = 80;
+
 /**
  * 生成 <trajectory_index> 清单；空选中返回 ""。preview 截断 80 字符。
+ * 前 detailLimit 条带 preview，之后压成 `- [id] label`；超预算追加剩余提示。
  * @param {Array<{id:string,label?:string,kind?:string,preview?:string}>} items
  */
-export function buildTrajectoryIndex(items, { source = "pi", sessionId = "" } = {}) {
+export function buildTrajectoryIndex(
+	items,
+	{ source = "pi", sessionId = "", maxChars = TRAJECTORY_INDEX_MAX_CHARS, detailLimit = TRAJECTORY_INDEX_DETAIL_LIMIT } = {},
+) {
 	const list = (Array.isArray(items) ? items : []).filter((item) => typeof item?.id === "string" && item.id);
 	if (!list.length) return "";
-	const lines = list.map((item) => {
+	const lines = [];
+	let used = 0;
+	let omitted = 0;
+	for (let i = 0; i < list.length; i++) {
+		const item = list[i];
 		const label = item.label ?? eventKindLabel(item.kind);
-		const preview = item.preview ? ` · ${clip(item.preview, 80)}` : "";
-		return `- [${item.id}] ${label}${preview}`;
-	});
+		const preview = i < detailLimit && item.preview ? ` · ${clip(item.preview, 80)}` : "";
+		const line = `- [${item.id}] ${label}${preview}`;
+		if (lines.length && used + line.length + 1 > maxChars) {
+			omitted = list.length - i;
+			break;
+		}
+		lines.push(line);
+		used += line.length + 1;
+	}
+	if (omitted > 0) lines.push(`…还有 ${omitted} 条，用 read_trajectory list 查看`);
 	return `<trajectory_index source="${escapeAttr(source)}" session="${escapeAttr(sessionId)}" count="${list.length}">\n${lines.join("\n")}\n</trajectory_index>`;
 }
 

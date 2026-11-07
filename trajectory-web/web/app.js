@@ -670,9 +670,9 @@ function setDistillMode(on) {
 	renderMain();
 }
 
-/** 对话栏打开或蒸馏模式开启时显示勾选列。 */
+/** 仅蒸馏模式显示勾选列；chat 模式 chips 可删不可加。 */
 function selectMode() {
-	return state.chatOpen || state.distillMode;
+	return state.distillMode;
 }
 
 function updateCropButton() {
@@ -863,7 +863,7 @@ function renderEvent(ev, terms = [], cropped = false) {
 	if (cropped) classes.push("is-cropped");
 	// 非裁剪模式不渲染行级剪刀，网格少一列（见 .ev.no-crop）
 	if (!state.cropMode) classes.push("no-crop");
-	// 非选择模式（对话栏/蒸馏都关）不渲染 checkbox，网格同样少一列（见 .ev.no-select）
+	// 非蒸馏模式不渲染 checkbox，网格同样少一列（见 .ev.no-select）
 	if (!selectMode()) classes.push("no-select");
 	if (ev.id === state.openId) classes.push("is-open");
 	const deriveName = state.deriveNames.get(ev.id);
@@ -893,7 +893,7 @@ function renderEvent(ev, terms = [], cropped = false) {
 	}
 	const dataset = { eid: ev.id };
 	if (deriveTarget) dataset.derive = deriveTarget;
-	// 行级控件：剪刀（仅裁剪模式）与 checkbox（对话/蒸馏选择模式）
+	// 行级控件：剪刀（仅裁剪模式）与 checkbox（仅蒸馏选择模式）
 	const controls = [];
 	if (state.cropMode) {
 		controls.push(
@@ -1342,7 +1342,6 @@ function closePanel() {
 
 const CHAT_INPUT_MAX_H = 132; // 与 CSS .chat-input max-height 同步（约 6 行封顶后内部滚动）
 const CHAT_CTX_KEY = "tw.chatCtx";
-const CHAT_CTX_LIMIT = 50;
 
 function currentChatKey() {
 	return `${state.source}:${state.selectedId ?? ""}`;
@@ -1360,7 +1359,7 @@ function loadChatCtxMap() {
 /** 把当前选中集写入 tw.chatCtx（不删旧 key）。 */
 function saveChatContext() {
 	try {
-		const map = mergeContextIds(loadChatCtxMap(), currentChatKey(), [...state.selectedEvs], CHAT_CTX_LIMIT);
+		const map = mergeContextIds(loadChatCtxMap(), currentChatKey(), [...state.selectedEvs]);
 		localStorage.setItem(CHAT_CTX_KEY, JSON.stringify(map));
 	} catch {
 		/* 无痕模式等场景忽略 */
@@ -1385,20 +1384,14 @@ function pruneChatContext() {
 function restoreChatContext() {
 	const key = currentChatKey();
 	const map = loadChatCtxMap();
-	const ids = normalizeContextIds(map, state.source, state.selectedId ?? "", CHAT_CTX_LIMIT);
+	const ids = normalizeContextIds(map, state.source, state.selectedId ?? "");
 	state.selectedEvs = new Set(ids);
 	state.chatCtxKey = key;
 	pruneChatContext();
 }
 
 function addSelectedIds(ids) {
-	const toAdd = [...new Set(ids)].filter((id) => !state.selectedEvs.has(id));
-	const room = CHAT_CTX_LIMIT - state.selectedEvs.size;
-	if (toAdd.length > room) {
-		setSync(`上下文最多选择 ${CHAT_CTX_LIMIT} 条`, "warn");
-		return false;
-	}
-	for (const id of toAdd) state.selectedEvs.add(id);
+	for (const id of [...new Set(ids)]) state.selectedEvs.add(id);
 	return true;
 }
 
@@ -2457,7 +2450,6 @@ const chat = initChatPanel({
 		const unique = [];
 		for (const id of Array.isArray(ids) ? ids : []) {
 			if (typeof id === "string" && id && !unique.includes(id)) unique.push(id);
-			if (unique.length >= CHAT_CTX_LIMIT) break;
 		}
 		state.selectedEvs = new Set(unique);
 		saveChatContext();
