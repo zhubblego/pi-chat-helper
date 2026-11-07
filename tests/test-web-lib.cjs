@@ -657,6 +657,17 @@ const check = (label, cond, extra = "") => {
 			chatSource.includes("item.id === state.threadId"),
 	);
 
+	const apiReturnAt = chatSource.lastIndexOf("\n\treturn {");
+	const factoryBody = chatSource.slice(0, apiReturnAt);
+	const apiBody = chatSource.slice(apiReturnAt);
+	const apiMethods = [...apiBody.matchAll(/^\t\t([A-Za-z_$][\w$]*)\s*\(/gm)].map((match) => match[1]);
+	const bareApiCalls = apiMethods.filter((name) => new RegExp(`(?<![.\\w])${name}\\s*\\(`).test(factoryBody));
+	check(
+		"工厂内不裸调返回 API 方法（refreshThread 类 ReferenceError）",
+		apiMethods.length >= 8 && bareApiCalls.length === 0 && !factoryBody.includes("await refreshThread("),
+		JSON.stringify({ apiMethods, bareApiCalls }),
+	);
+
 	console.log(failed === 0 ? "\nALL PASS" : `\n${failed} FAILED`);
 	process.exit(failed === 0 ? 0 : 1);
 })();
