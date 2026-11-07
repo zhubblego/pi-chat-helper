@@ -817,11 +817,13 @@ export function createChatHost(deps = {}) {
 		});
 		const auth = readJsonConfig(authFile);
 		const providers = configuredProviders(models.value, auth.value);
-		if (providers.size > 0) return { providers, warning: null, fallback: false };
+		const bothUnavailable = !models.available && !auth.available;
+		const bothEmpty = models.available && auth.available && providers.size === 0;
+		if (!bothUnavailable && !bothEmpty) return { providers, warning: null, fallback: false };
 		const unavailable = [];
 		if (!models.available) unavailable.push("models.json");
 		if (!auth.available) unavailable.push("auth.json");
-		const reason = unavailable.length
+		const reason = bothUnavailable
 			? `${unavailable.join(" / ")} 不可用或结构不符`
 			: "models.json.providers 与 auth.json 都没有有效 provider";
 		return { providers, warning: `${reason}，回退全量模型`, fallback: true };
