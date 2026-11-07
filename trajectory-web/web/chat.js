@@ -1535,6 +1535,11 @@ export function initChatPanel(deps) {
 
 	function closePalette({ restore = true, clearInput = false, focus = true } = {}) {
 		const draft = state.palette?.draft ?? "";
+		const returnToTrigger = Boolean(
+			state.palette &&
+				(state.palette.layer === "modelRoot" ||
+					((state.palette.layer === "model" || state.palette.layer === "thinking") && state.palette.back === "modelRoot")),
+		);
 		state.palette = null;
 		if (paletteSearchEl) paletteSearchEl.value = "";
 		renderPalette();
@@ -1543,7 +1548,10 @@ export function initChatPanel(deps) {
 			if (clearInput) input.value = "";
 			else if (restore) input.value = draft;
 			deps.autoGrowInput?.();
-			if (focus) input.focus?.();
+			if (focus) {
+				if (returnToTrigger) modelBtn?.focus?.();
+				else input.focus?.();
+			}
 		}
 		updateSendButton();
 	}
