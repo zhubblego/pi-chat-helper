@@ -478,13 +478,18 @@ const check = (label, cond, extra = "") => {
 	);
 	const selectBlock = /\.chat-profile,\n\.chat-model-label \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
 	check(
-		"模型/权限统一 dsh select：28px、radius-sm、chevron、无 inset 边框",
-		/padding: 0 20px 0 8px/.test(selectBlock) &&
+		"模型/权限 trigger：dsh gap4/28px/padding 0 4 0 8/radius-sm/透明底",
+		/display: inline-flex/.test(selectBlock) &&
+			/gap: 4px/.test(selectBlock) &&
 			/height: 28px/.test(selectBlock) &&
+			/padding: 0 4px 0 8px/.test(selectBlock) &&
 			/border-radius: var\(--dsw-radius-sm\)/.test(selectBlock) &&
-			/background-image: url\("data:image\/svg\+xml/.test(selectBlock) &&
-			/max-width: 220px/.test(selectBlock) &&
-			!selectBlock.includes("box-shadow: inset"),
+			/background: transparent/.test(selectBlock) &&
+			/color: var\(--dsw-alias-label-secondary\)/.test(selectBlock) &&
+			/--dsw-alias-interactive-bg-hover/.test(styleSource) &&
+			/max-width: 220px/.test(styleSource) &&
+			/max-width: 360px/.test(styleSource) &&
+			!selectBlock.includes("data:image/svg"),
 		selectBlock,
 	);
 	const chatAddTag = /<button id="chat-add"[^>]*>/.exec(indexSource)?.[0] ?? "";
@@ -496,7 +501,8 @@ const check = (label, cond, extra = "") => {
 			indexSource.indexOf('id="chat-add"') < indexSource.indexOf('class="chat-modes"') &&
 			indexSource.indexOf('id="chat-profile"') < indexSource.indexOf('class="chat-trailing"') &&
 			indexSource.indexOf('class="chat-standard-controls"') < indexSource.indexOf('id="chat-model-label"') &&
-			indexSource.indexOf('id="chat-model-label"') < indexSource.indexOf('id="chat-send"') &&
+			indexSource.indexOf('id="chat-model-label"') < indexSource.indexOf('id="chat-thinking"') &&
+			indexSource.indexOf('id="chat-thinking"') < indexSource.indexOf('id="chat-send"') &&
 			indexSource.indexOf('class="chat-overlay-anchor"') < indexSource.indexOf('class="chat-accessory"'),
 		JSON.stringify({ chatAddTag, head: indexSource.indexOf('class="chat-overlay-anchor"'), accessory: indexSource.indexOf('class="chat-accessory"') }),
 	);
@@ -515,6 +521,41 @@ const check = (label, cond, extra = "") => {
 			chatSource.includes("if (modelBtn)") &&
 			chatSource.includes('pushNotice("回复中，先停止"') &&
 			!chatSource.includes("function openModelPicker()"),
+	);
+
+	const modelTriggerTag = /<button id="chat-model-label"[^>]*>/.exec(indexSource)?.[0] ?? "";
+	check(
+		"模型+级别 trigger：模型名/级别/chevron，Thinking 层 + POST",
+		indexSource.includes('id="chat-model-name"') &&
+			indexSource.includes('id="chat-thinking"') &&
+			indexSource.includes('class="chat-trigger-chevron"') &&
+			!/<button id="chat-thinking"/.test(indexSource) &&
+			modelTriggerTag.includes('aria-haspopup="menu"') &&
+			chatSource.includes('id: "thinking"') &&
+			chatSource.includes('label: "思考级别"') &&
+			chatSource.includes("paletteThinkingItems") &&
+			chatSource.includes("openPalette(\"thinking\"") &&
+			chatSource.includes("/api/chat/thinking") &&
+			chatSource.includes("async function selectThinking") &&
+			chatSource.includes('item.id === state.thinkingLevel') &&
+			chatSource.includes("搜索级别…") &&
+			chatSource.includes("没有匹配的思考级别"),
+		JSON.stringify({ modelTriggerTag }),
+	);
+	check(
+		"triggerEffort：caption 色 + flex-shrink 1000；chevron 为 SVG 非 data URI",
+		/\.chat-model-effort \{[^}]*flex-shrink: 1000;[^}]*color: var\(--dsw-alias-label-caption\)/s.test(styleSource) &&
+			indexSource.includes('class="chat-trigger-chevron"') &&
+			!/background-image: url\("data:image\/svg/.test(selectBlock),
+	);
+	check(
+		"modelRoot 三态：root 两行 → model/effort，Esc 按来源回退",
+		chatSource.includes("paletteModelRootItems") &&
+			chatSource.includes('openPalette("modelRoot"') &&
+			chatSource.includes('back: "modelRoot"') &&
+			chatSource.includes("state.palette.back") &&
+			chatSource.includes("function backToParentLayer") &&
+			chatSource.includes("layer !== \"command\" && state.palette.layer !== \"modelRoot\""),
 	);
 
 	const rowBlock = /\.chat-row \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
@@ -585,8 +626,8 @@ const check = (label, cond, extra = "") => {
 			chatSource.includes("没有匹配的模型") &&
 			chatSource.includes("pi 没有可用模型，先在 models.json / 登录里配置") &&
 			styleSource.includes(".chat-palette-item.is-active") &&
-			styleSource.includes(".chat-model-label::before") &&
-			styleSource.includes(".chat-model-label.is-reasoning::before"),
+			styleSource.includes(".chat-model-effort") &&
+			indexSource.includes("chat-trigger-chevron"),
 	);
 	const paletteSearchIndex = indexSource.indexOf('id="chat-palette-search"');
 	const paletteHeadIndex = indexSource.indexOf('class="chat-palette-head"');
@@ -614,8 +655,8 @@ const check = (label, cond, extra = "") => {
 		chatSource.includes("!isNewThread(key, state.threadId)") &&
 			chatSource.includes("state.models.length") &&
 			!chatSource.includes("state.models.length || state.modelsError") &&
-			chatSource.includes('? "没有匹配的模型"') &&
-			chatSource.includes("? null") &&
+			chatSource.includes('text = "没有匹配的模型"') &&
+			chatSource.includes("else text = null") &&
 			chatSource.includes("pi 没有可用模型，先在 models.json / 登录里配置"),
 	);
 	check(
@@ -656,7 +697,7 @@ const check = (label, cond, extra = "") => {
 		),
 	);
 	check("输入卡状态/上下文/面板/技能占位就位", ["chat-model-label", "chat-profile", "chat-context", "chat-palette", "chat-skill"].every((id) => indexSource.includes(`id="${id}"`)));
-	check("权限/模型在 chat-row 内，发送最后", indexSource.indexOf('class="chat-row"') < indexSource.indexOf('id="chat-profile"') && indexSource.indexOf('id="chat-profile"') < indexSource.indexOf('id="chat-model-label"') && indexSource.indexOf('id="chat-model-label"') < indexSource.indexOf('id="chat-send"'));
+	check("权限/模型/级别在 chat-row 内，发送最后", indexSource.indexOf('class="chat-row"') < indexSource.indexOf('id="chat-profile"') && indexSource.indexOf('id="chat-profile"') < indexSource.indexOf('id="chat-model-label"') && indexSource.indexOf('id="chat-model-label"') < indexSource.indexOf('id="chat-thinking"') && indexSource.indexOf('id="chat-thinking"') < indexSource.indexOf('id="chat-send"'));
 	check("对话栏消息仍走 markdown 渲染", chatSource.includes("mdNode(String(message.text))"));
 	check("流式/工具/错误/空态样式就位", [".chat-model-label", ".chat-tool", ".chat-msg.ai.is-streaming", ".chat-stream-cursor", ".chat-notice", ".chat-msg-error", ".chat-empty", ".chat-skeleton"].every((sel) => styleSource.includes(sel)));
 	check("输入卡与输入框圆角收敛（16px，不用 28px 的 panel 圆角）", /\.chat-card \{[^}]*border-radius: var\(--dsw-radius-lg\)/s.test(styleSource) && /\.chat-input \{[^}]*border-radius: var\(--dsw-radius-lg\)/s.test(styleSource) && !/\.chat-card \{[^}]*radius-panel/s.test(styleSource));

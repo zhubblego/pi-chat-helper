@@ -404,7 +404,7 @@ async function stopServer(child) {
 		fs.mkdirSync(defaultAgent, { recursive: true });
 		fs.writeFileSync(
 			path.join(defaultAgent, "settings.json"),
-			JSON.stringify({ defaultProvider: "litellm", defaultModel: "glm-5.3" }),
+			JSON.stringify({ defaultProvider: "litellm", defaultModel: "glm-5.3", defaultThinkingLevel: "max" }),
 		);
 		const defaultServer = await createTrajectoryServer({
 			scope: "all",
@@ -423,8 +423,16 @@ async function stopServer(child) {
 			defaultThread.thread?.exists === false &&
 				defaultThread.thread?.model?.provider === "litellm" &&
 				defaultThread.thread?.model?.id === "glm-5.3" &&
-				defaultThread.thread?.model?.name === "glm-5.3",
-			JSON.stringify(defaultThread.thread?.model),
+				defaultThread.thread?.model?.name === "glm-5.3" &&
+				defaultThread.thread?.thinkingLevel === "max",
+			JSON.stringify({ model: defaultThread.thread?.model, thinkingLevel: defaultThread.thread?.thinkingLevel }),
+		);
+		const defaultThinking = await (await fetch(`${defaultServer.url}api/chat/thinking?source=pi&session=cs-empty`)).json();
+		check(
+			"thinking：无 child 读 settings 默认级别与 fallback levels",
+			defaultThinking.level === "max" &&
+				defaultThinking.levels?.join(",") === "off,low,medium,high,max",
+			JSON.stringify(defaultThinking),
 		);
 		await defaultServer.close();
 
@@ -689,6 +697,35 @@ async function stopServer(child) {
 		check("POST model：GET /api/chat/model 405", (await fetch(`${chatBase}api/chat/model`)).status === 405);
 		check("POST model：POST /api/chat/models 405", (await postJson(`${chatBase}api/chat/models`, { source: "pi", session: "cs-3" })).status === 405);
 
+		// ---- 思考级别 ----
+		const thinkingUrl = (session) => `${chatBase}api/chat/thinking?source=pi&session=${session}`;
+		const postThinking = (body) =>
+			fetch(`${chatBase}api/chat/thinking`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ source: "pi", ...body }),
+			});
+		const thinkingOkRes = await postThinking({ session: "cs-1", level: "low" });
+		const thinkingOk = await thinkingOkRes.json();
+		check(
+			"thinking：POST 成功返回 level/levels",
+			thinkingOkRes.ok && thinkingOk.ok === true && thinkingOk.level === "low" && thinkingOk.levels?.includes("low"),
+			JSON.stringify(thinkingOk),
+		);
+		const thinkingGet = await (await fetch(thinkingUrl("cs-1"))).json();
+		check(
+			"thinking：GET 读 child 当前级别",
+			thinkingGet.level === "low" && thinkingGet.levels?.includes("low"),
+			JSON.stringify(thinkingGet),
+		);
+		const thinkingThread = await (await fetch(`${chatBase}api/chat/thread?source=pi&session=cs-1`)).json();
+		check(
+			"thread：虚拟线程含 thinkingLevel",
+			thinkingThread.thread?.exists === false && thinkingThread.thread?.thinkingLevel === "low",
+			JSON.stringify(thinkingThread.thread?.thinkingLevel),
+		);
+		check("POST thinking：非法级别 400", (await postThinking({ session: "cs-1", level: "bogus" })).status === 400);
+
 		// 未落盘的虚拟线程：models 不 404；当前线程 set_model 不 404。
 		const missingThreadModelsRes = await fetch(modelsUrl("cs-3", "&thread=no-such-file"));
 		const missingThreadModels = await missingThreadModelsRes.json();
@@ -839,6 +876,8 @@ async function stopServer(child) {
 		check("resume：活动 turn 409", resumeBusy.status === 409, String(resumeBusy.status));
 		const settingsConflict = await postJson(`${chatBase}api/chat/settings`, { source: "pi", session: "cs-4", projectSkills: false });
 		check("settings：活动 turn 409", settingsConflict.status === 409, String(settingsConflict.status));
+		const thinkingConflict = await postThinking({ session: "cs-4", level: "low" });
+		check("POST thinking：活动 turn 409", thinkingConflict.status === 409, String(thinkingConflict.status));
 		await postJson(`${chatBase}api/chat/stop`, { source: "pi", session: "cs-4" });
 		await slowSettingsRead;
 

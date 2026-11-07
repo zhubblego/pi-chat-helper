@@ -95,6 +95,8 @@ const models = [
 ];
 let isStreaming = false;
 let model = models[0];
+const thinkingLevels = ["off", "low", "medium", "high", "max"];
+let thinkingLevel = thinkingLevels.includes(process.env.FAKE_PI_THINKING_LEVEL) ? process.env.FAKE_PI_THINKING_LEVEL : "medium";
 
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
 
@@ -119,7 +121,7 @@ function emit(event) {
 function state() {
 	return {
 		model,
-		thinkingLevel: "medium",
+		thinkingLevel,
 		isStreaming,
 		isCompacting: false,
 		steeringMode: "all",
@@ -271,6 +273,21 @@ rl.on("line", (line) => {
 			const delay = Number(process.env.FAKE_PI_STATE_DELAY_MS ?? 0);
 			if (delay > 0) setTimeout(() => reply(command, state()), delay);
 			else reply(command, state());
+			break;
+		}
+		case "get_available_thinking_levels":
+			trace("get_available_thinking_levels");
+			reply(command, { levels: thinkingLevels });
+			break;
+		case "set_thinking_level": {
+			const level = typeof command.level === "string" ? command.level : "";
+			if (!thinkingLevels.includes(level)) {
+				fail(command, `invalid thinking level: ${level}`);
+				break;
+			}
+			thinkingLevel = level;
+			trace(`set_thinking_level:${level}`);
+			reply(command, { level });
 			break;
 		}
 		case "get_available_models":
