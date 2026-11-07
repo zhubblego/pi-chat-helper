@@ -22,6 +22,7 @@ const check = (label, cond, extra = "") => {
 		modelLabel,
 		formatChars,
 		formatContextWindow,
+		computeAnchoredMenuPosition,
 		filterPaletteItems,
 		normalizeContextIds,
 		mergeContextIds,
@@ -77,6 +78,50 @@ const check = (label, cond, extra = "") => {
 			modelLabel({ id: "glm-5" }) === "glm-5" &&
 			modelLabel({ name: "abcdefghij", id: "x" }, 6) === "abcde…" &&
 			modelLabel(null) === "",
+	);
+
+	const anchorRect = { left: 100, right: 700, top: 500, bottom: 500 };
+	const triggerRect = { left: 600, right: 680, top: 700, bottom: 728 };
+	const leftPos = computeAnchoredMenuPosition({ anchorRect, triggerRect, offset: 4, align: "left", menuWidth: 144, viewportWidth: 800 });
+	const rightPos = computeAnchoredMenuPosition({ anchorRect, triggerRect, offset: 8, align: "right", menuWidth: 240, viewportWidth: 800 });
+	check(
+		"锚定换算：权限左对齐 / 模型右对齐 / 4px 与 8px",
+		leftPos.left === 500 &&
+			leftPos.right === null &&
+			leftPos.bottom === -196 &&
+			rightPos.left === null &&
+			rightPos.right === 20 &&
+			rightPos.bottom === -192,
+		JSON.stringify({ leftPos, rightPos }),
+	);
+	const clampedLeft = computeAnchoredMenuPosition({
+		anchorRect,
+		triggerRect: { left: 700, right: 780, top: 700, bottom: 728 },
+		offset: 4,
+		align: "left",
+		menuWidth: 200,
+		viewportWidth: 800,
+	});
+	const clampedRight = computeAnchoredMenuPosition({
+		anchorRect,
+		triggerRect: { left: 40, right: 120, top: 700, bottom: 728 },
+		offset: 8,
+		align: "right",
+		menuWidth: 240,
+		viewportWidth: 800,
+	});
+	const lowPos = computeAnchoredMenuPosition({
+		anchorRect,
+		triggerRect: { left: 600, right: 680, top: 200, bottom: 228 },
+		offset: 8,
+		align: "right",
+		menuWidth: 240,
+		viewportWidth: 800,
+	});
+	check(
+		"锚定换算：视口 12px clamp 与可用高度下限",
+		clampedLeft.left === 488 && clampedRight.right === 448 && lowPos.bottom === 308 && lowPos.maxHeight === 180,
+		JSON.stringify({ clampedLeft, clampedRight, lowPos }),
 	);
 	check(
 		"formatContextWindow：1M/200K/128K/32000",
@@ -558,6 +603,27 @@ const check = (label, cond, extra = "") => {
 			chatSource.includes("returnToTrigger") &&
 			chatSource.includes("layer !== \"command\" && state.palette.layer !== \"modelRoot\""),
 	);
+	check(
+		"权限/模型菜单锚定 trigger：坐标换算 + fit-content + dsh 宽度",
+		chatSource.includes("computeAnchoredMenuPosition") &&
+			chatSource.includes("function positionAnchoredMenu") &&
+			chatSource.includes("tr.top") &&
+			chatSource.includes("tr.right") &&
+			chatSource.includes("tr.left") &&
+			chatSource.includes("menu.style.width = \"fit-content\"") &&
+			chatSource.includes("min(240px, calc(100vw - 24px))") &&
+			chatSource.includes("min(144px, calc(100vw - 24px))") &&
+			chatSource.includes("ANCHORED_PALETTE_LAYERS") &&
+			chatSource.includes("MODEL_MENU_ANCHOR") &&
+			chatSource.includes("PROFILE_MENU_ANCHOR") &&
+			chatSource.includes("document.addEventListener(\"scroll\", positionOpenMenus, true)") &&
+			chatSource.includes("new ResizeObserver(positionOpenMenus)") &&
+			!chatSource.includes('menu.style.left = "0"') &&
+			!chatSource.includes('menu.style.right = "0"') &&
+			!chatSource.includes("position-anchor") &&
+			!styleSource.includes("position-anchor"),
+		JSON.stringify({ anchored: chatSource.includes("function positionAnchoredMenu") }),
+	);
 
 	const rowBlock = /\.chat-row \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
 	const groupsBlock = /\.chat-tools,\n\.chat-modes,\n\.chat-trailing \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
@@ -581,6 +647,7 @@ const check = (label, cond, extra = "") => {
 	);
 
 	const menuShellBlock = /\.chat-palette,\n\.chat-profile-menu \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
+	const paletteBaseBlock = /(?:^|\n)\.chat-palette \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
 	const menuItemBlock = /\.chat-palette-item \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
 	const menuGroupBlock = /\.chat-palette-group \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
 	const menuHintBlock = /\.chat-palette-hint \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
@@ -590,7 +657,6 @@ const check = (label, cond, extra = "") => {
 			/background: var\(--dsw-menu-surface-fill\)/.test(menuShellBlock) &&
 			/backdrop-filter: var\(--dsw-menu-backdrop-filter\)/.test(menuShellBlock) &&
 			/box-shadow: var\(--dsw-elevation-prominent\)/.test(menuShellBlock) &&
-			/bottom: calc\(100% \+ 4px\)/.test(menuShellBlock) &&
 			/max-height: 400px/.test(menuShellBlock) &&
 			/overflow: hidden/.test(menuShellBlock) &&
 			/min-height: 34px/.test(menuItemBlock) &&
@@ -599,6 +665,15 @@ const check = (label, cond, extra = "") => {
 			/padding: 6px 8px/.test(menuGroupBlock) &&
 			/text-align: right/.test(menuHintBlock),
 		JSON.stringify({ menuShellBlock, menuItemBlock, menuGroupBlock, menuHintBlock }),
+	);
+	check(
+		"Command 层菜单仍贴卡片全宽（防 / 回归）",
+		/left: 0;/.test(paletteBaseBlock) &&
+			/right: 0;/.test(paletteBaseBlock) &&
+			/bottom: calc\(100% \+ 4px\)/.test(paletteBaseBlock) &&
+			/z-index: 100/.test(paletteBaseBlock) &&
+			/\.chat-palette\.is-anchored,/.test(styleSource),
+		JSON.stringify({ paletteBaseBlock }),
 	);
 
 	check(
