@@ -655,6 +655,32 @@ async function stopServer(child) {
 		check("POST model：GET /api/chat/model 405", (await fetch(`${chatBase}api/chat/model`)).status === 405);
 		check("POST model：POST /api/chat/models 405", (await postJson(`${chatBase}api/chat/models`, { source: "pi", session: "cs-3" })).status === 405);
 
+		// 未落盘的虚拟线程：models 不 404；当前线程 set_model 不 404。
+		const missingThreadModelsRes = await fetch(modelsUrl("cs-3", "&thread=no-such-file"));
+		const missingThreadModels = await missingThreadModelsRes.json();
+		check(
+			"models：无文件 thread 200 + threadMissing",
+			missingThreadModelsRes.ok && missingThreadModels.threadMissing === true && missingThreadModels.models?.length === 2 && missingThreadModels.current === null,
+			JSON.stringify(missingThreadModels).slice(0, 300),
+		);
+		const virtualThreadRes = await postJson(`${chatBase}api/chat/thread`, { source: "pi", session: "cs-3" });
+		const virtualThreadBody = await virtualThreadRes.json();
+		const virtualThreadId = virtualThreadBody.thread?.id;
+		const virtualModelsRes = await fetch(modelsUrl("cs-3", `&thread=${encodeURIComponent(virtualThreadId)}`));
+		const virtualModels = await virtualModelsRes.json();
+		check(
+			"models：新对话虚拟线程 200 + current child + threadMissing",
+			virtualModelsRes.ok && virtualModels.threadMissing === true && virtualModels.models?.length === 2 && virtualModels.current?.id === "fake-1",
+			JSON.stringify(virtualModels).slice(0, 300),
+		);
+		const virtualModelPost = await postModel({ session: "cs-3", threadId: virtualThreadId, provider: "fake", id: "fake-1" });
+		const virtualModelBody = await virtualModelPost.json();
+		check(
+			"POST model：新对话虚拟线程直接 set_model 200",
+			virtualModelPost.status === 200 && virtualModelBody.ok === true && virtualModelBody.threadId === virtualThreadId,
+			JSON.stringify(virtualModelBody).slice(0, 300),
+		);
+
 		// ---- T5：设置读写 ----
 		const settingsUrl = (session = "cs-4") => `${chatBase}api/chat/settings?source=pi&session=${session}`;
 		const settingsDefault = await (await fetch(settingsUrl())).json();

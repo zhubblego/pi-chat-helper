@@ -677,9 +677,12 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 	const traceAfterThreadModels = fs.existsSync(traceFile) ? fs.readFileSync(traceFile, "utf8") : "";
 	check("HTTP models：带 thread 不触发 switch_session", !traceAfterThreadModels.includes("switch_session:"), traceAfterThreadModels);
 	check("HTTP models：thread 非法 400", (await fetch(modelsUrl("&thread=../x"))).status === 400);
+	const missingThreadModelsRes = await fetch(`${handle.url}api/chat/models?source=pi&session=chat-sess-1&thread=nope`);
+	const missingThreadModels = await missingThreadModelsRes.json();
 	check(
-		"HTTP models：thread 不存在 404",
-		(await fetch(`${handle.url}api/chat/models?source=pi&session=chat-sess-1&thread=nope`)).status === 404,
+		"HTTP models：虚拟线程 200 + threadMissing",
+		missingThreadModelsRes.ok && missingThreadModels.threadMissing === true,
+		JSON.stringify(missingThreadModels).slice(0, 300),
 	);
 	check("HTTP models：未知 session 404", (await fetch(`${handle.url}api/chat/models?source=pi&session=nope`)).status === 404);
 	check("HTTP models：GET /api/chat/model 405", (await fetch(`${handle.url}api/chat/model`)).status === 405);

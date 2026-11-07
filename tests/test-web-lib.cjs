@@ -516,6 +516,15 @@ const check = (label, cond, extra = "") => {
 			[" .chat-palette-head", ".chat-palette-search", ".chat-palette-list"].every((sel) => styleSource.includes(sel.trim())),
 	);
 	check(
+		"models 虚拟线程兜底：新线程不带 thread，错误不污染空态",
+		chatSource.includes("!isNewThread(key, state.threadId)") &&
+			chatSource.includes("state.models.length") &&
+			!chatSource.includes("state.models.length || state.modelsError") &&
+			chatSource.includes('? "没有匹配的模型"') &&
+			chatSource.includes("? null") &&
+			chatSource.includes("pi 没有可用模型，先在 models.json / 登录里配置"),
+	);
+	check(
 		"技能面板接线：command 技能项 / skill 层 / 开关 / 大小守卫",
 		chatSource.includes('id: "skill"') &&
 			chatSource.includes('openPalette("skill"') &&
