@@ -131,6 +131,7 @@ GET /api/chat/models?source=pi&session=<id>[&thread=<id>][&refresh=1]
 - 数据源：子进程 `get_available_models`；服务端裁掉 `apiKey/baseUrl/headers` 等字段，只保留展示所需。
 - `current`：
   - 请求带 `thread`：读取该 pi session 文件里最新的 model 条目；不切换 child。
+  - 请求带 `thread` 但文件尚未落盘（刚 `POST /api/chat/thread` 的虚拟线程）：**不返回 404**；200 正常返回 `models`，`current` 取 child `get_state().model`（child 不在该 thread 时为 `null`），并可带 `threadMissing:true` 表示「新对话尚未落盘」。
   - 省略 `thread`：child 存在则用 `get_state().model`；否则取最新 session 的 model；都没有则为 `null`。
 - `providerName` 由服务端映射（pi 的 provider→display name 表或 `provider` 原值）。
 - `refresh=1`：`get_available_models` 会重新走 pi 的可用性检查（可能联网刷新 token，见风险）；失败时保留上次成功列表并在 `error` 返回原因。
@@ -159,7 +160,9 @@ Content-Type: application/json
 
 - 模型必须存在于 `get_available_models`；否则 400。
 - 该 child 有活动 turn 时 409。
-- 如果 `threadId` 不是 child 当前 session，先 `switch_session`（需先 `abort` 且无活动 turn），再 `set_model`。
+- `threadId` 指向**尚未落盘的虚拟线程**且 child 已在该线程：不 404、不 `switch_session`，直接 `set_model`；child 不存在时按该 thread 新建 child 再设置。
+- `threadId` 指向**另一个未知线程**（child 不在该线程且文件不存在）：404。
+- 如果 `threadId` 是已存在的线程文件且不是 child 当前 session，先 `switch_session`（需先 `abort` 且无活动 turn），再 `set_model`。
 - 持久化由 pi session 的 model 条目承担，不额外写业务文件。
 
 ## 4. 技能
