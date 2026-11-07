@@ -416,6 +416,7 @@ export function createTrajectoryServer(options) {
 		"/api/chat/send",
 		"/api/chat/stop",
 		"/api/chat/approval",
+		"/api/chat/resume",
 	]);
 
 	const server = createServer(async (req, res) => {

@@ -80,12 +80,6 @@
 		<!-- 侧边对话栏（分屏）：参与 #layout 的 flex 布局，打开时主区收窄不覆盖；顶栏按钮开关 -->
 		<aside id="chat-drawer" class="chat-drawer" hidden>
 			<div id="chat-resize" class="chat-resize" role="separator" aria-orientation="vertical" aria-label="调整对话栏宽度" tabindex="0" title="拖动调整宽度（双击恢复默认）"></div>
-			<header id="chat-head" class="chat-head">
-				<button id="chat-model" class="chat-model" type="button" title="切换模型">模型未加载</button>
-				<button id="chat-profile" class="chat-profile" type="button" title="工具权限" aria-haspopup="menu" aria-expanded="false">只读</button>
-				<button id="chat-new" class="icon-btn chat-new" type="button" title="新对话" aria-label="新对话">+</button>
-			</header>
-			<div id="chat-profile-menu" class="chat-profile-menu" role="menu" hidden></div>
 			<div id="chat-list" class="chat-list" role="log" aria-live="polite" aria-label="对话消息"></div>
 			<div id="chat-announcer" class="chat-sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 			<div class="chat-composer">
@@ -107,10 +101,13 @@
 					</div>
 					<div id="chat-palette-list" class="chat-palette-list" role="listbox" aria-label="斜杠命令"></div>
 				</div>
+				<div id="chat-profile-menu" class="chat-profile-menu" role="menu" hidden></div>
 				<div class="chat-card">
 					<div id="chat-skill" class="chat-skill" hidden></div>
 					<textarea id="chat-input" class="chat-input" rows="1" placeholder="问问这条轨迹…" aria-label="对话输入"></textarea>
 					<div class="chat-row">
+						<span id="chat-model-label" class="chat-model-label">模型未加载</span>
+						<button id="chat-profile" class="chat-profile" type="button" title="工具权限" aria-haspopup="menu" aria-expanded="false">只读</button>
 						<button id="chat-send" class="chat-send" type="button" title="发送（Enter）" aria-label="发送" disabled>
 							<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 12V4M8 4 4.5 7.5M8 4l3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
 						</button>

@@ -37,6 +37,7 @@ import {
 	findThreadFile,
 	isSafeThreadId,
 	latestThreadFile,
+	listThreadFiles,
 	parseThreadProjection,
 	promoteContext,
 	readSessionId,
@@ -1646,6 +1647,79 @@ export function createChatHost(deps = {}) {
 		sendJson(res, 200, { ok: written });
 	}
 
+	async function handleGetThreads(url, res, sendJson) {
+		const cap = await capabilities();
+		if (!cap.enabled) throw httpError(501, cap.reason ?? "对话未启用");
+		const target = resolveTarget(url.searchParams.get("source"), url.searchParams.get("session"));
+		const dirs = chatSessionDirs(chatDir, target.source, target.sessionId);
+		const record = children.get(`${target.source}:${target.sessionId}`) ?? null;
+		touch(record);
+		const warnings = [];
+		let sizeWarning = false;
+		const threads = [];
+		for (const file of listThreadFiles(dirs.sessionsDir)) {
+			if (threads.length >= 50) break;
+			if (file.size > THREAD_MAX_BYTES) {
+				if (!sizeWarning) warnings.push("有线程文件超过 32MB，已跳过");
+				sizeWarning = true;
+				continue;
+			}
+			const id = readSessionId(file.file);
+			if (!id) continue;
+			try {
+				const projection = buildProjection(file.file);
+				const mapped = parseThreadProjection(projection, readTurns(dirs.metaDir, id));
+				const firstUser = mapped.messages.find((message) => message.role === "user");
+				threads.push({
+					id,
+					mtime: new Date(file.mtimeMs).toISOString(),
+					size: file.size,
+					model: mapped.model ?? null,
+					firstUserText: firstUser ? clip(firstUser.displayText, 120) : "",
+					turns: mapped.messages.filter((message) => message.role === "user").length,
+				});
+			} catch {
+				warnings.push(`线程 ${id} 解析失败，已跳过`);
+			}
+		}
+		sendJson(res, 200, { threads, current: record?.piSessionId ?? null, warnings });
+	}
+
+	async function handlePostResume(rawBody, res, sendJson) {
+		let payload;
+		try {
+			payload = JSON.parse(rawBody || "{}");
+		} catch {
+			throw httpError(400, "请求体不是合法 JSON");
+		}
+		const target = resolveTarget(payload.source, payload.session);
+		const requestedThread = payload.threadId;
+		if (!isSafeThreadId(requestedThread)) throw httpError(400, "非法线程 id");
+		const dirs = chatSessionDirs(chatDir, target.source, target.sessionId);
+		const fileRecord = findThreadFile(dirs.sessionsDir, requestedThread);
+		if (!fileRecord) throw httpError(404, `线程 ${requestedThread} 不存在`);
+		assertThreadFileSize(fileRecord);
+		const projectKey = projectKeyOf(target.source, target, null);
+		if (projectTurns.has(projectKey)) throw httpError(409, "本项目还有对话在生成，请稍后再试");
+
+		const record = await ensureChild(target.source, target.sessionId, { target, threadId: requestedThread });
+		touch(record);
+		if (record.currentTurn) throw httpError(409, "回复中，先停止再切换线程");
+		if (record.piSessionId !== requestedThread) await switchThread(record, fileRecord);
+		sendJson(
+			res,
+			200,
+			threadPayload({
+				source: target.source,
+				sessionId: target.sessionId,
+				fileRecord,
+				target,
+				record,
+				profile: record.profile,
+			}),
+		);
+	}
+
 	async function handleGetThread(url, res, sendJson) {
 		const cap = await capabilities();
 		if (!cap.enabled) throw httpError(501, cap.reason ?? "对话未启用");
@@ -1866,6 +1940,14 @@ export function createChatHost(deps = {}) {
 				sendJson(res, 200, value);
 				return true;
 			}
+			if (url.pathname === "/api/chat/threads") {
+				if (req.method !== "GET") {
+					sendJson(res, 405, { error: "method not allowed" });
+					return true;
+				}
+				await handleGetThreads(url, res, sendJson);
+				return true;
+			}
 			if (url.pathname === "/api/chat/thread") {
 				if (req.method === "GET") {
 					await handleGetThread(url, res, sendJson);
@@ -1876,6 +1958,14 @@ export function createChatHost(deps = {}) {
 					return true;
 				}
 				sendJson(res, 405, { error: "method not allowed" });
+				return true;
+			}
+			if (url.pathname === "/api/chat/resume") {
+				if (req.method !== "POST") {
+					sendJson(res, 405, { error: "method not allowed" });
+					return true;
+				}
+				await handlePostResume(body, res, sendJson);
 				return true;
 			}
 			if (url.pathname === "/api/chat/settings") {
