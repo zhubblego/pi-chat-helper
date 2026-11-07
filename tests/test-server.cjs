@@ -367,6 +367,9 @@ async function stopServer(child) {
 
 		const chatAgent = path.join(tmp, "chat-agent");
 		fs.mkdirSync(chatAgent, { recursive: true });
+		const chatModelsFile = path.join(chatAgent, "models.json");
+		const writeChatModels = (providers) => fs.writeFileSync(chatModelsFile, JSON.stringify({ providers }));
+		writeChatModels({ fake: { models: ["fake-1"] }, other: { models: ["fake-2"] } });
 
 		const chatTrace = path.join(tmp, "chat-pi-trace.log");
 		const modelsFailFile = path.join(tmp, "models-fail.flag");
@@ -434,6 +437,36 @@ async function stopServer(child) {
 				defaultThinking.levels?.join(",") === "off,low,medium,high,max",
 			JSON.stringify(defaultThinking),
 		);
+		const defaultModelsUrl = `${defaultServer.url}api/chat/models?source=pi&session=cs-empty`;
+		const fallbackModels = await (await fetch(defaultModelsUrl)).json();
+		check(
+			"models：models.json 缺失回退全量 + warning",
+			fallbackModels.models?.length === 3 && fallbackModels.models.some((model) => model.provider === "catalog-only") && typeof fallbackModels.warning === "string" && fallbackModels.warning.includes("models.json"),
+			JSON.stringify(fallbackModels).slice(0, 300),
+		);
+		const defaultModelsFile = path.join(defaultAgent, "models.json");
+		fs.writeFileSync(defaultModelsFile, "{bad json");
+		const badConfigModels = await (await fetch(defaultModelsUrl)).json();
+		check(
+			"models：models.json 坏 JSON 回退全量 + warning",
+			badConfigModels.models?.length === 3 && typeof badConfigModels.warning === "string" && badConfigModels.warning.includes("解析失败"),
+			JSON.stringify(badConfigModels).slice(0, 300),
+		);
+		fs.writeFileSync(defaultModelsFile, JSON.stringify({ foo: 1 }));
+		const missingProvidersModels = await (await fetch(defaultModelsUrl)).json();
+		check(
+			"models：models.json 无 providers 字段回退全量 + warning",
+			missingProvidersModels.models?.length === 3 && typeof missingProvidersModels.warning === "string" && missingProvidersModels.warning.includes("缺少 providers"),
+			JSON.stringify(missingProvidersModels).slice(0, 300),
+		);
+		fs.writeFileSync(defaultModelsFile, JSON.stringify({ providers: {} }));
+		const emptyProvidersModels = await (await fetch(defaultModelsUrl)).json();
+		check(
+			"models：空 providers 回退全量 + warning",
+			emptyProvidersModels.models?.length === 3 && typeof emptyProvidersModels.warning === "string" && emptyProvidersModels.warning.includes("为空"),
+			JSON.stringify(emptyProvidersModels).slice(0, 300),
+		);
+		fs.rmSync(defaultModelsFile, { force: true });
 		await defaultServer.close();
 
 		// ---- T9：Host / Origin / Content-Type / 大小 / 路径 ----
@@ -649,10 +682,31 @@ async function stopServer(child) {
 				!/sk-fake-secret|fake-header|fake-one\.invalid|apiKey|baseUrl|headers|oauth/.test(JSON.stringify(modelsPlain)),
 			JSON.stringify(modelsPlain).slice(0, 500),
 		);
+		check(
+			"models：按 models.json.providers 过滤，剔除未配置 provider",
+			modelsPlain.models.every((m) => m.provider === "fake" || m.provider === "other") &&
+				!modelsPlain.models.some((m) => m.provider === "catalog-only") &&
+				modelsPlain.warning === null,
+			JSON.stringify({ providers: modelsPlain.models.map((m) => m.provider), warning: modelsPlain.warning }),
+		);
 		const modelsThread = await (await fetch(modelsUrl("cs-2", "&thread=thread-c2"))).json();
 		check("models：带 thread 读文件模型", modelsThread.current?.provider === "other" && modelsThread.current?.id === "fake-2", JSON.stringify(modelsThread.current));
 		const traceBeforeModels = fs.existsSync(chatTrace) ? fs.readFileSync(chatTrace, "utf8") : "";
 		check("models：带 thread 不切 child", !traceBeforeModels.includes("switch_session:"), traceBeforeModels);
+
+		// 当前模型 provider 未配置：过滤后仍补首位，不丢当前模型。
+		writeChatModels({ fake: { models: ["fake-1"] } });
+		const currentOutside = await (await fetch(modelsUrl("cs-2", "&thread=thread-c2"))).json();
+		check(
+			"models：当前模型不在配置集合时补首位",
+			currentOutside.models?.length === 2 &&
+				currentOutside.models[0]?.provider === "other" &&
+				currentOutside.models[0]?.id === "fake-2" &&
+				currentOutside.models[0]?.providerName === "other" &&
+				currentOutside.current?.provider === "other",
+			JSON.stringify(currentOutside).slice(0, 400),
+		);
+		writeChatModels({ fake: { models: ["fake-1"] }, other: { models: ["fake-2"] } });
 
 		// refresh=1 失败：保留 last-good + error
 		fs.writeFileSync(modelsFailFile, "1");

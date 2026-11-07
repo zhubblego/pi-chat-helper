@@ -92,6 +92,16 @@ const models = [
 		baseUrl: "https://fake-two.invalid",
 		headers: { authorization: "Bearer fake-header-two" },
 	},
+	{
+		provider: "catalog-only",
+		id: "catalog-1",
+		name: "Catalog Only",
+		api: "openai-completions",
+		reasoning: false,
+		contextWindow: 64000,
+		maxTokens: 2048,
+	},
+
 ];
 let isStreaming = false;
 let model = models[0];

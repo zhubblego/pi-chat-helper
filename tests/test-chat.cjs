@@ -150,6 +150,7 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 	const approval = await import(urlOf("trajectory-web/server/approval.mjs"));
 	const chatPool = await import(urlOf("trajectory-web/server/chat-pool.mjs"));
 	const chatSettings = await import(urlOf("trajectory-web/server/chat-settings.mjs"));
+	const chatModels = await import(urlOf("trajectory-web/server/chat-models.mjs"));
 	const { buildProjection } = await import(urlOf("trajectory-web/server/session.mjs"));
 
 	// ---- 版本解析 ----
@@ -298,6 +299,41 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 		sanitizeModel({ id: "x" }) === null && sanitizeModel({ provider: "p" }) === null && sanitizeModel(null) === null,
 	);
 	check("providerNameOf：已知映射 + 自定义原值", providerNameOf("litellm") === "LiteLLM" && providerNameOf("my-provider") === "my-provider");
+	const modelA = { provider: "litellm", id: "a", name: "A", reasoning: true, contextWindow: 1000, maxTokens: 100 };
+	const modelB = { provider: "mimo", id: "b", name: "B" };
+	const modelC = { provider: "anthropic", id: "c", name: "C" };
+	const configured = { litellm: {}, mimo: {} };
+	const filtered = chatModels.filterConfiguredModels(
+		[modelA, modelB, modelC, { provider: "Litellm", id: "d" }, { ...modelA }],
+		configured,
+	);
+	check(
+		"filterConfiguredModels：正常过滤 / 大小写精确 / 重复 provider+id 去重 / 配置空目录静默为空",
+		filtered.map((model) => `${model.provider}:${model.id}`).join(",") === "litellm:a,mimo:b" &&
+			chatModels.filterConfiguredModels([modelA], { xiaomi: {} }).length === 0,
+		JSON.stringify(filtered),
+	);
+	check(
+		"filterConfiguredModels：空 providers 回退全量",
+		chatModels.filterConfiguredModels([modelA, modelB, modelC], {}).length === 3 &&
+			chatModels.filterConfiguredModels([modelA], null).length === 1,
+	);
+	const withCurrent = chatModels.ensureCurrentModelFirst([modelA], { ...modelC, providerName: "Anthropic" });
+	check(
+		"ensureCurrentModelFirst：当前模型不在列表时补首位并补展示字段",
+		withCurrent.length === 2 &&
+			withCurrent[0].provider === "anthropic" &&
+			withCurrent[0].id === "c" &&
+			withCurrent[0].providerName === "Anthropic" &&
+			withCurrent[0].name === "C" &&
+			withCurrent[1].id === "a",
+		JSON.stringify(withCurrent),
+	);
+	check(
+		"ensureCurrentModelFirst：已在列表/空 current 不重复",
+		chatModels.ensureCurrentModelFirst([modelA, modelC], modelC).length === 2 &&
+			chatModels.ensureCurrentModelFirst([modelA], null).length === 1,
+	);
 	const sessionModelFile = path.join(tmp, "session-models.jsonl");
 	fs.writeFileSync(
 		sessionModelFile,
@@ -595,6 +631,12 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 
 	const traceFile = path.join(tmp, "pi-trace.log");
 	process.env.FAKE_PI_TRACE = traceFile;
+	const chatHttpAgent = path.join(tmp, "chat-http-agent");
+	fs.mkdirSync(chatHttpAgent, { recursive: true });
+	fs.writeFileSync(
+		path.join(chatHttpAgent, "models.json"),
+		JSON.stringify({ providers: { fake: { models: ["fake-1"] }, other: { models: ["fake-2"] } } }),
+	);
 	const handle = await createTrajectoryServer({
 		scope: "all",
 		webDir: WEB,
@@ -603,6 +645,7 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 		port: 0,
 		chat: true,
 		chatDir: chatHttpDir,
+		agentDir: chatHttpAgent,
 		piBin: fakePi,
 	});
 	const capHttp = await (await fetch(`${handle.url}api/chat/capabilities`)).json();
