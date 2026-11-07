@@ -462,6 +462,14 @@ async function stopServer(child) {
 		);
 		const defaultAuthFile = path.join(defaultAgent, "auth.json");
 		fs.writeFileSync(defaultModelsFile, JSON.stringify({ providers: {} }));
+		const oneUsableEmpty = await (await fetch(defaultModelsUrl)).json();
+		check(
+			"models：仅 models.json 可用但为空时不回退，当前模型补首位",
+			oneUsableEmpty.models?.length === 1 &&
+				oneUsableEmpty.models[0]?.id === "fake-1" &&
+				oneUsableEmpty.warning === null,
+			JSON.stringify(oneUsableEmpty).slice(0, 300),
+		);
 		fs.writeFileSync(defaultAuthFile, JSON.stringify({}));
 		const emptyProvidersModels = await (await fetch(defaultModelsUrl)).json();
 		check(
