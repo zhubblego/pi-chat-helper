@@ -102,7 +102,7 @@ npm run dev        # 默认 http://127.0.0.1:7788
 
 轨迹页的对话栏可以针对当前轨迹会话直接问 pi：服务端用 `pi --mode rpc` 启动独立子进程，不污染你正在用的 TUI 会话，也不 import pi SDK。对话能力包括：
 
-- **模型**：顶部不再有模型菜单；`/model` 列表是子进程 `get_available_models` 与 `<agentDir>/models.json` 的 `providers` 键集合的交集（只列显式配置的 provider；配置缺失/损坏时回退全量并带 warning），当前模型若不在配置集合仍补首位；切换走 `set_model`；当前模型+思考级别以 dsh 的单 trigger 显示（模型名 + 级别 + chevron，模型 root/model/effort 三态），权限 trigger 在 + 右侧；新对话取 pi settings.json 的 defaultProvider/defaultModel（不为显示模型 spawn），响应只保留展示字段，不含 key/baseUrl/headers。
+- **模型**：顶部不再有模型菜单；`/model` 列表是子进程 `get_available_models` 中 provider 属于「显式配置集」的子集，显式配置集 = `<agentDir>/models.json` 的 `providers` 键 ∪ `<agentDir>/auth.json` 中有效登录条目（只认显式配置，环境变量凭据不算；两者都不可用或为空时回退全量并带 warning），当前模型若不在配置集合仍补首位；切换走 `set_model`；当前模型+思考级别以 dsh 的单 trigger 显示（模型名 + 级别 + chevron，模型 root/model/effort 三态），权限 trigger 在 + 右侧；新对话取 pi settings.json 的 defaultProvider/defaultModel（不为显示模型 spawn），响应只保留展示字段，不含 key/baseUrl/headers。
 - **技能**：`/skill` 列表来自 `get_commands`；发送时在消息最前拼 `/skill:<name>`，由 pi 原生展开；项目技能默认关闭，打开后按项目 spawn `--skill`。
 - **上下文**：勾选轨迹条目后作为 `<trajectory_index>` 清单随消息发送；选中不限条数，清单前 80 条带 preview、之后压缩，超预算提示用 `read_trajectory list` 分页。模型可用只读 `read_trajectory` 工具按 id 取正文（单条 6k / 单次 12k 字符），反选只影响下一轮，不抹除已读历史。chat 模式下 chips 可删但不可新增，需进蒸馏模式勾选。
 - **工具 profile**：`no-tools`（仅对话）/ `read-only`（默认，只读轨迹工具 + 读项目文件）/ `full`（可写文件、可跑命令，逐次审批）。全量档支持「本会话允许」，拒绝/超时/断连即不执行。

@@ -131,19 +131,20 @@ GET /api/chat/models?source=pi&session=<id>[&thread=<id>][&refresh=1]
 ```
 
 - 数据源：子进程 `get_available_models`；服务端裁掉 `apiKey/baseUrl/headers` 等字段，只保留展示所需。
-- `models` 的集合是 `get_available_models ∩ <agentDir>/models.json 的 providers 键集合`：只有主人显式写进 `models.json.providers` 的 provider 才列出。`models-store.json` 是 pi 自动抓取的远端目录缓存，**不参与判定**。`models.json` 是软链时按普通文件读取（跟随软链）。
-- 过滤只按 `provider` 键精确匹配（`Object.prototype.hasOwnProperty`），不按 id、前缀或名称猜，大小写也按原样。
-- 回退：`models.json` 缺失、坏 JSON、没有 `providers` 字段或 `providers` 为空对象时，**返回全量 `get_available_models`**，绝不返回空列表；此时响应带一条 `warning` 说明原因。
-- 当前模型始终可见：过滤后若 `current` 的 `(provider,id)` 不在 `models` 中，把它补到 `models` 首位（带展示字段与 `providerName`），前端仍按 `current` 打勾。provider 在 `models.json` 里但目录里没有模型时，静默无该项，不报错。
-- 这是对 pi 自身语义的**有意偏离**：pi TUI 的「configured providers」指有环境变量/凭据的 provider，所以只配了 `ANTHROPIC_AUTH_TOKEN` 或 `ZAI_API_KEY` 也会把整份远端目录列出来；本接口要的是「显式写进 `models.json.providers`」的 provider。不要把它改回 pi 的凭据语义。
-- `refresh=1` 仍只控制是否重新调用 `get_available_models`；`modelsCache` 继续保存全量列表，过滤只发生在出口。
+- `models` 的集合是 `get_available_models` 中 provider 属于「显式配置集」的子集。显式配置集 = `<agentDir>/models.json` 的 `providers` 键 ∪ `<agentDir>/auth.json` 顶层有效条目（即用户用 `/login` 显式登录过的 provider）。`models-store.json` 是 pi 自动抓取的远端目录缓存，**不参与判定**；两个配置文件是软链时用 `readFileSync` 直接读（跟随软链）。
+- `auth.json` 条目形如 `{ "<provider>": { "type": "api_key", "key": "..." } }`；只统计至少有一个非 `type` 非空值的条目。`key` 为空、只有 `type` 的残条不算有效配置。
+- 过滤只按 `provider` 键精确匹配（`Set.has` / `Object.prototype.hasOwnProperty`），不按 id、前缀或名称猜，大小写也按原样。两个配置文件每次请求读取一次，不放进 `modelsCache`。
+- 回退：两个文件都不可用/结构不符，或都没有有效 provider 时，**返回全量 `get_available_models`**，绝不返回空列表；此时响应带一条 `warning` 说明原因。只要显式配置集非空，就按配置过滤，不回退。
+- 当前模型始终可见：过滤后若 `current` 的 `(provider,id)` 不在 `models` 中，把它补到 `models` 首位（带展示字段与 `providerName`），前端仍按 `current` 打勾。provider 在候选集里但目录里没有模型时，静默无该项，不报错。
+- 这是对 pi 自身语义的**有意偏离**：pi 的 `getProviderAuthStatus().configured` 会把环境变量凭据也算作 configured，所以 pi TUI 会把只配了 `ANTHROPIC_AUTH_TOKEN` / `ZAI_API_KEY` 的 anthropic、zai 完整目录列出来；本接口只认 `models.json` 或 `/login` 的显式配置，环境变量凭据未经任何验证，不列。**不要把它改回 pi 的凭据语义。**
+- `refresh=1` 仍只控制是否重新调用 `get_available_models`；`modelsCache` 继续保存全量列表，过滤只发生在出口。此接口不额外做网络探活。
 - `current`：
   - 请求带 `thread`：读取该 pi session 文件里最新的 model 条目；不切换 child。
   - 请求带 `thread` 但文件尚未落盘（刚 `POST /api/chat/thread` 的虚拟线程）：**不返回 404**；200 正常返回 `models`，`current` 取 child `get_state().model`（child 不在该 thread 时为 `null`），并可带 `threadMissing:true` 表示「新对话尚未落盘」。
   - 省略 `thread`：child 存在则用 `get_state().model`；否则取最新 session 的 model；都没有则为 `null`。
 - `providerName` 由服务端映射（pi 的 provider→display name 表或 `provider` 原值）。
 - `refresh=1`：`get_available_models` 会重新走 pi 的可用性检查（可能联网刷新 token，见风险）；失败时保留上次成功列表并在 `error` 返回原因。
-- `warning` 只用于「配置回退」提示（缺失/坏 JSON/空 providers）；`error` 只用于刷新失败。两者可同时出现。
+- `warning` 只用于「显式配置为空，回退全量」提示（两文件不可用/结构不符/无有效 provider）；`error` 只用于刷新失败。两者可同时出现。
 - 列表不含任何密钥/headers/baseUrl。
 
 ### 3.2 切换线程模型
