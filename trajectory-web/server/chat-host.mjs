@@ -1738,7 +1738,7 @@ export function createChatHost(deps = {}) {
 
 		const dirs = chatSessionDirs(chatDir, target.source, target.sessionId);
 		const requestedFile = requestedThread !== null ? findThreadFile(dirs.sessionsDir, requestedThread) : null;
-		if (requestedThread !== null && !requestedFile) throw httpError(404, `线程 ${requestedThread} 不存在`);
+		const threadMissing = requestedThread !== null && !requestedFile;
 		assertThreadFileSize(requestedFile);
 		const record = await ensureChild(target.source, target.sessionId, { target });
 		touch(record);
@@ -1755,13 +1755,24 @@ export function createChatHost(deps = {}) {
 		}
 		const models = modelsCache?.models ?? [];
 
-		// current：带 thread 读该线程文件的最新 model 条目，不切 child；否则用 child 当前模型，
-		// child 没有模型时回退到最新 session 文件。
+		// current：带 thread 读该线程文件的最新 model 条目，不切 child；虚拟线程读 child 当前模型；
+		// 省略 thread 时用 child 当前模型，child 没有模型时回退到最新 session 文件。
 		let current = null;
-		if (requestedThread !== null) {
-			const file = requestedFile;
-			const stored = readSessionModel(file.file);
+		if (requestedThread !== null && requestedFile) {
+			const stored = readSessionModel(requestedFile.file);
 			current = stored ? currentModelOf({ provider: stored.provider, id: stored.id }, models) : null;
+		} else if (requestedThread !== null) {
+			// 新对话尚未落盘：不把缺失文件当错误；只有 child 确实在该线程时才取它的模型。
+			let state = null;
+			try {
+				state = await readChildState(record);
+			} catch {
+				state = null;
+			}
+			current =
+				record.piSessionId === requestedThread && state?.data?.model
+					? currentModelOf(state.data.model, models)
+					: null;
 		} else {
 			let state = null;
 			try {
@@ -1779,7 +1790,9 @@ export function createChatHost(deps = {}) {
 			}
 		}
 
-		sendJson(res, 200, { current, models, refreshedAt: modelsCache?.refreshedAt ?? null, error });
+		const payload = { current, models, refreshedAt: modelsCache?.refreshedAt ?? null, error };
+		if (threadMissing) payload.threadMissing = true;
+		sendJson(res, 200, payload);
 	}
 
 	async function handlePostModel(rawBody, res, sendJson) {
@@ -1804,17 +1817,19 @@ export function createChatHost(deps = {}) {
 		let threadFile = null;
 		if (requestedThread !== null) {
 			threadFile = findThreadFile(dirs.sessionsDir, requestedThread);
-			if (!threadFile) throw httpError(404, `线程 ${requestedThread} 不存在`);
 			assertThreadFileSize(threadFile);
 		}
 
+		// 虚拟线程也带 --session-id 建 child：若 child 已在该线程，后续直接 set_model。
 		const record = await ensureChild(target.source, target.sessionId, {
 			target,
-			threadId: threadFile ? requestedThread : undefined,
+			threadId: requestedThread ?? undefined,
 		});
 		touch(record);
 		if (record.currentTurn) throw httpError(409, "回复中，先停止再切换模型");
 		if (requestedThread !== null && record.piSessionId !== requestedThread) {
+			// 只有「切到另一个未知线程」才 404；当前虚拟线程不 switch。
+			if (!threadFile) throw httpError(404, `线程 ${requestedThread} 不存在`);
 			await switchThread(record, threadFile);
 		}
 

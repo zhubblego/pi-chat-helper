@@ -372,7 +372,8 @@ export function initChatPanel(deps) {
 		}
 		try {
 			const params = new URLSearchParams({ source: session.source, session: session.id });
-			if (state.threadId) params.set("thread", state.threadId);
+			// 新对话尚未落盘：不把虚拟线程 id 当已有文件传给 models；current 由 child 状态兜底。
+			if (state.threadId && !isNewThread(key, state.threadId)) params.set("thread", state.threadId);
 			if (refresh) params.set("refresh", "1");
 			const res = await fetch(`/api/chat/models?${params}`);
 			if (!res.ok) {
@@ -1137,17 +1138,20 @@ export function initChatPanel(deps) {
 		if (layer === "model" && state.modelsError) nodes.push(h("div", { class: "chat-palette-error", text: `模型刷新失败：${state.modelsError}` }));
 		if (layer === "skill" && state.skillsError) nodes.push(h("div", { class: "chat-palette-error", text: `技能刷新失败：${state.skillsError}` }));
 		if (!items.length && !state.palette.loading) {
+			// 模型空态只看「是否真的没有模型」：有错误时错误行单独显示，不污染空态文案。
 			const text =
 				layer === "model"
-					? state.models.length || state.modelsError
+					? state.models.length
 						? "没有匹配的模型"
-						: "pi 没有可用模型，先在 models.json / 登录里配置"
+						: state.modelsError
+							? null
+							: "pi 没有可用模型，先在 models.json / 登录里配置"
 					: layer === "skill"
 						? state.skills.length || state.skillsError
 							? "没有匹配的技能"
 							: "pi 没有发现技能（检查 ~/.pi/agent/skills 或项目 .pi/skills）"
 						: "没有匹配的命令";
-			nodes.push(h("div", { class: "chat-palette-empty", text }));
+			if (text) nodes.push(h("div", { class: "chat-palette-empty", text }));
 		}
 		let group = null;
 		let index = 0;
