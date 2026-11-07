@@ -23,6 +23,7 @@ const check = (label, cond, extra = "") => {
 		formatChars,
 		formatContextWindow,
 		computeAnchoredMenuPosition,
+		contextSummaryLabel,
 		filterPaletteItems,
 		normalizeContextIds,
 		mergeContextIds,
@@ -80,6 +81,31 @@ const check = (label, cond, extra = "") => {
 			modelLabel(null) === "",
 	);
 
+	const summaryRefs = [
+		{ id: "a", label: "模型", preview: "模型 → litellm" },
+		{ id: "b", label: "工具", preview: "bash" },
+		{ id: "c", label: "回答", preview: "" },
+	];
+	const summaryOne = contextSummaryLabel(["a"], summaryRefs);
+	const summaryThree = contextSummaryLabel(["a", "b", "c"], summaryRefs);
+	const summaryLong = contextSummaryLabel(["a"], [{ id: "a", label: "模型", preview: "中".repeat(80) }]);
+	const summaryInvalid = contextSummaryLabel(["missing"], summaryRefs);
+	check(
+		"contextSummaryLabel：单条去重标签 / N>1 给 +K / 空 preview / 失效",
+		summaryOne.count === 1 &&
+			summaryOne.summary === "模型→litellm" &&
+			summaryOne.moreLabel === "" &&
+			summaryThree.count === 3 &&
+			summaryThree.moreLabel === "+2" &&
+			contextSummaryLabel(["c"], summaryRefs).summary === "回答" &&
+			summaryInvalid.summary === "失效条目",
+		JSON.stringify({ summaryOne, summaryThree, summaryInvalid }),
+	);
+	check(
+		"contextSummaryLabel：preview 按显示宽度截断",
+		summaryLong.summary.endsWith("…") && summaryLong.summary.length < 80,
+		JSON.stringify(summaryLong),
+	);
 	const anchorRect = { left: 100, right: 700, top: 500, bottom: 500 };
 	const triggerRect = { left: 600, right: 680, top: 700, bottom: 728 };
 	const leftPos = computeAnchoredMenuPosition({ anchorRect, triggerRect, offset: 4, align: "left", menuWidth: 144, viewportWidth: 800 });
@@ -470,7 +496,7 @@ const check = (label, cond, extra = "") => {
 	check("顶栏对话按钮在主题按钮右侧", indexSource.includes('id="chat-btn"') && indexSource.indexOf('id="theme-btn"') < indexSource.indexOf('id="chat-btn"'));
 	check("对话栏独立成侧栏，顶部上下文行与关闭按钮已移除（顶部直接是消息流）", indexSource.includes('id="chat-drawer"') && !indexSource.includes("chat-ctx") && !indexSource.includes('id="chat-close"'));
 	check("对话栏开关接线：按钮切换 + 开态持久化 + Esc 兕底", appSource.includes("function setChatOpen") && appSource.includes('el("chat-btn").addEventListener("click"') && appSource.includes('"tw.chat"') && appSource.includes("if (state.chatOpen) {"));
-	check("对话栏样式就位（分屏 flex 列，非 fixed 覆盖）", styleSource.includes(".chat-drawer") && styleSource.includes(".chat-ctx-chip") && !/\.chat-drawer\s*\{[^}]*position:\s*fixed/s.test(styleSource));
+	check("对话栏样式就位（分屏 flex 列，非 fixed 覆盖）", styleSource.includes(".chat-drawer") && styleSource.includes(".chat-context-menu") && !/\.chat-drawer\s*\{[^}]*position:\s*fixed/s.test(styleSource));
 	check("对话栏支持拖拽编辑框上边调高输入区（把手 + 拖拽接线 + 高度持久化）", indexSource.includes('id="composer-resize"') && indexSource.includes('aria-orientation="horizontal"') && appSource.includes("function bindComposerResize") && appSource.includes("previewComposerHeight(start.height - (ev.clientY - start.y))") && appSource.includes('"tw.composerHeight"') && appSource.includes("function resetComposerHeight") && styleSource.includes(".composer-resize") && styleSource.includes('[data-composer="manual"]'));
 	check("对话栏左缘拖拽调宽（把手 + 接线 + 宽度持久化）", indexSource.includes('id="chat-resize"') && indexSource.includes('aria-orientation="vertical"') && appSource.includes("function bindChatResize") && appSource.includes("previewChatWidth(start.width - (ev.clientX - start.x))") && appSource.includes('"tw.chatWidth"') && styleSource.includes(".chat-resize") && /\.chat-drawer \{[^}]*width: min\(var\(--tw-chat-w, 440px\), 90vw\)/s.test(styleSource));
 	check("两个拖拽把手并存（左缘调宽 + 输入区上边调高）", appSource.includes("bindChatResize()") && appSource.includes("bindComposerResize()") && appSource.includes("loadChatWidth()") && appSource.includes("loadComposerHeight()") && indexSource.indexOf('id="chat-resize"') < indexSource.indexOf('id="composer-resize"'));
@@ -646,7 +672,7 @@ const check = (label, cond, extra = "") => {
 		JSON.stringify({ rowBlock, groupsBlock, addBlock, sendBlock }),
 	);
 
-	const menuShellBlock = /\.chat-palette,\n\.chat-profile-menu \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
+	const menuShellBlock = /\.chat-palette,\n\.chat-profile-menu,\n\.chat-context-menu \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
 	const paletteBaseBlock = /(?:^|\n)\.chat-palette \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
 	const menuItemBlock = /\.chat-palette-item \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
 	const menuGroupBlock = /\.chat-palette-group \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
@@ -792,17 +818,61 @@ const check = (label, cond, extra = "") => {
 			appSource.includes("setDistillMode") &&
 			!appSource.slice(appSource.indexOf("function setDistillMode"), appSource.indexOf("function selectMode")).includes("selectedEvs"),
 	);
+	const contextTag = /<button id="chat-context"[^>]*>/.exec(indexSource)?.[0] ?? "";
+	const contextMenuBlock = /\.chat-context-menu \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
+	const contextBlock = /\.chat-context \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
 	check(
-		"chat 上下文 chips：选中集 / send contextIds / meta.context / 以此新开",
+		"上下文摘要按钮：button + aria + 单行省略 + title；旧 chips 常驻提示移除",
+		contextTag.includes('aria-haspopup="dialog"') &&
+			contextTag.includes('aria-expanded="false"') &&
+			contextTag.includes('aria-controls="chat-context-menu"') &&
+			contextTag.includes('title="取消勾选只影响之后的读取"') &&
+			/display: inline-flex/.test(contextBlock) &&
+			/height: 24px/.test(contextBlock) &&
+			/max-width: 100%/.test(contextBlock) &&
+			/min-width: 0/.test(contextBlock) &&
+			/\.chat-context-summary \{[^}]*text-overflow: ellipsis/s.test(styleSource) &&
+			!/overflow-x:\s*auto/.test(contextBlock) &&
+			!chatSource.includes("chat-ctx-chip") &&
+			!chatSource.includes("chat-ctx-hint") &&
+			!styleSource.includes(".chat-ctx-hint") &&
+			!styleSource.includes(".chat-ctx-chip"),
+		JSON.stringify({ contextTag, contextBlock }),
+	);
+	check(
+		"上下文弹层：dialog + dsh 菜单外观 + 260/420 宽度",
+		indexSource.includes('id="chat-context-menu"') &&
+			indexSource.includes('role="dialog"') &&
+			/width: fit-content/.test(contextMenuBlock) &&
+			/min-width:min\(260px/.test(contextMenuBlock) &&
+			/max-width:min\(420px/.test(contextMenuBlock) &&
+			/border-radius: var\(--dsw-radius-lg\)/.test(styleSource) &&
+			/var\(--dsw-menu-surface-fill\)/.test(styleSource) &&
+			chatSource.includes("renderContextMenu") &&
+			chatSource.includes("chat-context-menu-head") &&
+			chatSource.includes("chat-context-menu-list") &&
+			chatSource.includes("chat-context-menu-new"),
+		JSON.stringify({ contextMenuBlock }),
+	);
+	check(
+		"上下文锚定与交互：offset 4/left、移除到 0 关闭、清空关闭、上下文摘要纯函数",
+		chatSource.includes("CONTEXT_MENU_ANCHOR") &&
+			chatSource.includes("offset: 4") &&
+			chatSource.includes('align: "left"') &&
+			chatSource.includes("positionAnchoredMenu(contextMenuEl, contextBtn, CONTEXT_MENU_ANCHOR)") &&
+			chatSource.includes("contextSummaryLabel") &&
+			chatSource.includes("if (next.length === 0) closeContextMenu") &&
+			chatSource.includes("setContextIds([])") &&
+			indexSource.includes('id="chat-context-menu"'),
+	);
+	check(
+		"chat 上下文接线：选中集 / send contextIds / meta.context / 以此新开",
 		chatSource.includes("getSelectedIds") &&
 			chatSource.includes("contextIds: contextSelection") &&
 			chatSource.includes("data.context") &&
-			chatSource.includes("chat-ctx-chip") &&
 			chatSource.includes("以此新开") &&
 			chatSource.includes("newThreadPreservingSelection") &&
-			indexSource.includes('id="chat-context"') &&
-			styleSource.includes(".chat-ctx-chip") &&
-			styleSource.includes(".chat-ctx-hint"),
+			indexSource.includes('id="chat-context"'),
 	);
 	check("勾选列改名 no-select（不再用 no-distill）", styleSource.includes(".ev.no-select") && !appSource.includes("no-distill") && !styleSource.includes("no-distill"));
 	check(
