@@ -245,6 +245,29 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 		) === "问题",
 	);
 
+	const ctxIndexItems = (n) =>
+		Array.from({ length: n }, (_, i) => ({ id: `id-${i}`, label: "提问", preview: "x".repeat(80) }));
+	const ctxIndex200 = chatSession.buildTrajectoryIndex(ctxIndexItems(200));
+	check(
+		"trajectory_index：200 条全部出现且 count 正确",
+		ctxIndex200.includes('count="200"') && ctxIndex200.includes("[id-0]") && ctxIndex200.includes("[id-199]") && ctxIndex200.length < 16_000,
+		String(ctxIndex200.length),
+	);
+	const ctxIndex1000 = chatSession.buildTrajectoryIndex(ctxIndexItems(1000));
+	check(
+		"trajectory_index：超预算压缩、摘要计入预算且提示 list",
+		ctxIndex1000.includes("…还有") && ctxIndex1000.includes("read_trajectory list") && !ctxIndex1000.includes("[id-999]") && ctxIndex1000.length <= 16_000,
+		String(ctxIndex1000.length),
+	);
+	const toolSource = fs.readFileSync(path.join(ROOT, "trajectory-web", "chat-trajectory-tool.ts"), "utf8");
+	check(
+		"read_trajectory list：offset/limit 分页",
+		toolSource.includes("LIST_DEFAULT_LIMIT = 20") &&
+			toolSource.includes("items.slice(offset, offset + limit)") &&
+			toolSource.includes("nextOffset") &&
+			toolSource.includes("offset 超出当前选中集"),
+	);
+
 	// ---- 模型白名单 / session 模型 ----
 	const rawModel = {
 		provider: "fake",

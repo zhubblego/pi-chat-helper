@@ -979,14 +979,14 @@ async function stopServer(child) {
 			(await postJson(`${chatBase}api/chat/send`, { source: "pi", session: "cs-1", prompt: "x", contextIds: "a" })).status === 400 &&
 				(await postJson(`${chatBase}api/chat/send`, { source: "pi", session: "cs-1", prompt: "x", contextIds: [1] })).status === 400,
 		);
+		const manyContextIds = Array.from({ length: 200 }, (_, i) => `id-${i}`);
+		const manyContextRes = await send("cs-1", "x", { contextIds: manyContextIds });
+		const manyContext = await readSse(manyContextRes);
+		const manyContextMeta = manyContext.events.find((event) => event.event === "meta")?.data ?? {};
 		check(
-			"context：contextIds >50 400",
-			(await postJson(`${chatBase}api/chat/send`, {
-				source: "pi",
-				session: "cs-1",
-				prompt: "x",
-				contextIds: Array.from({ length: 51 }, (_, i) => `id-${i}`),
-			})).status === 400,
+			"context：contextIds 200 条不再 400",
+			manyContextRes.ok && manyContextMeta.context?.selected === 200 && manyContextMeta.context?.dropped?.length === 200,
+			JSON.stringify(manyContextMeta.context).slice(0, 300),
 		);
 
 		// ---- P1 回归：delta 基线按当前线程上一轮 contextRefs，不按共享 active ----

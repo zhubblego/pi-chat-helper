@@ -110,13 +110,13 @@ const check = (label, cond, extra = "") => {
 		normalizeContextIds(ctxMap, "pi", "s-1").join(",") === "a,b" && normalizeContextIds(ctxMap, "codex", "c-1").join(",") === "x" && normalizeContextIds(ctxMap, "pi", "nope").length === 0,
 	);
 	const manyIds = Array.from({ length: 60 }, (_, i) => `id-${i}`);
-	check("normalizeContextIds：上限 50", normalizeContextIds({ "pi:s-1": manyIds }, "pi", "s-1").length === 50);
+	check("normalizeContextIds：60 条不截断", normalizeContextIds({ "pi:s-1": manyIds }, "pi", "s-1").length === 60);
 	const merged = mergeContextIds(ctxMap, "pi:s-2", ["m", "m", "n"]);
 	check(
 		"mergeContextIds：去重写回且不改原对象",
 		merged["pi:s-2"].join(",") === "m,n" && merged["pi:s-1"] === ctxMap["pi:s-1"] && !("pi:s-2" in ctxMap),
 	);
-	check("mergeContextIds：上限 50", mergeContextIds({}, "k", manyIds)["k"].length === 50);
+	check("mergeContextIds：60 条不截断", mergeContextIds({}, "k", manyIds)["k"].length === 60);
 	check(
 		"pruneContextIds：Set/对象两种入参",
 		pruneContextIds(["a", "b", "c"], new Set(["b", "c"])).join(",") === "b,c" &&
@@ -398,7 +398,7 @@ const check = (label, cond, extra = "") => {
 
 	// ---- 回归守卫：行级控件（每条事件行前的剪刀 + checkbox） ----
 	check("事件行带行级剪刀与 checkbox", appSource.includes('class: "ev-eye"') && appSource.includes('class: "ev-check"') && appSource.includes("state.selectedEvs.has(ev.id)"));
-	check("checkbox 在对话/蒸馏选择模式渲染（行级 + 轮头）", appSource.split("if (selectMode()) {").length - 1 === 2 && appSource.includes('if (!selectMode()) classes.push("no-select")') && appSource.includes("function selectMode()"));
+	check("checkbox 仅在蒸馏模式渲染（行级 + 轮头）", appSource.split("if (selectMode()) {").length - 1 === 2 && appSource.includes("function selectMode()") && appSource.includes("return state.distillMode") && !appSource.includes("state.chatOpen || state.distillMode"));
 	check("蒸馏按钮：裁剪右侧 + 文字变「蒸馏中」+ 开态配色", indexSource.indexOf('id="crop-btn"') < indexSource.indexOf('id="distill-btn"') && indexSource.includes('id="distill-label"') && appSource.includes("function setDistillMode") && appSource.includes('el("distill-label").textContent = state.distillMode ? "蒸馏中" : "蒸馏"') && appSource.includes('el("distill-btn").addEventListener("click"') && styleSource.includes('#distill-btn[aria-pressed="true"]'));
 	check("轮头 checkbox = 全选本轮所有条目（含被过滤掉的）", appSource.includes("function toggleRoundSelected") && /function toggleRoundSelected\(index\)[\s\S]*?\(q\?\.events \?\? \[\]\)\.map\(\(ev\) => ev\.id\)/.test(appSource) && appSource.includes("toggleRoundSelected(Number(check.dataset.check))") && appSource.includes("function roundSelectedState"));
 	check("轮头勾选态由条目选中集派生（all/some/none，已删除 selectedQs）", appSource.includes('return on === ids.length ? "all" : "some"') && !appSource.includes("selectedQs") && !indexSource.includes("selectedQs"));
@@ -576,15 +576,18 @@ const check = (label, cond, extra = "") => {
 	check("输入卡与输入框圆角收敛（16px，不用 28px 的 panel 圆角）", /\.chat-card \{[^}]*border-radius: var\(--dsw-radius-lg\)/s.test(styleSource) && /\.chat-input \{[^}]*border-radius: var\(--dsw-radius-lg\)/s.test(styleSource) && !/\.chat-card \{[^}]*radius-panel/s.test(styleSource));
 	check("对话页样式复刻上游：用户气泡 + 输入卡 + info 圆发送钮", styleSource.includes(".chat-msg.user") && styleSource.includes("var(--dsw-specific-bubble)") && styleSource.includes(".chat-card") && styleSource.includes("var(--dsw-specific-input-major)") && styleSource.includes(".chat-send") && styleSource.includes("var(--dsw-alias-button-info-fill)"));
 	check(
-		"上下文选择：selectMode / tw.chatCtx 恢复保存 / 上限 50 / prune",
+		"上下文选择：tw.chatCtx 恢复保存 / 不截断 / prune",
 		appSource.includes('const CHAT_CTX_KEY = "tw.chatCtx"') &&
 			appSource.includes("function saveChatContext()") &&
 			appSource.includes("function restoreChatContext()") &&
 			appSource.includes("pruneChatContext()") &&
-			appSource.includes("CHAT_CTX_LIMIT = 50") &&
 			appSource.includes("function addSelectedIds") &&
 			appSource.includes("if (open) restoreChatContext();") &&
-			appSource.includes("saveChatContext();"),
+			appSource.includes("saveChatContext();") &&
+			!appSource.includes("CHAT_CTX_LIMIT") &&
+			!appSource.includes("上下文最多选择") &&
+			appSource.includes("setDistillMode") &&
+			!appSource.slice(appSource.indexOf("function setDistillMode"), appSource.indexOf("function selectMode")).includes("selectedEvs"),
 	);
 	check(
 		"chat 上下文 chips：选中集 / send contextIds / meta.context / 以此新开",
