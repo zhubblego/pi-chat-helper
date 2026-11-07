@@ -251,10 +251,11 @@ stateDiagram-v2
 
 ### 7.1 勾选框显示条件
 
-- 显示：**对话栏打开** 或 **蒸馏模式开启**。
-- 隐藏：两者都关。
-- 实现：`selectMode = chatOpen || distillMode`；`renderEvent`/`renderMain` 用 `selectMode` 控制 `.ev-check`/`.q-check` 与 `no-select` 网格列。
-- 打开/关闭对话栏时 `renderMain()` 一次；勾选状态在隐藏期间保留。
+- 显示：**仅蒸馏模式开启**。对话栏打开不再显示行级/轮次 checkbox。
+- 隐藏：蒸馏关闭（包括 chat 打开时）。
+- 实现：`selectMode = distillMode`；`renderEvent`/`renderMain` 用 `selectMode` 控制 `.ev-check`/`.q-check` 与 `no-select` 网格列。
+- 进入/退出蒸馏模式不改变 `state.selectedEvs` 或 `tw.chatCtx`；chat 打开/关闭只切换可达性。
+- chat 模式下 chips 仍可 `×` 删除，但页面上没有新增 checkbox；要新增必须进入蒸馏模式。
 
 ### 7.2 交互
 
@@ -265,12 +266,14 @@ stateDiagram-v2
   - 写 `localStorage["tw.chatCtx"]`；
   - 不触发网络请求。
 - 取消/清空：同步移除 chips 与存储；不影响已发送的历史。
-- 上限 50；超出时忽略新勾选并提示。
+- 不限制条数；选中集可超过 200 条。勾选时不做静默截断。
 - 切会话/切源：按 `source:sessionId` 保存/恢复。
 
 ### 7.3 增删语义（context-as-tool）
 
 - 勾选变化只影响**下一轮**；流式中的请求使用发送时的快照。
+- 清单不因条数报错：前 80 条带 preview，之后压成 `- [id] label` 短行；超过清单文本预算时追加「…还有 K 条，用 read_trajectory list 查看」。
+- `read_trajectory` 的 `list` 支持 `offset`/`limit` 分页；默认每页 20 条、上限 50 条，避免一次输出全部 200+ 条。
 - 加 4/5/6：下一轮清单出现，模型可读。
 - 反选 2/3：下一轮清单消失；模型再按 id 读取会得到「不在当前选中集」。
 - **反选不抹历史**：模型之前读过的内容仍在 session 里。UI 在 chips 旁给一句轻提示：`取消勾选只影响之后的读取`。

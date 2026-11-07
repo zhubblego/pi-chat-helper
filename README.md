@@ -104,7 +104,7 @@ npm run dev        # 默认 http://127.0.0.1:7788
 
 - **模型**：顶部不再有模型菜单；`/model` 列表来自子进程 `get_available_models`，切换走 `set_model`；当前模型以纯文本显示在输入卡底部；响应只保留展示字段，不含 key/baseUrl/headers。
 - **技能**：`/skill` 列表来自 `get_commands`；发送时在消息最前拼 `/skill:<name>`，由 pi 原生展开；项目技能默认关闭，打开后按项目 spawn `--skill`。
-- **上下文**：勾选轨迹条目后作为 `<trajectory_index>` 清单随消息发送；模型可用只读 `read_trajectory` 工具按 id 取正文（单条 6k / 单次 12k 字符），反选只影响下一轮，不抹除已读历史。
+- **上下文**：勾选轨迹条目后作为 `<trajectory_index>` 清单随消息发送；选中不限条数，清单前 80 条带 preview、之后压缩，超预算提示用 `read_trajectory list` 分页。模型可用只读 `read_trajectory` 工具按 id 取正文（单条 6k / 单次 12k 字符），反选只影响下一轮，不抹除已读历史。chat 模式下 chips 可删但不可新增，需进蒸馏模式勾选。
 - **工具 profile**：`no-tools`（仅对话）/ `read-only`（默认，只读轨迹工具 + 读项目文件）/ `full`（可写文件、可跑命令，逐次审批）。全量档支持「本会话允许」，拒绝/超时/断连即不执行。
 - **新对话 / 历史对话**：用 `/new` 新建 pi thread，用 `/resume` 打开历史线程列表并切回旧线程（复用 `switch_session`，不新建）；浏览器用 `localStorage["tw.chatThread"]` 记住当前线程，未落盘的新线程用 `tw.chatThreadNew` 保留；「以此新开」保留当前上下文选择。
 - **进程池**：每轨迹会话一个 child，全局最多 2 个；满时按 `lastUsedAt` 回收最久未用 idle child，15 分钟空闲回收（60 秒扫描一次）；同项目同一时间只允许一个 turn（第二个 409）。

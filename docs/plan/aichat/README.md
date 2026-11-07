@@ -184,7 +184,7 @@ sequenceDiagram
 
 ### 5.4 上下文（context-as-tool）
 
-- **选中集**：轨迹列表 checkbox（对话栏打开或蒸馏模式时显示），存 `tw.chatCtx`，上限 50 条。
+- **选中集**：轨迹列表 checkbox 仅在蒸馏模式显示；存 `tw.chatCtx`，不限制条数；chat 模式 chips 可删不可加。
 - **快照**：勾选变化写 `context.next.json`；每次 `prompt` 前原子提升为 `context.active.json`。流式期间改选择 → 下一轮生效。
 - **清单**：系统提示只放规则；`<trajectory_index>` 放在当轮 user 消息里，首次全量、变化时发 delta + 新清单、未变化不发。工具 `read_trajectory({action:"list"})` 可随时重新拉清单。
 - **读取**：`read_trajectory({action:"read", ids?, query?, kind?, offset?, limit?})`，只允许读当前选中集；单条 6k 字符、单次总量 12k 字符，超出给 offset 继续。

@@ -457,7 +457,7 @@ profile 差异：
 | `filterPaletteItems(items, query)` | 多词 AND、大小写不敏感、匹配 `label/hint/group` |
 | `formatContextWindow(n)` | `1M`/`200K`/`128K`/`32000` |
 | `modelLabel(model)` | `name` 优先，缺失用 `id`；过长截断 |
-| `normalizeContextIds(map, source, sessionId)` | 去重、上限 50 |
+| `normalizeContextIds(map, source, sessionId)` | 去重、不限制条数 |
 | `mergeContextIds(map, key, ids)` | 写回并返回新 map；不改原对象 |
 | `pruneContextIds(ids, eventsById)` | 过滤投影里不存在的事件 id |
 | `eventRef(ev)` | `{id,kind,label,preview,chars}` |
@@ -722,4 +722,4 @@ export function initChatPanel(deps) { ... }
 - [x] R10：Host/Origin/JSON content-type/路径/大小校验全过；禁用态不报错。（T9 安全用例）
 - [ ] 浏览器实测：三档 profile、审批弹层、工具卡片、切项目/线程、重启恢复。CDP 不可用，未做。
 - [ ] Codex send 上下文 e2e：工具层 list/read 已测，send 未做，留后续。
-- [x] 全套测试：test-chat 165、test-server 192、test-web-lib 198、test-extension 88、test-codex 38、test-projection 33、test-sessions 10、test-turn 21、test-tool-origins 10（带 PI_HOME 时 11）、test-render 28、test-question-panel 8、test-headless-tui 11；合计 802 个断言（按 `^PASS` 计数，不含各文件末尾 `ALL PASS` 汇总；带 PI_HOME 时 803）；`tsc` 0；`pi -ne -e .` 0；模式 B dev 冒烟正常 send/done，无 rpc 残留；ROADMAP 只写已验证内容。
+- [x] 全套测试：test-chat 168、test-server 192、test-web-lib 198、test-extension 88、test-codex 38、test-projection 33、test-sessions 10、test-turn 21、test-tool-origins 10（带 PI_HOME 时 11）、test-render 28、test-question-panel 8、test-headless-tui 11；合计 805 个断言（按 `^PASS` 计数，不含各文件末尾 `ALL PASS` 汇总；带 PI_HOME 时 806）；`tsc` 0；`pi -ne -e .` 0；模式 B dev 冒烟正常 send/done，无 rpc 残留；ROADMAP 只写已验证内容。

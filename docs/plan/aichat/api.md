@@ -405,7 +405,7 @@ Accept: text/event-stream
 | 字段 | 必填 | 限制 | 说明 |
 |---|---|---|---|
 | `prompt` | 是 | trim 后 1–32,000 字符 | 用户问题；纯空白拒绝 |
-| `contextIds` | 否 | ≤ 50 条 | 当前勾选的事件 id；服务端逐条解析，缺失的跳过 |
+| `contextIds` | 否 | 不限条数（请求体 1MB 总限） | 当前勾选的事件 id；服务端逐条解析，缺失的跳过 |
 | `skill` | 否 | `get_commands` 里的技能名 | 服务端拼 `/skill:<name>` 前缀；找不到 400 |
 | `threadId` | 否 | pi session id | 缺省取该轨迹会话最新 session；没有则新建 |
 
@@ -571,9 +571,10 @@ Content-Type: application/json
 
 ### 9.1 选中集与快照
 
-- 前端 `state.selectedEvs`（与蒸馏模式共用）、`localStorage["tw.chatCtx"]`、上限 50。
+- 前端 `state.selectedEvs`（与蒸馏模式共用）、`localStorage["tw.chatCtx"]`；不限制条数，不做静默截断。
 - 每次发送把 `contextIds` 传给服务端；服务端逐条 `findEvent` 校验，缺失进 `meta.context.dropped`。
 - 服务端写 `context.next.json` → rename `context.active.json`；`context.active.json` **只作为 `read_trajectory` 的本轮快照**，不作为清单 delta 的基线。
+- `<trajectory_index>` 文本设上限：前 80 条带 preview，之后压成 `- [id] label` 短行；超过预算追加「…还有 K 条，用 read_trajectory list 查看」。清单文本预算按 prompt 长度动态收缩，避免 prompt+index 超过 32k。
 - delta 基线是**同一 pi 线程上一轮 `turns.contextRefs`**：`readTurns(metaDir, threadId)` 取最后一条；没有 turns 视为空。首次在该线程发送（上一轮为空）发完整清单；未变化不发；变化发 delta + 新清单。
 - `chars` 是事件经 `renderContextEvent` 渲染后的长度（单条最多 6,000 字符），不是原始正文全长；用于工具 `list` 与大小提示。
 
@@ -608,7 +609,7 @@ Content-Type: application/json
 { "action": "read", "ids": ["a1:p2"], "query": "exit 1", "kind": "tool", "offset": 0, "limit": 3 }
 ```
 
-- `list`：返回当前选中集的 `id/kind/label/preview/chars`；`chars` 为渲染后（单条 6k 上限）长度；空选中返回「当前没有选中条目」。
+- `list`：返回当前选中集的 `id/kind/label/preview/chars`；支持 `offset`/`limit` 分页（默认每页 20、上限 50），`nextOffset` 继续；空选中返回「当前没有选中条目」。`chars` 为渲染后（单条 6k 上限）长度。
 - `read`：
   - `ids`：按当前选中集白名单读取；不在选中集的 id 逐条返回「不在当前选中集（可能已被取消勾选）」。
   - `query`：在当前选中集里做大小写不敏感的子串匹配；`kind` 可进一步过滤。
@@ -684,11 +685,11 @@ Content-Type: application/json
 
 - **只监听回环地址**；不新增 CORS，OPTIONS 405；所有 POST 校验 Host/Origin，chat POST 额外校验 JSON Content-Type（见 1.4）；非回环监听时禁用 chat。
 - **路径**：`source` 白名单；`session` 必须能从 `readSessions(source)` 解析；`sessionId` sanitize；`threadId` 正则；最终路径必须在 chatDir 内。
-- **上下文**：每个 id 必须能从当前投影 `findEvent` 找到；找不到跳过并告警；≤50。
+- **上下文**：每个 id 必须能从当前投影 `findEvent` 找到；找不到跳过并告警；不限条数，清单文本按预算压缩。
 - **技能**：只接受 `get_commands` 里的名字；大小守卫；项目技能只在开关打开时加载。
 - **模型**：只接受 `get_available_models` 返回的 `{provider,id}`；不接受 baseUrl/apiKey。
 - **密钥**：模型列表、线程响应、错误信息都不含 auth/headers；错误信息截断到 500 字符。
-- **大小**：prompt 32k；context 50 条；请求体 1MB（413）；线程/轨迹文件 32MB（400）；技能 32k 警告 / 200k 拒绝。
+- **大小**：prompt 32k；context 不限条数，index 文本按预算压缩（见 §9.1）；请求体 1MB（413）；线程/轨迹文件 32MB（400）；技能 32k 警告 / 200k 拒绝。
 - **工具**：默认只读；全量档逐次审批；拒绝/超时/断连即不执行；同项目串行。
 - **提示注入**：系统提示声明资料非指令；默认只读；全量档写操作必须审批。
 - **文件权限**：chatDir 目录 `0700`；meta 文件 `0600`；不写入 `~/.pi/agent/sessions`。
