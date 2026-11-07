@@ -769,10 +769,40 @@ async function stopServer(child) {
 			traceAfterSkillRefresh.slice(-600),
 		);
 
+		// ---- 线程列表 / /resume ----
+		const threadsRes = await fetch(`${chatBase}api/chat/threads?source=pi&session=cs-4`);
+		const threadsBody = await threadsRes.json();
+		const threadS4 = (threadsBody.threads ?? []).find((thread) => thread.id === "thread-s4");
+		check(
+			"threads：列表字段/首条用户/轮数/模型",
+			threadsRes.ok &&
+				Array.isArray(threadsBody.threads) &&
+				threadsBody.threads.length >= 2 &&
+				threadS4?.firstUserText === "旧问题" &&
+				threadS4?.turns === 1 &&
+				threadS4?.model?.id === "fake-1" &&
+				threadS4?.size > 0 &&
+				typeof threadS4?.mtime === "string",
+			JSON.stringify(threadsBody).slice(0, 500),
+		);
+		check("threads：POST 405", (await postJson(`${chatBase}api/chat/threads`, { source: "pi", session: "cs-4" })).status === 405);
+		const newAfterThreads = await postJson(`${chatBase}api/chat/thread`, { source: "pi", session: "cs-4" });
+		const newAfterThreadsBody = await newAfterThreads.json();
+		const resumeRes = await postJson(`${chatBase}api/chat/resume`, { source: "pi", session: "cs-4", threadId: "thread-s4" });
+		const resumeBody = await resumeRes.json();
+		check(
+			"resume：新对话后切回旧线程 200",
+			newAfterThreads.ok && resumeRes.ok && resumeBody.thread?.id === "thread-s4" && resumeBody.thread?.messages?.some((message) => message.role === "user"),
+			JSON.stringify({ newId: newAfterThreadsBody.thread?.id, resume: resumeBody.thread?.id }).slice(0, 300),
+		);
+		check("resume：未知线程 404", (await postJson(`${chatBase}api/chat/resume`, { source: "pi", session: "cs-4", threadId: "no-such" })).status === 404);
+
 		// ---- T5：settings 活动 turn 409 ----
 		const slowSettingsRes = await send("cs-4", "slow");
 		const slowSettingsRead = readSse(slowSettingsRes);
 		await sleep(120);
+		const resumeBusy = await postJson(`${chatBase}api/chat/resume`, { source: "pi", session: "cs-4", threadId: "thread-s4" });
+		check("resume：活动 turn 409", resumeBusy.status === 409, String(resumeBusy.status));
 		const settingsConflict = await postJson(`${chatBase}api/chat/settings`, { source: "pi", session: "cs-4", projectSkills: false });
 		check("settings：活动 turn 409", settingsConflict.status === 409, String(settingsConflict.status));
 		await postJson(`${chatBase}api/chat/stop`, { source: "pi", session: "cs-4" });

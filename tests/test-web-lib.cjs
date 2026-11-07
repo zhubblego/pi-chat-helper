@@ -467,13 +467,21 @@ const check = (label, cond, extra = "") => {
 			chatSource.includes("formatContextWindow") &&
 			chatSource.includes("modelLabel"),
 	);
-	const modelTag = /<button id="chat-model"[^>]*>/.exec(indexSource)?.[0] ?? "";
-	check("模型 chip 可点击（无 disabled）", modelTag.includes('id="chat-model"') && !modelTag.includes("disabled"), modelTag);
+	const modelLabelTag = /<span id="chat-model-label"[^>]*>/.exec(indexSource)?.[0] ?? "";
 	check(
-		"模型 chip 点击 = 打开模型面板，流式中不切",
-		chatSource.includes('el("chat-model")?.addEventListener("click"') &&
-			chatSource.includes("function openModelPicker()") &&
-			chatSource.includes('pushNotice("回复中，先停止"'),
+		"无顶部模型/新建菜单；当前模型为纯文本",
+		modelLabelTag.includes('class="chat-model-label"') &&
+			!indexSource.includes('id="chat-model"') &&
+			!indexSource.includes('id="chat-new"') &&
+			!indexSource.includes('id="chat-head"'),
+		modelLabelTag,
+	);
+	check(
+		"模型切换只走 /model 命令，保留流式提示",
+		chatSource.includes('id: "model"') &&
+			chatSource.includes("openPalette(\"model\"") &&
+			chatSource.includes('pushNotice("回复中，先停止"') &&
+			!chatSource.includes("function openModelPicker()"),
 	);
 	check(
 		"palette 键盘：↑↓/Enter/Tab/Esc + 面板打开时 Enter 不发送",
@@ -491,8 +499,8 @@ const check = (label, cond, extra = "") => {
 			chatSource.includes("没有匹配的模型") &&
 			chatSource.includes("pi 没有可用模型，先在 models.json / 登录里配置") &&
 			styleSource.includes(".chat-palette-item.is-active") &&
-			styleSource.includes(".chat-model::before") &&
-			styleSource.includes(".chat-model.is-reasoning::before"),
+			styleSource.includes(".chat-model-label::before") &&
+			styleSource.includes(".chat-model-label.is-reasoning::before"),
 	);
 	const paletteSearchIndex = indexSource.indexOf('id="chat-palette-search"');
 	const paletteHeadIndex = indexSource.indexOf('class="chat-palette-head"');
@@ -561,9 +569,10 @@ const check = (label, cond, extra = "") => {
 			(sel) => styleSource.includes(sel),
 		),
 	);
-	check("对话头/上下文/面板/技能占位就位", ["chat-head", "chat-model", "chat-profile", "chat-context", "chat-palette", "chat-skill"].every((id) => indexSource.includes(`id="${id}"`)));
+	check("输入卡状态/上下文/面板/技能占位就位", ["chat-model-label", "chat-profile", "chat-context", "chat-palette", "chat-skill"].every((id) => indexSource.includes(`id="${id}"`)));
+	check("权限 chip 在 chat-row 内，模型标签为纯文本", indexSource.indexOf('class="chat-row"') < indexSource.indexOf('id="chat-profile"') && indexSource.indexOf('id="chat-profile"') < indexSource.indexOf('id="chat-send"'));
 	check("对话栏消息仍走 markdown 渲染", chatSource.includes("mdNode(String(message.text))"));
-	check("流式/工具/错误/空态样式就位", [".chat-head", ".chat-tool", ".chat-msg.ai.is-streaming", ".chat-stream-cursor", ".chat-notice", ".chat-msg-error", ".chat-empty", ".chat-skeleton"].every((sel) => styleSource.includes(sel)));
+	check("流式/工具/错误/空态样式就位", [".chat-model-label", ".chat-tool", ".chat-msg.ai.is-streaming", ".chat-stream-cursor", ".chat-notice", ".chat-msg-error", ".chat-empty", ".chat-skeleton"].every((sel) => styleSource.includes(sel)));
 	check("输入卡与输入框圆角收敛（16px，不用 28px 的 panel 圆角）", /\.chat-card \{[^}]*border-radius: var\(--dsw-radius-lg\)/s.test(styleSource) && /\.chat-input \{[^}]*border-radius: var\(--dsw-radius-lg\)/s.test(styleSource) && !/\.chat-card \{[^}]*radius-panel/s.test(styleSource));
 	check("对话页样式复刻上游：用户气泡 + 输入卡 + info 圆发送钮", styleSource.includes(".chat-msg.user") && styleSource.includes("var(--dsw-specific-bubble)") && styleSource.includes(".chat-card") && styleSource.includes("var(--dsw-specific-input-major)") && styleSource.includes(".chat-send") && styleSource.includes("var(--dsw-alias-button-info-fill)"));
 	check(
@@ -591,10 +600,10 @@ const check = (label, cond, extra = "") => {
 	);
 	check("勾选列改名 no-select（不再用 no-distill）", styleSource.includes(".ev.no-select") && !appSource.includes("no-distill") && !styleSource.includes("no-distill"));
 	check(
-		"T7 对话头：profile 可点击 + 新对话按钮 + 审批/权限菜单占位",
+		"T7 输入卡状态：profile 可点击 + 审批/权限菜单占位",
 		/<button id="chat-profile"[^>]*>/.test(indexSource) &&
 			!/<button id="chat-profile"[^>]*disabled/.test(indexSource) &&
-			indexSource.includes('id="chat-new"') &&
+			!indexSource.includes('id="chat-new"') &&
 			indexSource.includes('id="chat-profile-menu"') &&
 			indexSource.includes('id="chat-approval"') &&
 			indexSource.includes('role="dialog"'),
@@ -627,11 +636,25 @@ const check = (label, cond, extra = "") => {
 			chatSource.includes("function newThread({ preserveSelection = false } = {})") &&
 			chatSource.includes("newThread({ preserveSelection: true })") &&
 			chatSource.includes("deps.setSelectedIds?.([], { silent: true })") &&
-			chatSource.includes("newBtn.disabled = state.streaming"),
+			chatSource.includes('id: "new"') &&
+			chatSource.includes('id: "resume"'),
 	);
 	check(
 		"T7 样式：权限菜单/审批弹层/full 警示/新对话",
-		[".chat-profile-menu", ".chat-approval", ".chat-approval-card", ".chat-profile.is-full", ".chat-new"].every((sel) => styleSource.includes(sel)),
+		[".chat-profile-menu", ".chat-approval", ".chat-approval-card", ".chat-profile.is-full", ".chat-model-label"].every((sel) => styleSource.includes(sel)),
+	);
+
+	check(
+		"/new 与 /resume 命令、线程列表/切换接线",
+		chatSource.includes('id: "new"') &&
+			chatSource.includes('id: "resume"') &&
+			chatSource.includes("function loadThreads") &&
+			chatSource.includes("/api/chat/threads?") &&
+			chatSource.includes("function paletteThreadItems") &&
+			chatSource.includes("function resumeThread") &&
+			chatSource.includes('fetch("/api/chat/resume"') &&
+			chatSource.includes("还没有历史对话") &&
+			chatSource.includes("item.id === state.threadId"),
 	);
 
 	console.log(failed === 0 ? "\nALL PASS" : `\n${failed} FAILED`);
