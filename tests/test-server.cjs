@@ -368,6 +368,7 @@ async function stopServer(child) {
 		const chatAgent = path.join(tmp, "chat-agent");
 		fs.mkdirSync(chatAgent, { recursive: true });
 		const chatModelsFile = path.join(chatAgent, "models.json");
+		const chatAuthFile = path.join(chatAgent, "auth.json");
 		const writeChatModels = (providers) => fs.writeFileSync(chatModelsFile, JSON.stringify({ providers }));
 		writeChatModels({ fake: { models: ["fake-1"] }, other: { models: ["fake-2"] } });
 
@@ -440,32 +441,35 @@ async function stopServer(child) {
 		const defaultModelsUrl = `${defaultServer.url}api/chat/models?source=pi&session=cs-empty`;
 		const fallbackModels = await (await fetch(defaultModelsUrl)).json();
 		check(
-			"models：models.json 缺失回退全量 + warning",
-			fallbackModels.models?.length === 3 && fallbackModels.models.some((model) => model.provider === "catalog-only") && typeof fallbackModels.warning === "string" && fallbackModels.warning.includes("models.json"),
+			"models：两个配置都缺失回退全量 + warning",
+			fallbackModels.models?.length === 3 && fallbackModels.models.some((model) => model.provider === "catalog-only") && typeof fallbackModels.warning === "string" && fallbackModels.warning.includes("回退全量"),
 			JSON.stringify(fallbackModels).slice(0, 300),
 		);
 		const defaultModelsFile = path.join(defaultAgent, "models.json");
 		fs.writeFileSync(defaultModelsFile, "{bad json");
 		const badConfigModels = await (await fetch(defaultModelsUrl)).json();
 		check(
-			"models：models.json 坏 JSON 回退全量 + warning",
-			badConfigModels.models?.length === 3 && typeof badConfigModels.warning === "string" && badConfigModels.warning.includes("解析失败"),
+			"models：坏 JSON + 无 auth 回退全量 + warning",
+			badConfigModels.models?.length === 3 && typeof badConfigModels.warning === "string" && badConfigModels.warning.includes("不可用"),
 			JSON.stringify(badConfigModels).slice(0, 300),
 		);
 		fs.writeFileSync(defaultModelsFile, JSON.stringify({ foo: 1 }));
 		const missingProvidersModels = await (await fetch(defaultModelsUrl)).json();
 		check(
-			"models：models.json 无 providers 字段回退全量 + warning",
-			missingProvidersModels.models?.length === 3 && typeof missingProvidersModels.warning === "string" && missingProvidersModels.warning.includes("缺少 providers"),
+			"models：无 providers 字段 + 无 auth 回退全量 + warning",
+			missingProvidersModels.models?.length === 3 && typeof missingProvidersModels.warning === "string" && missingProvidersModels.warning.includes("不可用"),
 			JSON.stringify(missingProvidersModels).slice(0, 300),
 		);
+		const defaultAuthFile = path.join(defaultAgent, "auth.json");
 		fs.writeFileSync(defaultModelsFile, JSON.stringify({ providers: {} }));
+		fs.writeFileSync(defaultAuthFile, JSON.stringify({}));
 		const emptyProvidersModels = await (await fetch(defaultModelsUrl)).json();
 		check(
-			"models：空 providers 回退全量 + warning",
-			emptyProvidersModels.models?.length === 3 && typeof emptyProvidersModels.warning === "string" && emptyProvidersModels.warning.includes("为空"),
+			"models：两个配置都为空回退全量 + warning",
+			emptyProvidersModels.models?.length === 3 && typeof emptyProvidersModels.warning === "string" && emptyProvidersModels.warning.includes("没有有效 provider"),
 			JSON.stringify(emptyProvidersModels).slice(0, 300),
 		);
+		fs.rmSync(defaultAuthFile, { force: true });
 		fs.rmSync(defaultModelsFile, { force: true });
 		await defaultServer.close();
 
@@ -689,6 +693,25 @@ async function stopServer(child) {
 				modelsPlain.warning === null,
 			JSON.stringify({ providers: modelsPlain.models.map((m) => m.provider), warning: modelsPlain.warning }),
 		);
+		writeChatModels({ fake: { models: ["fake-1"] } });
+		fs.writeFileSync(
+			chatAuthFile,
+			JSON.stringify({
+				other: { type: "api_key", key: "auth-only-key" },
+				catalog: { type: "api_key", key: "" },
+			}),
+		);
+		const authUnion = await (await fetch(modelsUrl("cs-2"))).json();
+		check(
+			"models：auth.json 有效条目并入显式配置，空 key 残条忽略",
+			authUnion.models?.length === 2 &&
+				authUnion.models.some((m) => m.provider === "other") &&
+				!authUnion.models.some((m) => m.provider === "catalog") &&
+				authUnion.warning === null,
+			JSON.stringify(authUnion).slice(0, 400),
+		);
+		fs.rmSync(chatAuthFile, { force: true });
+		writeChatModels({ fake: { models: ["fake-1"] }, other: { models: ["fake-2"] } });
 		const modelsThread = await (await fetch(modelsUrl("cs-2", "&thread=thread-c2"))).json();
 		check("models：带 thread 读文件模型", modelsThread.current?.provider === "other" && modelsThread.current?.id === "fake-2", JSON.stringify(modelsThread.current));
 		const traceBeforeModels = fs.existsSync(chatTrace) ? fs.readFileSync(chatTrace, "utf8") : "";

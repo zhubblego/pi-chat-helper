@@ -302,21 +302,42 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 	const modelA = { provider: "litellm", id: "a", name: "A", reasoning: true, contextWindow: 1000, maxTokens: 100 };
 	const modelB = { provider: "mimo", id: "b", name: "B" };
 	const modelC = { provider: "anthropic", id: "c", name: "C" };
-	const configured = { litellm: {}, mimo: {} };
+	const configured = chatModels.configuredProviders({ providers: { litellm: {}, mimo: {} } }, null);
+	const authProviders = chatModels.configuredProviders(null, {
+		anthropic: { type: "api_key", key: "x" },
+		zai: { type: "api_key", key: "" },
+		empty: { type: "oauth" },
+	});
+	const unionProviders = chatModels.configuredProviders({ providers: { litellm: {} } }, { mimo: { type: "api_key", key: "x" } });
+	check(
+		"configuredProviders：models.json + auth.json 并集 / 空 key 残条忽略",
+		configured.size === 2 &&
+			configured.has("litellm") &&
+			configured.has("mimo") &&
+			authProviders.size === 1 &&
+			authProviders.has("anthropic") &&
+			!authProviders.has("zai") &&
+			!authProviders.has("empty") &&
+			unionProviders.has("litellm") &&
+			unionProviders.has("mimo") &&
+			unionProviders.size === 2,
+		JSON.stringify({ configured: [...configured], auth: [...authProviders], union: [...unionProviders] }),
+	);
 	const filtered = chatModels.filterConfiguredModels(
 		[modelA, modelB, modelC, { provider: "Litellm", id: "d" }, { ...modelA }],
 		configured,
 	);
 	check(
-		"filterConfiguredModels：正常过滤 / 大小写精确 / 重复 provider+id 去重 / 配置空目录静默为空",
+		"filterConfiguredModels：正常过滤 / 环境变量 provider 排除 / 大小写精确 / 重复 provider+id 去重",
 		filtered.map((model) => `${model.provider}:${model.id}`).join(",") === "litellm:a,mimo:b" &&
+			!filtered.some((model) => model.provider === "anthropic") &&
 			chatModels.filterConfiguredModels([modelA], { xiaomi: {} }).length === 0,
 		JSON.stringify(filtered),
 	);
 	check(
-		"filterConfiguredModels：空 providers 回退全量",
-		chatModels.filterConfiguredModels([modelA, modelB, modelC], {}).length === 3 &&
-			chatModels.filterConfiguredModels([modelA], null).length === 1,
+		"filterConfiguredModels：空 Set 返回空，由服务端决定回退",
+		chatModels.filterConfiguredModels([modelA, modelB], new Set()).length === 0 &&
+			chatModels.configuredProviders(null, null).size === 0,
 	);
 	const withCurrent = chatModels.ensureCurrentModelFirst([modelA], { ...modelC, providerName: "Anthropic" });
 	check(
