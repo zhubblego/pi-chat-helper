@@ -15,7 +15,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildProjection } from "./session.mjs";
-import { ensureCurrentModelFirst, filterConfiguredModels } from "./chat-models.mjs";
+import { configuredProviders, ensureCurrentModelFirst, filterConfiguredModels } from "./chat-models.mjs";
 import { buildSystemPrompt } from "./chat-prompt.mjs";
 import { contextEventRef } from "./context-render.mjs";
 import {
@@ -791,32 +791,40 @@ export function createChatHost(deps = {}) {
 		}
 	}
 
+	/** 读取一个配置文件；JSON 坏/顶层不是对象/validate 失败都按不可用处理。 */
+	function readJsonConfig(file, validate) {
+		try {
+			const parsed = JSON.parse(readFileSync(file, "utf8"));
+			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || (validate && !validate(parsed))) {
+				return { value: null, available: false, reason: "结构不符" };
+			}
+			return { value: parsed, available: true, reason: null };
+		} catch (err) {
+			return { value: null, available: false, reason: errorText(err) };
+		}
+	}
+
 	/**
-	 * 只读 <agentDir>/models.json 的 providers 键；缺失/坏 JSON/没有 providers 时回退全量。
-	 * models-store.json 是 pi 自动抓的远端目录缓存，不参与判定。
+	 * 显式配置集 = models.json.providers 的键 ∪ auth.json 顶层有效条目。
+	 * 两个文件每次请求都重新读；models-store.json 是 pi 自动抓的远端目录缓存，不参与判定。
 	 */
-	function readConfiguredModelProviders() {
-		const file = join(agentDir, "models.json");
-		let text;
-		try {
-			text = readFileSync(file, "utf8");
-		} catch (err) {
-			return { providers: null, warning: `读取 models.json 失败，回退全量模型：${errorText(err)}` };
-		}
-		let parsed;
-		try {
-			parsed = JSON.parse(text);
-		} catch (err) {
-			return { providers: null, warning: `models.json 解析失败，回退全量模型：${errorText(err)}` };
-		}
-		const providers = parsed?.providers;
-		if (!providers || typeof providers !== "object" || Array.isArray(providers)) {
-			return { providers: null, warning: "models.json 缺少 providers，回退全量模型" };
-		}
-		if (Object.keys(providers).length === 0) {
-			return { providers: null, warning: "models.json.providers 为空，回退全量模型" };
-		}
-		return { providers, warning: null };
+	function readConfiguredProviderState() {
+		const modelsFile = join(agentDir, "models.json");
+		const authFile = join(agentDir, "auth.json");
+		const models = readJsonConfig(modelsFile, (parsed) => {
+			const providers = parsed.providers;
+			return Boolean(providers) && typeof providers === "object" && !Array.isArray(providers);
+		});
+		const auth = readJsonConfig(authFile);
+		const providers = configuredProviders(models.value, auth.value);
+		if (providers.size > 0) return { providers, warning: null, fallback: false };
+		const unavailable = [];
+		if (!models.available) unavailable.push("models.json");
+		if (!auth.available) unavailable.push("auth.json");
+		const reason = unavailable.length
+			? `${unavailable.join(" / ")} 不可用或结构不符`
+			: "models.json.providers 与 auth.json 都没有有效 provider";
+		return { providers, warning: `${reason}，回退全量模型`, fallback: true };
 	}
 
 	function readPiDefaultModel() {
@@ -1969,9 +1977,12 @@ export function createChatHost(deps = {}) {
 			}
 		}
 
-		// 只列 models.json.providers 里显式配置的 provider；缓存仍保留全量，仅出口过滤。
-		const configured = readConfiguredModelProviders();
-		let models = filterConfiguredModels(allModels, configured.providers);
+		// 只列显式配置（models.json.providers ∪ auth.json 有效条目）的 provider；
+		// modelsCache 仍保留全量，仅出口过滤。
+		const configured = readConfiguredProviderState();
+		let models = configured.fallback
+			? allModels.slice()
+			: filterConfiguredModels(allModels, configured.providers);
 		if (current) {
 			models = ensureCurrentModelFirst(models, { ...current, providerName: providerNameOf(current.provider) });
 		}
