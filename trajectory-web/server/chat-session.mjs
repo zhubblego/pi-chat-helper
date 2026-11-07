@@ -262,6 +262,11 @@ export function buildTrajectoryIndex(
 ) {
 	const list = (Array.isArray(items) ? items : []).filter((item) => typeof item?.id === "string" && item.id);
 	if (!list.length) return "";
+	const prefix = `<trajectory_index source="${escapeAttr(source)}" session="${escapeAttr(sessionId)}" count="${list.length}">\n`;
+	const suffix = "\n</trajectory_index>";
+	// 摘要行和 wrapper 也占预算；先按最大剩余条数预留，避免最终超出 maxChars。
+	const summaryReserve = `…还有 ${list.length} 条，用 read_trajectory list 查看`.length + 1;
+	const lineBudget = Math.max(0, maxChars - prefix.length - suffix.length - summaryReserve);
 	const lines = [];
 	let used = 0;
 	let omitted = 0;
@@ -270,7 +275,7 @@ export function buildTrajectoryIndex(
 		const label = item.label ?? eventKindLabel(item.kind);
 		const preview = i < detailLimit && item.preview ? ` · ${clip(item.preview, 80)}` : "";
 		const line = `- [${item.id}] ${label}${preview}`;
-		if (lines.length && used + line.length + 1 > maxChars) {
+		if (lines.length && used + line.length + 1 > lineBudget) {
 			omitted = list.length - i;
 			break;
 		}
@@ -278,7 +283,7 @@ export function buildTrajectoryIndex(
 		used += line.length + 1;
 	}
 	if (omitted > 0) lines.push(`…还有 ${omitted} 条，用 read_trajectory list 查看`);
-	return `<trajectory_index source="${escapeAttr(source)}" session="${escapeAttr(sessionId)}" count="${list.length}">\n${lines.join("\n")}\n</trajectory_index>`;
+	return `${prefix}${lines.join("\n")}${suffix}`;
 }
 
 /** 选中集差异：prev/next 可为 id 数组或含 id 的对象数组。 */
