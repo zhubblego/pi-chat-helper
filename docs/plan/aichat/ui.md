@@ -87,7 +87,7 @@ v1 **不设顶部对话头**。当前模型和工具权限都在输入卡底部 
 ```
 
 - `+` 按钮（`#chat-add`）打开与 `/` 相同的 Command 层；不另做菜单。
-- 菜单外壳挂在 `.chat-card` 的 `.chat-overlay-anchor` 上，向上弹出：`bottom: calc(100% + 4px)`、左右贴齐卡片。
+- Command 层菜单外壳挂在 `.chat-card` 的 `.chat-overlay-anchor` 上，向上弹出：`bottom: calc(100% + 4px)`、左右贴齐卡片；权限/模型菜单按各自 trigger 锚定，见 §2.1 的定位表。
 - 打开菜单后焦点仍在 `#chat-palette-search`；textarea 草稿不被清空。
 
 ### 2.1 模型 + 思考级别 trigger
@@ -104,9 +104,31 @@ v1 **不设顶部对话头**。当前模型和工具权限都在输入卡底部 
 - 流式中点击 trigger、`/model` 或 `/thinking`：提示「回复中，先停止」，直接返回。
 - 模型 trigger 的 `aria-expanded` 覆盖 modelRoot/Model/Thinking 三层。
 
+#### 菜单定位（Command / 权限 / 模型）
+
+`/`、`+` 打开的命令层以及 skill/resume 子层保持卡片全宽；权限、模型菜单**不复用**这个位置，而是各自锚到 trigger。三套菜单的外观（`radius-lg`、`--dsw-menu-surface-fill`、`--dsw-menu-backdrop-filter`、`--dsw-elevation-prominent`、无边框）一致，只有定位不同。
+
+| | `/` Command 层（不改） | 权限按钮 | 模型 trigger |
+|---|---|---|---|
+| 定位基准 | `.chat-overlay-anchor`（卡片顶） | 权限按钮 | 模型 trigger |
+| 水平 | `left:0; right:0` | 左边缘 = 按钮左边缘 | 右边缘 = trigger 右边缘 |
+| 垂直 | `bottom: calc(100% + 4px)` | 底边在按钮顶边上方 4px | 底边在 trigger 顶边上方 8px |
+| 宽度 | 卡片全宽 | `fit-content`，min 144 / max 360 | `fit-content`，min 240 / max 420 |
+| 视口限 | — | `min(…, calc(100vw - 24px))` | `min(…, calc(100vw - 24px))` |
+| 最大高度 | 400px | `min(400px, 按钮上方可用空间)` | `min(400px, trigger 上方可用空间)` |
+| z-index | 100 | 100 | 100 |
+
+- 左右对齐方向跟着 trigger 在行内的位置走：权限在 `.chat-tools`（靠左），所以从按钮左边缘向右长；模型在 `.chat-trailing`（靠右），所以从 trigger 右边缘向左长。
+- 4px 与 8px 不是笔误：权限菜单走通用 `MenuSurface`/portal，向上翻转用 `anchor(top) + 4px`；模型菜单走 ModelSelect，用 `anchor(top) + 8px`。
+- 不用 CSS anchor positioning：`.chat-row` 的 `container-type: inline-size` 会建立包含块，令其后代的 `position: fixed` 相对 `.chat-row`；且 trigger 在 DOM 中晚于 `.chat-overlay-anchor`，不满足 anchor 元素先出现的要求。实现上用 JS 读取 `getBoundingClientRect()`，把 trigger 坐标换算到 `.chat-overlay-anchor` 的绝对定位坐标系，菜单仍为 `position: absolute`。
+- 换算公式：`bottom = anchor.bottom - trigger.top + offset`；权限 `left = trigger.left - anchor.left`；模型 `right = anchor.right - trigger.right`。宽度写 `fit-content` 与 min/max；高度取 `min(400px, max(120, trigger.top - offset - 12))`。
+- 打开后量一次菜单宽度，若左对齐时右边缘或右对齐时左边缘超出视口 12px，用 `left/right` clamp 回 12px 边距内。
+- modelRoot / Model / Thinking 共用同一个 `#chat-palette` 元素，切层不重建容器；每次切层、窗口 resize、对话区滚动时重算，因此位置和宽度不跳变。
+- 关闭菜单或回到 Command 层时清除内联定位，恢复 `left:0; right:0; bottom:calc(100% + 4px)`；`/` 层位置不退化。
+
 ### 2.2 工具权限 trigger
 
-- 位置：`.chat-row > .chat-tools > .chat-modes`，紧挨 `+` 按钮右侧；菜单 `#chat-profile-menu` 与主菜单同锚点向上弹出。
+- 位置：`.chat-row > .chat-tools > .chat-modes`，紧挨 `+` 按钮右侧；菜单 `#chat-profile-menu` 独立锚定到该按钮，左边缘对齐、底边在按钮顶边上方 4px（见上表）。
 - 外观：dsh PermissionSelect trigger（`inline-flex`/gap4/28px/padding 0 4px 0 8px/radius-sm/透明底）；右侧 chevron 为真实 SVG；有 `triggerIcon` 时窄容器可只留图标。
 - 三态：`仅对话`（no-tools）/ `只读`（read-only，默认）/ `全量`（full）。
 - 点击：弹出小菜单，列出三档与一句说明：
@@ -184,7 +206,7 @@ stateDiagram-v2
 ```
 
 - 菜单外壳：`border-radius: var(--dsw-radius-lg)`、`background: var(--dsw-menu-surface-fill)`、`backdrop-filter: var(--dsw-menu-backdrop-filter)`、`box-shadow: var(--dsw-elevation-prominent)`，无边框；列表容器 padding 4px。
-- 菜单位置：`.chat-overlay-anchor` 挂在 `.chat-card` 顶部，菜单 `bottom: calc(100% + 4px); left:0; right:0; z-index:100; max-height:400px; overflow:hidden`。
+- 菜单位置：Command 层（以及 skill/resume 子层）使用 `.chat-overlay-anchor` 挂在 `.chat-card` 顶部，菜单 `bottom: calc(100% + 4px); left:0; right:0; z-index:100; max-height:400px; overflow:hidden`；权限/模型菜单按 trigger 锚定，见 §2.1 定位表。
 - 每行（`.chat-palette-item`）：`min-height:34px`、`padding:6px 8px`、`border-radius: var(--dsw-radius-md)`、13/20；高亮/键盘选中用 `--dsw-alias-interactive-bg-hover`，不用选中蓝。
 - 分组标题（`.chat-palette-group`）：`padding:6px 8px`、11/15、`--dsw-alias-label-tertiary`。次文本（`.chat-palette-hint`）：右对齐、12/18、单行省略。
 - 顶部搜索行固定：`.chat-palette-head` 包 `#chat-palette-search`；下方 `#chat-palette-list` 单独滚动。
