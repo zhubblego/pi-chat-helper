@@ -134,7 +134,7 @@ GET /api/chat/models?source=pi&session=<id>[&thread=<id>][&refresh=1]
 - `models` 的集合是 `get_available_models` 中 provider 属于「显式配置集」的子集。显式配置集 = `<agentDir>/models.json` 的 `providers` 键 ∪ `<agentDir>/auth.json` 顶层有效条目（即用户用 `/login` 显式登录过的 provider）。`models-store.json` 是 pi 自动抓取的远端目录缓存，**不参与判定**；两个配置文件是软链时用 `readFileSync` 直接读（跟随软链）。
 - `auth.json` 条目形如 `{ "<provider>": { "type": "api_key", "key": "..." } }`；只统计至少有一个非 `type` 非空值的条目。`key` 为空、只有 `type` 的残条不算有效配置。
 - 过滤只按 `provider` 键精确匹配（`Set.has` / `Object.prototype.hasOwnProperty`），不按 id、前缀或名称猜，大小写也按原样。两个配置文件每次请求读取一次，不放进 `modelsCache`。
-- 回退：两个文件都不可用/结构不符，或都没有有效 provider 时，**返回全量 `get_available_models`**，绝不返回空列表；此时响应带一条 `warning` 说明原因。只要显式配置集非空，就按配置过滤，不回退。
+- 回退：**两个文件都不可用/结构不符**，或**两个文件都可用但都没有有效 provider**时，返回全量 `get_available_models`，并带一条 `warning` 说明原因。只要有一个文件可用且不是两文件俱空，就按显式配置集过滤，不回退（过滤结果可能为空，此时当前模型仍会补首位）。
 - 当前模型始终可见：过滤后若 `current` 的 `(provider,id)` 不在 `models` 中，把它补到 `models` 首位（带展示字段与 `providerName`），前端仍按 `current` 打勾。provider 在候选集里但目录里没有模型时，静默无该项，不报错。
 - 这是对 pi 自身语义的**有意偏离**：pi 的 `getProviderAuthStatus().configured` 会把环境变量凭据也算作 configured，所以 pi TUI 会把只配了 `ANTHROPIC_AUTH_TOKEN` / `ZAI_API_KEY` 的 anthropic、zai 完整目录列出来；本接口只认 `models.json` 或 `/login` 的显式配置，环境变量凭据未经任何验证，不列。**不要把它改回 pi 的凭据语义。**
 - `refresh=1` 仍只控制是否重新调用 `get_available_models`；`modelsCache` 继续保存全量列表，过滤只发生在出口。此接口不额外做网络探活。
