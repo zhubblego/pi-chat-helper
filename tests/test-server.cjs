@@ -317,6 +317,7 @@ async function stopServer(child) {
 		writeSession(path.join(chatSessions, "--c2--"), { id: "cs-3", cwd: otherProject, first: "对话三" });
 		writeSession(path.join(chatSessions, "--c2--"), { id: "cs-4", cwd: otherProject, first: "对话四" });
 		writeSession(path.join(chatSessions, "--c2--"), { id: "cs-5", cwd: otherProject, first: "对话五" });
+		writeSession(path.join(chatSessions, "--c1--"), { id: "cs-empty", cwd: chatProject, first: "空对话" });
 
 		// 技能夹具：demo（仅手动）/ big（33k）/ huge（200001）
 		const skillRoot = path.join(tmp, "chat-skill-fixtures");
@@ -364,6 +365,9 @@ async function stopServer(child) {
 		writeUserThread("cs-4", "thread-s4");
 		writeUserThread("cs-4", "thread-ord");
 
+		const chatAgent = path.join(tmp, "chat-agent");
+		fs.mkdirSync(chatAgent, { recursive: true });
+
 		const chatTrace = path.join(tmp, "chat-pi-trace.log");
 		const modelsFailFile = path.join(tmp, "models-fail.flag");
 		const commandsFailFile = path.join(tmp, "commands-fail.flag");
@@ -381,6 +385,7 @@ async function stopServer(child) {
 			port: 0,
 			chat: true,
 			chatDir,
+			agentDir: chatAgent,
 			piBin: { cmd: process.execPath, argsPrefix: [FAKE], mode: false, display: "fake-pi" },
 			chatPingMs: 25,
 		});
@@ -393,6 +398,35 @@ async function stopServer(child) {
 			});
 		const postJson = (url, body) =>
 			fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+		// 空 chatDir + settings.json 默认模型：GET thread 不应 spawn child。
+		const defaultAgent = path.join(tmp, "default-agent");
+		fs.mkdirSync(defaultAgent, { recursive: true });
+		fs.writeFileSync(
+			path.join(defaultAgent, "settings.json"),
+			JSON.stringify({ defaultProvider: "litellm", defaultModel: "glm-5.3" }),
+		);
+		const defaultServer = await createTrajectoryServer({
+			scope: "all",
+			webDir: WEB,
+			sessionsRoot: chatSessions,
+			codexRoot: path.join(tmp, "no-codex"),
+			port: 0,
+			chat: true,
+			chatDir: path.join(tmp, "default-chat"),
+			agentDir: defaultAgent,
+			piBin: { cmd: process.execPath, argsPrefix: [FAKE], mode: false, display: "fake-pi" },
+		});
+		const defaultThread = await (await fetch(`${defaultServer.url}api/chat/thread?source=pi&session=cs-empty`)).json();
+		check(
+			"thread：空 chatDir 读取 settings.json 默认模型",
+			defaultThread.thread?.exists === false &&
+				defaultThread.thread?.model?.provider === "litellm" &&
+				defaultThread.thread?.model?.id === "glm-5.3" &&
+				defaultThread.thread?.model?.name === "glm-5.3",
+			JSON.stringify(defaultThread.thread?.model),
+		);
+		await defaultServer.close();
 
 		// ---- T9：Host / Origin / Content-Type / 大小 / 路径 ----
 		const chatPort = new URL(chatBase).port;

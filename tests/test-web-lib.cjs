@@ -469,12 +469,31 @@ const check = (label, cond, extra = "") => {
 	);
 	const modelLabelTag = /<span id="chat-model-label"[^>]*>/.exec(indexSource)?.[0] ?? "";
 	check(
-		"无顶部模型/新建菜单；当前模型为纯文本",
+		"无顶部模型/新建菜单；当前模型为 chip",
 		modelLabelTag.includes('class="chat-model-label"') &&
 			!indexSource.includes('id="chat-model"') &&
 			!indexSource.includes('id="chat-new"') &&
 			!indexSource.includes('id="chat-head"'),
 		modelLabelTag,
+	);
+	const modelChipBlock = /\.chat-model-label \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
+	check(
+		"模型 chip：胶囊尺寸 + 1px 中性边框 + 不挤压发送按钮",
+		/padding: 3px 10px/.test(modelChipBlock) &&
+			/border-radius: 999px/.test(modelChipBlock) &&
+			/background: var\(--dsw-alias-bg-layer-2\)/.test(modelChipBlock) &&
+			/box-shadow: inset 0 0 0 1px var\(--dsw-alias-border-l2\)/.test(modelChipBlock) &&
+			/flex: 0 1 auto/.test(modelChipBlock) &&
+			/max-width: 45%/.test(modelChipBlock),
+		modelChipBlock,
+	);
+	check(
+		"模型文案：加载中/默认模型，不出现模型未加载",
+		!chatSource.includes("模型未加载") &&
+			!indexSource.includes("模型未加载") &&
+			chatSource.includes("读取模型中…") &&
+			chatSource.includes("默认模型") &&
+			indexSource.includes("读取模型中…"),
 	);
 	check(
 		"模型切换只走 /model 命令，保留流式提示",
@@ -570,7 +589,7 @@ const check = (label, cond, extra = "") => {
 		),
 	);
 	check("输入卡状态/上下文/面板/技能占位就位", ["chat-model-label", "chat-profile", "chat-context", "chat-palette", "chat-skill"].every((id) => indexSource.includes(`id="${id}"`)));
-	check("权限 chip 在 chat-row 内，模型标签为纯文本", indexSource.indexOf('class="chat-row"') < indexSource.indexOf('id="chat-profile"') && indexSource.indexOf('id="chat-profile"') < indexSource.indexOf('id="chat-send"'));
+	check("权限 chip 在 chat-row 内，模型为 chip", indexSource.indexOf('class="chat-row"') < indexSource.indexOf('id="chat-profile"') && indexSource.indexOf('id="chat-profile"') < indexSource.indexOf('id="chat-send"'));
 	check("对话栏消息仍走 markdown 渲染", chatSource.includes("mdNode(String(message.text))"));
 	check("流式/工具/错误/空态样式就位", [".chat-model-label", ".chat-tool", ".chat-msg.ai.is-streaming", ".chat-stream-cursor", ".chat-notice", ".chat-msg-error", ".chat-empty", ".chat-skeleton"].every((sel) => styleSource.includes(sel)));
 	check("输入卡与输入框圆角收敛（16px，不用 28px 的 panel 圆角）", /\.chat-card \{[^}]*border-radius: var\(--dsw-radius-lg\)/s.test(styleSource) && /\.chat-input \{[^}]*border-radius: var\(--dsw-radius-lg\)/s.test(styleSource) && !/\.chat-card \{[^}]*radius-panel/s.test(styleSource));
