@@ -15,6 +15,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildProjection } from "./session.mjs";
+import { ensureCurrentModelFirst, filterConfiguredModels } from "./chat-models.mjs";
 import { buildSystemPrompt } from "./chat-prompt.mjs";
 import { contextEventRef } from "./context-render.mjs";
 import {
@@ -788,6 +789,34 @@ export function createChatHost(deps = {}) {
 		} catch {
 			return null;
 		}
+	}
+
+	/**
+	 * 只读 <agentDir>/models.json 的 providers 键；缺失/坏 JSON/没有 providers 时回退全量。
+	 * models-store.json 是 pi 自动抓的远端目录缓存，不参与判定。
+	 */
+	function readConfiguredModelProviders() {
+		const file = join(agentDir, "models.json");
+		let text;
+		try {
+			text = readFileSync(file, "utf8");
+		} catch (err) {
+			return { providers: null, warning: `读取 models.json 失败，回退全量模型：${errorText(err)}` };
+		}
+		let parsed;
+		try {
+			parsed = JSON.parse(text);
+		} catch (err) {
+			return { providers: null, warning: `models.json 解析失败，回退全量模型：${errorText(err)}` };
+		}
+		const providers = parsed?.providers;
+		if (!providers || typeof providers !== "object" || Array.isArray(providers)) {
+			return { providers: null, warning: "models.json 缺少 providers，回退全量模型" };
+		}
+		if (Object.keys(providers).length === 0) {
+			return { providers: null, warning: "models.json.providers 为空，回退全量模型" };
+		}
+		return { providers, warning: null };
 	}
 
 	function readPiDefaultModel() {
@@ -1903,14 +1932,14 @@ export function createChatHost(deps = {}) {
 				error = errorText(err);
 			}
 		}
-		const models = modelsCache?.models ?? [];
+		const allModels = modelsCache?.models ?? [];
 
 		// current：带 thread 读该线程文件的最新 model 条目，不切 child；虚拟线程读 child 当前模型；
 		// 省略 thread 时用 child 当前模型，child 没有模型时回退到最新 session 文件。
 		let current = null;
 		if (requestedThread !== null && requestedFile) {
 			const stored = readSessionModel(requestedFile.file);
-			current = stored ? currentModelOf({ provider: stored.provider, id: stored.id }, models) : null;
+			current = stored ? currentModelOf({ provider: stored.provider, id: stored.id }, allModels) : null;
 		} else if (requestedThread !== null) {
 			// 新对话尚未落盘：不把缺失文件当错误；只有 child 确实在该线程时才取它的模型。
 			let state = null;
@@ -1921,7 +1950,7 @@ export function createChatHost(deps = {}) {
 			}
 			current =
 				record.piSessionId === requestedThread && state?.data?.model
-					? currentModelOf(state.data.model, models)
+					? currentModelOf(state.data.model, allModels)
 					: null;
 		} else {
 			let state = null;
@@ -1931,16 +1960,22 @@ export function createChatHost(deps = {}) {
 				state = null;
 			}
 			if (state?.data?.model) {
-				current = currentModelOf(state.data.model, models);
+				current = currentModelOf(state.data.model, allModels);
 			} else {
 				const latest = latestThreadFile(dirs.sessionsDir);
 				assertThreadFileSize(latest);
 				const stored = latest ? readSessionModel(latest.file) : null;
-				current = stored ? currentModelOf({ provider: stored.provider, id: stored.id }, models) : null;
+				current = stored ? currentModelOf({ provider: stored.provider, id: stored.id }, allModels) : null;
 			}
 		}
 
-		const payload = { current, models, refreshedAt: modelsCache?.refreshedAt ?? null, error };
+		// 只列 models.json.providers 里显式配置的 provider；缓存仍保留全量，仅出口过滤。
+		const configured = readConfiguredModelProviders();
+		let models = filterConfiguredModels(allModels, configured.providers);
+		if (current) {
+			models = ensureCurrentModelFirst(models, { ...current, providerName: providerNameOf(current.provider) });
+		}
+		const payload = { current, models, refreshedAt: modelsCache?.refreshedAt ?? null, error, warning: configured.warning };
 		if (threadMissing) payload.threadMissing = true;
 		sendJson(res, 200, payload);
 	}
