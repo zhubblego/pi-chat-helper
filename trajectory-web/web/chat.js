@@ -1418,7 +1418,7 @@ export function initChatPanel(deps) {
 		let group = null;
 		let index = 0;
 		for (const item of items) {
-			if (item.group !== group) {
+			if (item.group !== group && layer !== "modelRoot") {
 				nodes.push(h("div", { class: "chat-palette-group", text: item.group }));
 				group = item.group;
 			}
