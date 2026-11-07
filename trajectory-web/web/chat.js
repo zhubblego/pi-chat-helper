@@ -577,10 +577,10 @@ export function initChatPanel(deps) {
 	function renderHead() {
 		const modelEl = el("chat-model-label");
 		if (modelEl) {
-			modelEl.textContent = state.model ? modelLabel(state.model) : "模型未加载";
+			modelEl.textContent = state.model ? modelLabel(state.model) : state.loading ? "读取模型中…" : "默认模型";
 			const provider = state.model?.provider ?? "";
 			const id = state.model?.id ?? "";
-			modelEl.title = id ? `${provider}/${id}` : "用 /model 选择模型";
+			modelEl.title = id ? `${provider}/${id}` : state.loading ? "读取模型中…" : "默认模型";
 			modelEl.classList.toggle("is-reasoning", state.model?.reasoning === true);
 			modelEl.classList.toggle("is-warn", Boolean(state.modelsError));
 			if (state.modelsError) modelEl.title = `${modelEl.title} · ${state.modelsError}`;

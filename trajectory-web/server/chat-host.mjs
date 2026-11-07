@@ -467,7 +467,8 @@ function disabledCapabilities(chatDir, reason) {
 export function createChatHost(deps = {}) {
 	const env = deps.env ?? process.env;
 	const log = deps.log ?? (() => {});
-	const chatDir = resolve(deps.chatDir ?? join(deps.agentDir ?? resolveAgentDir(env), "pi-chat-helper", "chats"));
+	const agentDir = resolve(deps.agentDir ?? resolveAgentDir(env));
+	const chatDir = resolve(deps.chatDir ?? join(agentDir, "pi-chat-helper", "chats"));
 	const settingsPath = resolve(deps.settingsPath ?? join(chatDir, "settings.json"));
 	const sessionRoots = (deps.sessionRoots ?? []).filter(Boolean).map((root) => resolve(root));
 	/** @type {Map<string, object>} */
@@ -779,6 +780,32 @@ export function createChatHost(deps = {}) {
 		}
 	}
 
+	/** 只读 <agentDir>/settings.json 的默认模型；不 spawn pi。 */
+	function readPiDefaultModel() {
+		try {
+			const parsed = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8"));
+			const provider = typeof parsed?.defaultProvider === "string" ? parsed.defaultProvider : "";
+			const id = typeof parsed?.defaultModel === "string" ? parsed.defaultModel : "";
+			return provider && id ? { provider, id } : null;
+		} catch {
+			return null;
+		}
+	}
+
+	/** 新对话的默认模型；先取 settings，再尝试用已缓存的模型列表补展示字段。 */
+	function defaultThreadModel() {
+		const fallback = readPiDefaultModel();
+		if (!fallback) return null;
+		const listed = modelsCache?.models?.find((item) => item.provider === fallback.provider && item.id === fallback.id);
+		if (listed) return { ...listed };
+		return {
+			provider: fallback.provider,
+			providerName: providerNameOf(fallback.provider),
+			id: fallback.id,
+			name: fallback.id,
+		};
+	}
+
 	function virtualThread(source, sessionId, id, warnings = []) {
 		return {
 			thread: {
@@ -790,7 +817,7 @@ export function createChatHost(deps = {}) {
 				cwd: null,
 				createdAt: null,
 				updatedAt: null,
-				model: null,
+				model: defaultThreadModel(),
 				profile: DEFAULT_PROFILE,
 				messages: [],
 			},

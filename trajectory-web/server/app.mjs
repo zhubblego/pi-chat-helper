@@ -391,6 +391,7 @@ export function createTrajectoryServer(options) {
 			: options.piBin;
 	const chat = chatEnabled
 		? createChatHost({
+				agentDir: options.agentDir,
 				chatDir: options.chatDir ?? join(options.agentDir ?? resolveAgentDir(), "pi-chat-helper", "chats"),
 				pi: piBin,
 				hostEntry: options.hostEntry,
