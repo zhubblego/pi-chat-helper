@@ -351,8 +351,9 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 		JSON.stringify(withCurrent),
 	);
 	check(
-		"ensureCurrentModelFirst：已在列表/空 current 不重复",
-		chatModels.ensureCurrentModelFirst([modelA, modelC], modelC).length === 2 &&
+		"ensureCurrentModelFirst：已在列表时移到首位 / 空 current 不重复",
+		chatModels.ensureCurrentModelFirst([modelA, modelC], modelC)[0]?.provider === "anthropic" &&
+			chatModels.ensureCurrentModelFirst([modelA, modelC], modelC).length === 2 &&
 			chatModels.ensureCurrentModelFirst([modelA], null).length === 1,
 	);
 	const sessionModelFile = path.join(tmp, "session-models.jsonl");
