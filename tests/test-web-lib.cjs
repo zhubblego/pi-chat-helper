@@ -467,25 +467,38 @@ const check = (label, cond, extra = "") => {
 			chatSource.includes("formatContextWindow") &&
 			chatSource.includes("modelLabel"),
 	);
-	const modelLabelTag = /<span id="chat-model-label"[^>]*>/.exec(indexSource)?.[0] ?? "";
+	const modelLabelTag = /<button id="chat-model-label"[^>]*>/.exec(indexSource)?.[0] ?? "";
 	check(
-		"无顶部模型/新建菜单；当前模型为 chip",
+		"无顶部模型/新建菜单；当前模型为 dsh select 按钮",
 		modelLabelTag.includes('class="chat-model-label"') &&
 			!indexSource.includes('id="chat-model"') &&
 			!indexSource.includes('id="chat-new"') &&
 			!indexSource.includes('id="chat-head"'),
 		modelLabelTag,
 	);
-	const modelChipBlock = /\.chat-model-label \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
+	const selectBlock = /\.chat-profile,\n\.chat-model-label \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
 	check(
-		"模型 chip：胶囊尺寸 + 1px 中性边框 + 不挤压发送按钮",
-		/padding: 3px 10px/.test(modelChipBlock) &&
-			/border-radius: 999px/.test(modelChipBlock) &&
-			/background: var\(--dsw-alias-bg-layer-2\)/.test(modelChipBlock) &&
-			/box-shadow: inset 0 0 0 1px var\(--dsw-alias-border-l2\)/.test(modelChipBlock) &&
-			/flex: 0 1 auto/.test(modelChipBlock) &&
-			/max-width: 45%/.test(modelChipBlock),
-		modelChipBlock,
+		"模型/权限统一 dsh select：28px、radius-sm、chevron、无 inset 边框",
+		/padding: 0 20px 0 8px/.test(selectBlock) &&
+			/height: 28px/.test(selectBlock) &&
+			/border-radius: var\(--dsw-radius-sm\)/.test(selectBlock) &&
+			/background-image: url\("data:image\/svg\+xml/.test(selectBlock) &&
+			/max-width: 220px/.test(selectBlock) &&
+			!selectBlock.includes("box-shadow: inset"),
+		selectBlock,
+	);
+	const chatAddTag = /<button id="chat-add"[^>]*>/.exec(indexSource)?.[0] ?? "";
+	check(
+		"输入卡 dsh 结构：+ / 权限 / 模型 / 发送",
+		chatAddTag.includes('aria-haspopup="listbox"') &&
+			chatAddTag.includes('aria-expanded="false"') &&
+			indexSource.indexOf('class="chat-tools"') < indexSource.indexOf('id="chat-add"') &&
+			indexSource.indexOf('id="chat-add"') < indexSource.indexOf('class="chat-modes"') &&
+			indexSource.indexOf('id="chat-profile"') < indexSource.indexOf('class="chat-trailing"') &&
+			indexSource.indexOf('class="chat-standard-controls"') < indexSource.indexOf('id="chat-model-label"') &&
+			indexSource.indexOf('id="chat-model-label"') < indexSource.indexOf('id="chat-send"') &&
+			indexSource.indexOf('class="chat-overlay-anchor"') < indexSource.indexOf('class="chat-accessory"'),
+		JSON.stringify({ chatAddTag, head: indexSource.indexOf('class="chat-overlay-anchor"'), accessory: indexSource.indexOf('class="chat-accessory"') }),
 	);
 	check(
 		"模型文案：加载中/默认模型，不出现模型未加载",
@@ -496,11 +509,65 @@ const check = (label, cond, extra = "") => {
 			indexSource.includes("读取模型中…"),
 	);
 	check(
-		"模型切换只走 /model 命令，保留流式提示",
+		"模型切换：/model 与控件点击共用 Model 层",
 		chatSource.includes('id: "model"') &&
 			chatSource.includes("openPalette(\"model\"") &&
+			chatSource.includes("if (modelBtn)") &&
 			chatSource.includes('pushNotice("回复中，先停止"') &&
 			!chatSource.includes("function openModelPicker()"),
+	);
+
+	const rowBlock = /\.chat-row \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
+	const groupsBlock = /\.chat-tools,\n\.chat-modes,\n\.chat-trailing \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
+	const addBlock = /#chat-add \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
+	const sendBlock = /\.chat-send \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
+	check(
+		"输入卡行布局照抄 dsh：space-between/gap12/padding 2 8 6/container",
+		/flex-wrap: wrap/.test(rowBlock) &&
+			/justify-content: space-between/.test(rowBlock) &&
+			/gap: 12px/.test(rowBlock) &&
+			/padding: 2px 8px 6px/.test(rowBlock) &&
+			/container-type: inline-size/.test(rowBlock) &&
+			/display: flex/.test(groupsBlock) &&
+			/margin-left: auto/.test(styleSource) &&
+			/width: 28px/.test(addBlock) &&
+			/height: 28px/.test(addBlock) &&
+			/border-radius: 999px/.test(addBlock) &&
+			/transform: translateY\(-2px\)/.test(sendBlock) &&
+			/@container \(max-width: 560px\)[\s\S]*?gap: 8px/.test(styleSource),
+		JSON.stringify({ rowBlock, groupsBlock, addBlock, sendBlock }),
+	);
+
+	const menuShellBlock = /\.chat-palette,\n\.chat-profile-menu \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
+	const menuItemBlock = /\.chat-palette-item \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
+	const menuGroupBlock = /\.chat-palette-group \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
+	const menuHintBlock = /\.chat-palette-hint \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
+	check(
+		"菜单复刻 dsh：prominent 表面 / 400 高 / item 34px / 右对齐 hint",
+		/border-radius: var\(--dsw-radius-lg\)/.test(menuShellBlock) &&
+			/background: var\(--dsw-menu-surface-fill\)/.test(menuShellBlock) &&
+			/backdrop-filter: var\(--dsw-menu-backdrop-filter\)/.test(menuShellBlock) &&
+			/box-shadow: var\(--dsw-elevation-prominent\)/.test(menuShellBlock) &&
+			/bottom: calc\(100% \+ 4px\)/.test(menuShellBlock) &&
+			/max-height: 400px/.test(menuShellBlock) &&
+			/overflow: hidden/.test(menuShellBlock) &&
+			/min-height: 34px/.test(menuItemBlock) &&
+			/padding: 6px 8px/.test(menuItemBlock) &&
+			/border-radius: var\(--dsw-radius-md\)/.test(menuItemBlock) &&
+			/padding: 6px 8px/.test(menuGroupBlock) &&
+			/text-align: right/.test(menuHintBlock),
+		JSON.stringify({ menuShellBlock, menuItemBlock, menuGroupBlock, menuHintBlock }),
+	);
+
+	check(
+		"+ 按钮打开同一 Command 层；aria-expanded 同步；模型控件可点击",
+		chatSource.includes("if (addBtn)") &&
+			chatSource.includes('openPalette("command"') &&
+			chatSource.includes("function syncPaletteButtons") &&
+			chatSource.includes('addBtn?.setAttribute("aria-expanded"') &&
+			chatSource.includes('modelBtn?.setAttribute("aria-expanded"') &&
+			chatSource.includes('openPalette("model"') &&
+			!chatSource.includes("openCommandMenu("),
 	);
 	check(
 		"palette 键盘：↑↓/Enter/Tab/Esc + 面板打开时 Enter 不发送",
@@ -589,7 +656,7 @@ const check = (label, cond, extra = "") => {
 		),
 	);
 	check("输入卡状态/上下文/面板/技能占位就位", ["chat-model-label", "chat-profile", "chat-context", "chat-palette", "chat-skill"].every((id) => indexSource.includes(`id="${id}"`)));
-	check("权限 chip 在 chat-row 内，模型为 chip", indexSource.indexOf('class="chat-row"') < indexSource.indexOf('id="chat-profile"') && indexSource.indexOf('id="chat-profile"') < indexSource.indexOf('id="chat-send"'));
+	check("权限/模型在 chat-row 内，发送最后", indexSource.indexOf('class="chat-row"') < indexSource.indexOf('id="chat-profile"') && indexSource.indexOf('id="chat-profile"') < indexSource.indexOf('id="chat-model-label"') && indexSource.indexOf('id="chat-model-label"') < indexSource.indexOf('id="chat-send"'));
 	check("对话栏消息仍走 markdown 渲染", chatSource.includes("mdNode(String(message.text))"));
 	check("流式/工具/错误/空态样式就位", [".chat-model-label", ".chat-tool", ".chat-msg.ai.is-streaming", ".chat-stream-cursor", ".chat-notice", ".chat-msg-error", ".chat-empty", ".chat-skeleton"].every((sel) => styleSource.includes(sel)));
 	check("输入卡与输入框圆角收敛（16px，不用 28px 的 panel 圆角）", /\.chat-card \{[^}]*border-radius: var\(--dsw-radius-lg\)/s.test(styleSource) && /\.chat-input \{[^}]*border-radius: var\(--dsw-radius-lg\)/s.test(styleSource) && !/\.chat-card \{[^}]*radius-panel/s.test(styleSource));
