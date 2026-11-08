@@ -107,26 +107,27 @@ const check = (label, cond, extra = "") => {
 		JSON.stringify(summaryLong),
 	);
 	const anchorRect = { left: 100, right: 700, top: 500, bottom: 500 };
-	const triggerRect = { left: 600, right: 680, top: 700, bottom: 728 };
-	const leftPos = computeAnchoredMenuPosition({ anchorRect, triggerRect, offset: 4, align: "left", menuWidth: 144, viewportWidth: 800 });
-	const rightPos = computeAnchoredMenuPosition({ anchorRect, triggerRect, offset: 8, align: "right", menuWidth: 240, viewportWidth: 800 });
+	const leftTrigger = { left: 350, right: 430, top: 700, bottom: 728 };
+	const rightTrigger = { left: 600, right: 680, top: 700, bottom: 728 };
+	const leftPos = computeAnchoredMenuPosition({ anchorRect, triggerRect: leftTrigger, offset: 4, align: "left", menuWidth: 144, boundsWidth: 600 });
+	const rightPos = computeAnchoredMenuPosition({ anchorRect, triggerRect: rightTrigger, offset: 8, align: "right", menuWidth: 240, boundsWidth: 600 });
 	check(
-		"锚定换算：权限左对齐 / 模型右对齐 / 4px 与 8px",
-		leftPos.left === 500 &&
+		"锚定换算：左对齐严格贴 trigger / 右对齐贴 anchor 右 / 4px 与 8px",
+		leftPos.left === leftTrigger.left - anchorRect.left &&
 			leftPos.right === null &&
 			leftPos.bottom === -196 &&
 			rightPos.left === null &&
-			rightPos.right === 20 &&
+			rightPos.right === anchorRect.right - rightTrigger.right &&
 			rightPos.bottom === -192,
 		JSON.stringify({ leftPos, rightPos }),
 	);
 	const clampedLeft = computeAnchoredMenuPosition({
 		anchorRect,
-		triggerRect: { left: 700, right: 780, top: 700, bottom: 728 },
+		triggerRect: { left: 650, right: 730, top: 700, bottom: 728 },
 		offset: 4,
 		align: "left",
 		menuWidth: 200,
-		viewportWidth: 800,
+		boundsWidth: 600,
 	});
 	const clampedRight = computeAnchoredMenuPosition({
 		anchorRect,
@@ -134,7 +135,15 @@ const check = (label, cond, extra = "") => {
 		offset: 8,
 		align: "right",
 		menuWidth: 240,
-		viewportWidth: 800,
+		boundsWidth: 600,
+	});
+	const overwide = computeAnchoredMenuPosition({
+		anchorRect,
+		triggerRect: { left: 200, right: 280, top: 700, bottom: 728 },
+		offset: 4,
+		align: "left",
+		menuWidth: 700,
+		boundsWidth: 600,
 	});
 	const lowPos = computeAnchoredMenuPosition({
 		anchorRect,
@@ -142,12 +151,17 @@ const check = (label, cond, extra = "") => {
 		offset: 8,
 		align: "right",
 		menuWidth: 240,
-		viewportWidth: 800,
+		boundsWidth: 600,
 	});
 	check(
-		"锚定换算：视口 12px clamp 与可用高度下限",
-		clampedLeft.left === 488 && clampedRight.right === 448 && lowPos.bottom === 308 && lowPos.maxHeight === 180,
-		JSON.stringify({ clampedLeft, clampedRight, lowPos }),
+		"锚定换算：可用区 clamp（含菜单超宽）与可用高度下限",
+		clampedLeft.left === 400 &&
+			clampedRight.right === 360 &&
+			overwide.left === 0 &&
+			overwide.left >= 0 &&
+			lowPos.bottom === 308 &&
+			lowPos.maxHeight === 180,
+		JSON.stringify({ clampedLeft, clampedRight, overwide, lowPos }),
 	);
 	check(
 		"formatContextWindow：1M/200K/128K/32000",
@@ -637,8 +651,15 @@ const check = (label, cond, extra = "") => {
 			chatSource.includes("tr.right") &&
 			chatSource.includes("tr.left") &&
 			chatSource.includes("menu.style.width = \"fit-content\"") &&
-			chatSource.includes("min(240px, calc(100vw - 24px))") &&
-			chatSource.includes("min(144px, calc(100vw - 24px))") &&
+			chatSource.includes("min(240px, 100%)") &&
+			chatSource.includes("min(144px, 100%)") &&
+			chatSource.includes("min(260px, 100%)") &&
+			chatSource.includes("const boundsWidth = ar.right - ar.left") &&
+			chatSource.includes("const availableWidth") &&
+			chatSource.includes("menu.style.width = `${Math.max(0, availableWidth)}px`") &&
+			!chatSource.includes("viewportWidth") &&
+			!chatSource.includes("calc(100vw - 24px)") &&
+			!styleSource.includes("calc(100vw - 24px)") &&
 			chatSource.includes("ANCHORED_PALETTE_LAYERS") &&
 			chatSource.includes("MODEL_MENU_ANCHOR") &&
 			chatSource.includes("PROFILE_MENU_ANCHOR") &&
@@ -844,8 +865,9 @@ const check = (label, cond, extra = "") => {
 		indexSource.includes('id="chat-context-menu"') &&
 			indexSource.includes('role="dialog"') &&
 			/width: fit-content/.test(contextMenuBlock) &&
-			/min-width:min\(260px/.test(contextMenuBlock) &&
-			/max-width:min\(420px/.test(contextMenuBlock) &&
+			/min-width:min\(260px, 100%\)/.test(contextMenuBlock) &&
+			/max-width:min\(420px, 100%\)/.test(contextMenuBlock) &&
+			!contextMenuBlock.includes("100vw") &&
 			/border-radius: var\(--dsw-radius-lg\)/.test(styleSource) &&
 			/var\(--dsw-menu-surface-fill\)/.test(styleSource) &&
 			chatSource.includes("renderContextMenu") &&
@@ -853,6 +875,25 @@ const check = (label, cond, extra = "") => {
 			chatSource.includes("chat-context-menu-list") &&
 			chatSource.includes("chat-context-menu-new"),
 		JSON.stringify({ contextMenuBlock }),
+	);
+	const contextRowBlock = /\.chat-context-row \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
+	const contextRowMainBlock = /\.chat-context-row-main \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
+	const contextRemoveBlock = /\.chat-context-row-remove \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
+	const contextHeadBlock = /\.chat-context-menu-head,\n\.chat-context-menu-foot \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
+	check(
+		"上下文条目尺寸对齐项目菜单：34px / 6px 8px / 13-20 / radius-md",
+		/min-height: 34px/.test(contextRowBlock) &&
+			/padding: 6px 8px/.test(contextRowBlock) &&
+			/border-radius: var\(--dsw-radius-md\)/.test(contextRowBlock) &&
+			!/height: 30px/.test(contextRowBlock) &&
+			!/padding: 0 6px/.test(contextRowBlock) &&
+			/font-size: 13px/.test(contextRowMainBlock) &&
+			/line-height: 20px/.test(contextRowMainBlock) &&
+			/font-size: 13px/.test(contextHeadBlock) &&
+			/line-height: 20px/.test(contextHeadBlock) &&
+			/width: 18px/.test(contextRemoveBlock) &&
+			/height: 18px/.test(contextRemoveBlock),
+		JSON.stringify({ contextRowBlock, contextRowMainBlock, contextRemoveBlock, contextHeadBlock }),
 	);
 	check(
 		"上下文锚定与交互：offset 4/left、移除到 0 关闭、清空关闭、上下文摘要纯函数",
