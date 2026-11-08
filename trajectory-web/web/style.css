@@ -1888,12 +1888,14 @@ mark.ev-hit {
 	flex: none;
 	gap: 8px;
 	padding: 6px 8px;
+	font-size: 13px;
+	line-height: 20px;
 }
 
 .chat-context-menu-title {
 	color: var(--dsw-alias-label-caption);
-	font-size: 12px;
-	line-height: 18px;
+	font-size: 13px;
+	line-height: 20px;
 }
 
 .chat-context-menu-clear,
@@ -1903,8 +1905,8 @@ mark.ev-hit {
 	border-radius: var(--dsw-radius-sm);
 	background: transparent;
 	color: var(--dsw-alias-link);
-	font-size: 12px;
-	line-height: 18px;
+	font-size: 13px;
+	line-height: 20px;
 	cursor: pointer;
 }
 
@@ -1938,11 +1940,11 @@ mark.ev-hit {
 	display: flex;
 	align-items: center;
 	gap: 6px;
-	height: 30px;
+	min-height: 34px;
 	box-sizing: border-box;
-	padding: 0 6px;
+	padding: 6px 8px;
 	border: 1px solid transparent;
-	border-radius: var(--dsw-radius-sm);
+	border-radius: var(--dsw-radius-md);
 }
 
 .chat-context-row.is-invalid {
@@ -1960,8 +1962,8 @@ mark.ev-hit {
 	border: 0;
 	background: transparent;
 	color: var(--dsw-alias-label-primary);
-	font-size: 12px;
-	line-height: 18px;
+	font-size: 13px;
+	line-height: 20px;
 	text-align: left;
 	cursor: pointer;
 }
@@ -2025,8 +2027,8 @@ mark.ev-hit {
 	position: absolute;
 	z-index: 100;
 	width: fit-content;
-	min-width:min(260px, calc(100vw - 24px));
-	max-width:min(420px, calc(100vw - 24px));
+	min-width:min(260px, 100%);
+	max-width:min(420px, 100%);
 }
 
 .chat-palette.is-anchored,

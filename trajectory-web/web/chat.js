@@ -40,20 +40,20 @@ const ANCHORED_PALETTE_LAYERS = new Set(["modelRoot", "model", "thinking"]);
 const PROFILE_MENU_ANCHOR = Object.freeze({
 	offset: 4,
 	align: "left",
-	minWidth: "min(144px, calc(100vw - 24px))",
-	maxWidth: "min(360px, calc(100vw - 24px))",
+	minWidth: "min(144px, 100%)",
+	maxWidth: "min(360px, 100%)",
 });
 const MODEL_MENU_ANCHOR = Object.freeze({
 	offset: 8,
 	align: "right",
-	minWidth: "min(240px, calc(100vw - 24px))",
-	maxWidth: "min(420px, calc(100vw - 24px))",
+	minWidth: "min(240px, 100%)",
+	maxWidth: "min(420px, 100%)",
 });
 const CONTEXT_MENU_ANCHOR = Object.freeze({
 	offset: 4,
 	align: "left",
-	minWidth: "min(260px, calc(100vw - 24px))",
-	maxWidth: "min(420px, calc(100vw - 24px))",
+	minWidth: "min(260px, 100%)",
+	maxWidth: "min(420px, 100%)",
 	maxHeight: 360,
 });
 const COMMAND_ITEMS = Object.freeze([
@@ -1644,13 +1644,20 @@ export function initChatPanel(deps) {
 		menu.style.width = "fit-content";
 		menu.style.minWidth = minWidth;
 		menu.style.maxWidth = maxWidth;
+		const boundsWidth = ar.right - ar.left;
+		const triggerLeft = tr.left - ar.left;
+		const triggerRight = tr.right - ar.left;
+		const availableWidth = align === "right" ? triggerRight : boundsWidth - triggerLeft;
+		if ((menu.offsetWidth || 0) > availableWidth) {
+			menu.style.width = `${Math.max(0, availableWidth)}px`;
+		}
 		const pos = computeAnchoredMenuPosition({
 			anchorRect: { left: ar.left, right: ar.right, top: ar.top, bottom: ar.bottom },
 			triggerRect: { left: tr.left, right: tr.right, top: tr.top, bottom: tr.bottom },
 			offset,
 			align,
 			menuWidth: menu.offsetWidth || 0,
-			viewportWidth: window.innerWidth,
+			boundsWidth,
 		});
 		if (pos.left === null) {
 			menu.style.left = "auto";

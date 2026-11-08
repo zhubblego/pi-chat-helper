@@ -202,9 +202,9 @@ export function forgetThread(map, key) {
  * @param {{left:number,right:number,top:number,bottom:number}} input.triggerRect
  * @param {number} [input.offset] 菜单底边距 trigger 顶边的距离（权限 4、模型 8）
  * @param {"left"|"right"} [input.align] 水平对齐方向
- * @param {number} [input.menuWidth] 菜单测量宽度，用于视口 clamp
- * @param {number} [input.viewportWidth] 视口宽度
- * @param {number} [input.margin] 视口安全边距
+ * @param {number} [input.menuWidth] 菜单测量宽度，用于可用区 clamp
+ * @param {number} [input.boundsWidth] 锚点可用宽度（anchorRect.right - anchorRect.left）
+ * @param {number} [input.margin] 高度安全边距，不参与水平 clamp
  * @returns {{left:number|null,right:number|null,bottom:number,maxHeight:number}}
  */
 export function computeAnchoredMenuPosition(input = {}) {
@@ -213,25 +213,23 @@ export function computeAnchoredMenuPosition(input = {}) {
 	const offset = Number(input.offset) || 0;
 	const margin = Number.isFinite(input.margin) ? Number(input.margin) : 12;
 	const menuWidth = Math.max(0, Number(input.menuWidth) || 0);
-	const viewportWidth = Math.max(0, Number(input.viewportWidth) || 0);
+	const boundsWidth = Math.max(0, Number(input.boundsWidth) || 0);
 	const bottom = Number(anchorRect.bottom) - Number(triggerRect.top) + offset;
 	const maxHeight = Math.min(400, Math.max(120, Number(triggerRect.top) - offset - margin));
 	const round = (value) => Math.round(value * 100) / 100;
-	const maxLeft = Math.max(margin, viewportWidth - margin - menuWidth);
-	const viewportLeft = Math.min(
-		Math.max(input.align === "right" ? Number(triggerRect.right) - menuWidth : Number(triggerRect.left), margin),
-		maxLeft,
-	);
+	const maxLeft = Math.max(0, boundsWidth - menuWidth);
+	const desiredLeft = (input.align === "right" ? Number(triggerRect.right) - menuWidth : Number(triggerRect.left)) - Number(anchorRect.left);
+	const left = Math.min(Math.max(desiredLeft, 0), maxLeft);
 	if (input.align === "right") {
 		return {
 			left: null,
-			right: round(Number(anchorRect.right) - (viewportLeft + menuWidth)),
+			right: round(boundsWidth - (left + menuWidth)),
 			bottom: round(bottom),
 			maxHeight: round(maxHeight),
 		};
 	}
 	return {
-		left: round(viewportLeft - Number(anchorRect.left)),
+		left: round(left),
 		right: null,
 		bottom: round(bottom),
 		maxHeight: round(maxHeight),
