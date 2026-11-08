@@ -124,6 +124,7 @@ v1 **不设顶部对话头**。当前模型和工具权限都在输入卡底部 
 - 水平 clamp 相对 `.chat-overlay-anchor` 而非视口，因为对话区是抽屉不是全屏；菜单的 `min-width`/`max-width` 用 `min(cap, 100%)`，`100%` 即卡片宽度。
 - 换算公式：`bottom = anchor.bottom - trigger.top + offset`；权限 `left = trigger.left - anchor.left`；模型 `right = anchor.right - trigger.right`。宽度写 `fit-content` 与 min/max；高度取 `min(400px, max(120, trigger.top - offset - 12))`。
 - 打开后量一次菜单宽度，把左对齐的 `left` 或右对齐的 `right` clamp 到相对 anchor 的可用区 `[0, max(0, boundsWidth - menuWidth)]`；`margin=12` 只参与高度计算，水平方向不再留视口边距。
+- 若实测宽度超过对齐边缘到卡片另一侧的可用空间（例如摘要按钮在卡片内左缩 12px，菜单内容又想撑满卡片），先把菜单宽度收缩到该可用空间，再换算坐标；这样左对齐时左边缘仍严格等于 trigger，右边缘不越出卡片，而不是靠 clamp 整体左移。
 - modelRoot / Model / Thinking 共用同一个 `#chat-palette` 元素，切层不重建容器；每次切层、窗口 resize、对话区滚动时重算，因此位置和宽度不跳变。
 - 关闭菜单或回到 Command 层时清除内联定位，恢复 `left:0; right:0; bottom:calc(100% + 4px)`；`/` 层位置不退化。
 - 权限/模型菜单会盖住卡片上部内容（包括 textarea 区域）：trigger 在卡片底部行，菜单底边又钉在 trigger 上方，这是 dsh 的预期行为，不是裁剪或定位 bug。
