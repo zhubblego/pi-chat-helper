@@ -114,15 +114,16 @@ v1 **不设顶部对话头**。当前模型和工具权限都在输入卡底部 
 | 水平 | `left:0; right:0` | 左边缘 = 按钮左边缘 | 右边缘 = trigger 右边缘 |
 | 垂直 | `bottom: calc(100% + 4px)` | 底边在按钮顶边上方 4px | 底边在 trigger 顶边上方 8px |
 | 宽度 | 卡片全宽 | `fit-content`，min 144 / max 360 | `fit-content`，min 240 / max 420 |
-| 视口限 | — | `min(…, calc(100vw - 24px))` | `min(…, calc(100vw - 24px))` |
+| 可用区限 | — | `min(…, 100%)` | `min(…, 100%)` |
 | 最大高度 | 400px | `min(400px, 按钮上方可用空间)` | `min(400px, trigger 上方可用空间)` |
 | z-index | 100 | 100 | 100 |
 
 - 左右对齐方向跟着 trigger 在行内的位置走：权限在 `.chat-tools`（靠左），所以从按钮左边缘向右长；模型在 `.chat-trailing`（靠右），所以从 trigger 右边缘向左长。
 - 4px 与 8px 不是笔误：权限菜单走通用 `MenuSurface`/portal，向上翻转用 `anchor(top) + 4px`；模型菜单走 ModelSelect，用 `anchor(top) + 8px`。
 - 不用 CSS anchor positioning：`.chat-row` 的 `container-type: inline-size` 会建立包含块，令其后代的 `position: fixed` 相对 `.chat-row`；且 trigger 在 DOM 中晚于 `.chat-overlay-anchor`，不满足 anchor 元素先出现的要求。实现上用 JS 读取 `getBoundingClientRect()`，把 trigger 坐标换算到 `.chat-overlay-anchor` 的绝对定位坐标系，菜单仍为 `position: absolute`。
+- 水平 clamp 相对 `.chat-overlay-anchor` 而非视口，因为对话区是抽屉不是全屏；菜单的 `min-width`/`max-width` 用 `min(cap, 100%)`，`100%` 即卡片宽度。
 - 换算公式：`bottom = anchor.bottom - trigger.top + offset`；权限 `left = trigger.left - anchor.left`；模型 `right = anchor.right - trigger.right`。宽度写 `fit-content` 与 min/max；高度取 `min(400px, max(120, trigger.top - offset - 12))`。
-- 打开后量一次菜单宽度，若左对齐时右边缘或右对齐时左边缘超出视口 12px，用 `left/right` clamp 回 12px 边距内。
+- 打开后量一次菜单宽度，把左对齐的 `left` 或右对齐的 `right` clamp 到相对 anchor 的可用区 `[0, max(0, boundsWidth - menuWidth)]`；`margin=12` 只参与高度计算，水平方向不再留视口边距。
 - modelRoot / Model / Thinking 共用同一个 `#chat-palette` 元素，切层不重建容器；每次切层、窗口 resize、对话区滚动时重算，因此位置和宽度不跳变。
 - 关闭菜单或回到 Command 层时清除内联定位，恢复 `left:0; right:0; bottom:calc(100% + 4px)`；`/` 层位置不退化。
 - 权限/模型菜单会盖住卡片上部内容（包括 textarea 区域）：trigger 在卡片底部行，菜单底边又钉在 trigger 上方，这是 dsh 的预期行为，不是裁剪或定位 bug。
@@ -368,17 +369,17 @@ stateDiagram-v2
 
 - 放在 `.chat-overlay-anchor` 内，与 `#chat-palette`、`#chat-profile-menu` 同级；`role="dialog"`。
 - 锚定复用 `positionAnchoredMenu()` / `computeAnchoredMenuPosition()`：anchor = `#chat-context` 按钮，`offset:4`、`align:"left"`（按钮在输入区左侧）。
-- 宽度：`width:fit-content`；`min-width:min(260px, calc(100vw - 24px))`；`max-width:min(420px, calc(100vw - 24px))`。
+- 宽度：`width:fit-content`；`min-width:min(260px, 100%)`；`max-width:min(420px, 100%)`。`100%` 是 `.chat-overlay-anchor` 宽度，即卡片宽度，不是视口宽度。
 - 外观与其它菜单一致：`border-radius:var(--dsw-radius-lg)`、`background:var(--dsw-menu-surface-fill)`、`backdrop-filter:var(--dsw-menu-backdrop-filter)`、`box-shadow:var(--dsw-elevation-prominent)`、`border:0`、`z-index:100`。
 - 结构：
-  - 头行：左 `上下文 N`（caption 色），右「清空」文字按钮。
+  - 头行：左 `上下文 N`（caption 色，`font-size:13px; line-height:20px`），右「清空」文字按钮（同字号）。
   - 分隔线 1px `--dsw-alias-border-l1`。
-  - 列表：每条一行，`display:flex; align-items:center; gap:6px; height:30px; padding:0 6px; border-radius:var(--dsw-radius-sm)`；hover 上 `--dsw-alias-interactive-bg-hover`。
+  - 列表：每条一行，`display:flex; align-items:center; gap:6px; min-height:34px; padding:6px 8px; border-radius:var(--dsw-radius-md)`；行内文字 `font-size:13px; line-height:20px`；hover 上 `--dsw-alias-interactive-bg-hover`。尺寸与 `.chat-palette-item`、权限菜单条目一致。
     - 行主体是按钮：tag（caption 色，`flex:none`）+ preview（primary 色，`flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap`）；点击 `deps.openEvent?.(ref.id)`。
     - 行尾 `×` 移除按钮，`aria-label="移除 <tag> <preview>"`；点击 `stopPropagation()` 后移除。
     - 失效条目保留红边/红字，preview 显示「失效条目」，仍可移除。
   - 分隔线。
-  - 底行：「以此新开」文字按钮，左对齐。
+  - 底行：「以此新开」文字按钮，左对齐，`font-size:13px; line-height:20px`。
 - 列表区 `max-height:min(360px, 可用空间)`；内部 `overflow-y:auto; overscroll-behavior:contain`。
 
 交互：
