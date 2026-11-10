@@ -2441,6 +2441,24 @@ el("dv-settings-menu").addEventListener("click", (e) => {
 	else if (item.dataset.lang) applyTranslateSetting({ lang: item.dataset.lang });
 	else if (item.dataset.mode) applyTranslateSetting({ mode: item.dataset.mode });
 });
+// 详情面板是滚动边界：鼠标在面板内时滚轮只滚 .dv-body，到顶/到底也不把滚动链交给 #main。
+panel.addEventListener(
+	"wheel",
+	(event) => {
+		if (event.ctrlKey) return; // 保留 Ctrl+滚轮缩放
+		event.preventDefault();
+		event.stopPropagation();
+		const body = el("dv-body");
+		if (!body || !body.contains(event.target)) return;
+		let unit = 1;
+		if (event.deltaMode === 1) unit = 16;
+		else if (event.deltaMode === 2) unit = body.clientHeight;
+		const delta = event.deltaY * unit;
+		if (!delta) return;
+		body.scrollTop = Math.max(0, Math.min(body.scrollHeight - body.clientHeight, body.scrollTop + delta));
+	},
+	{ passive: false },
+);
 el("theme-btn").addEventListener("click", cycleTheme);
 el("back-main").addEventListener("click", () => {
 	// 从派生行跳过来时，回原会话并定位回那一行；否则回派生树根（主会话最新实例）

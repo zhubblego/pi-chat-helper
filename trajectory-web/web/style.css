@@ -1117,8 +1117,9 @@ mark.ev-hit {
 	border-left-color: var(--dsw-alias-state-business-primary);
 }
 
-/* 面板本体：插在对应轨迹行下方的卡片；左边距对齐事件行预览列
-   （行 padding 10 + 剪刀 18 + 标签列 60 + 三处列间距 10×3 + 勾选 13） */
+/* 面板本体：插在对应轨迹行下方的卡片；左边距对齐事件行预览列。
+   默认四列：行 padding 10 + 剪刀 18 + 勾选 13 + 标签 60 + 三处列间距 10×3 = 131。
+   非裁剪/非选择模式会收掉列，面板必须跟着行模式左移，否则会落后于标签后的文字。 */
 .ev-panel {
 	--dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
 	margin: 2px 10px 10px 131px;
@@ -1126,6 +1127,19 @@ mark.ev-hit {
 	border-radius: var(--dsw-radius-md);
 	background: var(--dsw-alias-bg-layer-1);
 	box-shadow: var(--dsw-elevation-stroke);
+}
+
+/* 预览列起点随行级控件列收缩而左移：103 / 108 / 80（计算见上）。 */
+.ev.no-crop + .ev-panel {
+	margin-left: 103px;
+}
+
+.ev.no-select + .ev-panel {
+	margin-left: 108px;
+}
+
+.ev.no-crop.no-select + .ev-panel {
+	margin-left: 80px;
 }
 
 /* 头部：类型徽章 + 工具条（译/⧉/⚙），二者靠左排列；行本身已有预览文字，不重复标题 */
@@ -2752,6 +2766,7 @@ mark.ev-hit {
 .dv-body {
 	max-height: min(560px, 70vh);
 	overflow-y: auto;
+	overscroll-behavior: contain;
 	padding: 10px 16px 28px;
 }
 

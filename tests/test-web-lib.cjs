@@ -541,6 +541,15 @@ const check = (label, cond, extra = "") => {
 	check("单条裁剪真剔模型上下文：走 /api/crop-entry，按 entry id 存", appSource.includes("async function toggleEntryCrop") && appSource.includes('\"/api/crop-entry\"') && appSource.includes("function entryIdOf") && serverSource.includes('\"/api/crop-entry\"') && serverSource.includes("options.onCropEntry({ sessionFile: session.file, entryId, cropped })"));
 	check("裁剪与选中两套业务分开（croppedEntries / selectedEvs 互不影响）", appSource.includes("state.croppedEntries.has(entryIdOf(ev))") && appSource.includes("state.selectedEvs.has(ev.id)") && appSource.split("state.croppedEntries = new Set()").length - 1 === 2);
 	check("行级控件复用轮次控件样式 + 行内五列网格", /\.q-eye,\n\.ev-eye \{/.test(styleSource) && /\.q-check,\n\.ev-check \{/.test(styleSource) && /grid-template-columns: 18px 13px 60px 1fr auto/.test(styleSource));
+	check(
+		"详情面板左缘跟随事件行预览列（默认/无剪刀/无勾选组合）",
+		styleSource.includes(".ev.no-crop + .ev-panel") &&
+			styleSource.includes(".ev.no-select + .ev-panel") &&
+			styleSource.includes(".ev.no-crop.no-select + .ev-panel") &&
+			styleSource.includes("margin-left: 80px;") &&
+			styleSource.includes("margin-left: 103px;") &&
+			styleSource.includes("margin-left: 108px;"),
+	);
 	check("轮次头不重复展示提问正文（首行 user 事件已含，q-sum 已删）", !appSource.includes("q-sum") && !styleSource.includes(".q-sum"));
 	check("checkbox 选中是无底黑勾（自定义渲染，不用 accent-color 的黑底白勾）", !styleSource.includes("accent-color:") && /\.q-check,\n\.ev-check \{[^}]*appearance: none/s.test(styleSource) && /\.q-check:checked,\n\.ev-check:checked \{[^}]*background-image: url\("data:image\/svg\+xml/s.test(styleSource) && /body\[data-ds-dark-theme\] \.q-check:checked/.test(styleSource));
 	check("剪刀图标（两个圆环把手 + 交叉刀刃），旧眼睛图标已移除", appSource.includes("scissors: [") && !appSource.includes('svgIcon("eye")') && !appSource.includes("\teye: ["));
@@ -554,6 +563,13 @@ const check = (label, cond, extra = "") => {
 	check("翻译/复制仍以 dv-body 为正文源（工具条迁移后目标不变）", appSource.includes('el("dv-body").querySelectorAll(".md")') && appSource.includes("function panelCopyText") && appSource.includes("async function translatePanel"));
 	check("展开行高亮 + 面板样式就位", appSource.includes('classes.push("is-open")') && styleSource.includes(".ev.is-open") && styleSource.includes(".ev-panel"));
 	check("首点即高亮：attachOpenPanel 同步 is-open，closePanel 清除", appSource.includes('row.classList.add("is-open")') && appSource.includes('mainInner.querySelectorAll(".ev.is-open")'));
+	check(
+		"详情面板滚轮是滚动边界：内部滚动到顶/到底不链到外层",
+		/panel\.addEventListener\(\s*"wheel"/.test(appSource) &&
+			appSource.includes("event.preventDefault()") &&
+			appSource.includes("body.scrollTop = Math.max") &&
+			styleSource.includes("overscroll-behavior: contain"),
+	);
 	check("renderMain 先把面板停泊到 body（防 replaceChildren 摘出后 el(\"dv-*\") 空引用崩溃）", appSource.includes("if (panel.parentElement !== document.body) document.body.appendChild(panel);"));
 	check("抽屉遗迹已移除（resize 把手/标签行/悬挂侧条/宽度持久化/旧 id）", !indexSource.includes('id="drawer-resize"') && !indexSource.includes("dv-tabs") && !indexSource.includes("dv-side") && !appSource.includes("setDrawerTab") && !appSource.includes("bindDrawerResize") && !appSource.includes("tw.drawerWidth") && !appSource.includes("tw.sidetool"));
 
