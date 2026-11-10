@@ -481,7 +481,7 @@ async function stopServer(child) {
 		all = null;
 
 		// ---- 模式 A：项目范围 ----
-		project = startServer(["--scope", "project", "--session", aOld, "--port", "0", "--web", WEB]);
+		project = startServer(["--scope", "project", "--session", aOld, "--agent-dir", path.join(tmp, "project-agent"), "--port", "0", "--web", WEB]);
 		const baseA = await waitForUrl(project);
 		const listingA = await (await fetch(`${baseA}/api/sessions`)).json();
 		check("项目范围只列本项目", listingA.scope === "project" && listingA.sessions.length === 2 && listingA.sessions.every((s) => s.projectPath === "/tmp/projA"), JSON.stringify(listingA.sessions.map((s) => s.id)));
@@ -501,6 +501,7 @@ async function stopServer(child) {
 			"--sources", "pi,codex",
 			"--project-path", "/tmp/projC",
 			"--codex-root", codexRoot,
+			"--agent-dir", path.join(tmp, "project-agent-c"),
 			"--port", "0", "--web", WEB,
 		]);
 		const baseC = await waitForUrl(project);
@@ -518,6 +519,7 @@ async function stopServer(child) {
 			"--sources", "pi,codex",
 			"--project-path", "/tmp/projZ",
 			"--codex-root", codexRoot,
+			"--agent-dir", path.join(tmp, "project-agent-z"),
 			"--port", "0", "--web", WEB,
 		]);
 		const baseZ = await waitForUrl(project);
@@ -525,8 +527,78 @@ async function stopServer(child) {
 		check("project-path 不匹配退出", await stopServer(project));
 		project = null;
 
-		// ---- T3：对话 SSE（进程内，fake child） ----
 		const { createTrajectoryServer } = await import(pathToFileURL(path.join(ROOT, "trajectory-web", "server", "app.mjs")).href);
+
+		// ---- S2：全局偏好 API / 首帧主题 / 状态库持久化 ----
+		const prefsAgent = path.join(tmp, "prefs-agent");
+		fs.mkdirSync(prefsAgent, { recursive: true });
+		const prefsServer = await createTrajectoryServer({
+			scope: "all",
+			webDir: WEB,
+			sessionsRoot,
+			codexRoot,
+			port: 0,
+			chat: false,
+			agentDir: prefsAgent,
+		});
+		const prefsBase = `${prefsServer.url}api/prefs`;
+		const prefsPost = (body, headers = { "content-type": "application/json" }) =>
+			fetch(prefsBase, { method: "POST", headers, body: typeof body === "string" ? body : JSON.stringify(body) });
+		const prefsInitial = await (await fetch(prefsBase)).json();
+		check("prefs：初始 revision=0 / global 空", prefsInitial.revision === 0 && Object.keys(prefsInitial.global ?? {}).length === 0, JSON.stringify(prefsInitial));
+		const bootInitial = await (await fetch(prefsServer.url)).text();
+		check("prefs：首帧 boot 无状态库时默认 system", bootInitial.includes("window.__TW_BOOT__ = /*__TW_BOOT__*/ {\"theme\":\"system\"}"), bootInitial.slice(0, 80));
+		const prefsSaved = await prefsPost({ global: { theme: "dark", filters: { user: false }, tools: { excluded: ["bash"], excludeAll: false }, chatWidth: 440 } });
+		const prefsSavedBody = await prefsSaved.json();
+		check(
+			"prefs：POST 全局偏好并递增 revision",
+			prefsSaved.status === 200 && prefsSavedBody.revision === 1 && prefsSavedBody.global?.theme === "dark" && prefsSavedBody.global?.filters?.user === false,
+			JSON.stringify(prefsSavedBody),
+		);
+		const prefsRead = await (await fetch(prefsBase)).json();
+		check("prefs：GET 读回 POST 值", prefsRead.revision === 1 && prefsRead.global?.tools?.excluded?.[0] === "bash" && prefsRead.global?.chatWidth === 440);
+		const bootDark = await (await fetch(prefsServer.url)).text();
+		check("prefs：首帧 boot 跟随服务端 theme", bootDark.includes("window.__TW_BOOT__ = /*__TW_BOOT__*/ {\"theme\":\"dark\"}"), bootDark.slice(0, 80));
+		check("prefs：静态 /prefs.js 200", (await fetch(`${prefsServer.url}prefs.js`)).status === 200);
+		const prefsBadType = await prefsPost("{}", { "content-type": "text/plain" });
+		check("prefs：非 JSON Content-Type 403", prefsBadType.status === 403, String(prefsBadType.status));
+		const prefsUnknown = await prefsPost({ global: { nope: true } });
+		check("prefs：未知 key 400", prefsUnknown.status === 400, String(prefsUnknown.status));
+		const prefsBadTheme = await prefsPost({ global: { theme: "neon" } });
+		check("prefs：非法 theme 400", prefsBadTheme.status === 400, String(prefsBadTheme.status));
+		await prefsServer.close();
+
+		// 同一 agentDir 重启：SQLite 持久化应保留。
+		const prefsServer2 = await createTrajectoryServer({
+			scope: "all",
+			webDir: WEB,
+			sessionsRoot,
+			codexRoot,
+			port: 0,
+			chat: false,
+			agentDir: prefsAgent,
+		});
+		const prefsAfterRestart = await (await fetch(`${prefsServer2.url}api/prefs`)).json();
+		check("prefs：重启后仍为 dark/revision 1", prefsAfterRestart.revision === 1 && prefsAfterRestart.global?.theme === "dark", JSON.stringify(prefsAfterRestart));
+		await prefsServer2.close();
+
+		// 显式关闭状态库：API 503，首帧仍可渲染 system。
+		const noPrefsServer = await createTrajectoryServer({
+			scope: "all",
+			webDir: WEB,
+			sessionsRoot,
+			codexRoot,
+			port: 0,
+			chat: false,
+			agentDir: path.join(tmp, "no-prefs-agent"),
+			stateDb: false,
+		});
+		check("prefs：stateDb=false 时 API 503", (await fetch(`${noPrefsServer.url}api/prefs`)).status === 503);
+		const noPrefsBoot = await (await fetch(noPrefsServer.url)).text();
+		check("prefs：stateDb=false 时 boot 默认 system", noPrefsBoot.includes("window.__TW_BOOT__ = /*__TW_BOOT__*/ {\"theme\":\"system\"}"));
+		await noPrefsServer.close();
+
+		// ---- T3：对话 SSE（进程内，fake child） ----
 		const FAKE = path.join(__dirname, "fixtures", "fake-pi.cjs");
 		const chatSessions = path.join(tmp, "chat-sessions");
 		const chatProject = path.join(tmp, "chat-project");

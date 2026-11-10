@@ -14,6 +14,7 @@
 		"trajectory-web/index.ts",
 		"trajectory-web/server/console-bridge.d.mts",
 		"trajectory-web/server/state-db.d.mts",
+		"trajectory-web/server/app.d.mts",
 		"trajectory-web/chat-trajectory-tool.ts",
 		"trajectory-web/chat-approval.ts"
 	]

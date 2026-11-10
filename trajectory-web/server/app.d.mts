@@ -1,4 +1,5 @@
 import type { Server } from "node:http";
+import type { StateDb } from "./state-db.mjs";
 
 /** 单个工具的归属（内置 / MCP / 扩展包）。 */
 export interface ToolOriginEntry {
@@ -29,6 +30,10 @@ export interface TrajectoryServerOptions {
 	/** 静态扫描用的 pi 安装目录与 agent 目录（模式 B / 测试）。 */
 	piDir?: string;
 	agentDir?: string;
+	/** 状态库路径；默认 <agentDir>/pi-chat-helper/state.db。未传 agentDir 时 S2 默认不启用状态库。 */
+	stateDbPath?: string;
+	/** 测试/嵌入方可注入已打开的状态库；false 强制禁用。 */
+	stateDb?: StateDb | false;
 	/** 对话控制面。chat=false 强制禁用；chatDir/piBin/hostEntry 任一存在则启用。 */
 	chat?: boolean;
 	chatDir?: string;

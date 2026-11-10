@@ -16,6 +16,8 @@
  *   GET /api/sessions           会话列表（按最近活跃倒序，live = 30s 内有写入；?source=）
  *   GET /api/session?id=&v=     指定会话的 light 投影；etag 未变时 {changed:false}
  *   GET /api/event?session=&id= 单个事件的 full 载荷
+ *   GET /api/prefs             全局 UI 偏好（SQLite）
+ *   POST /api/prefs            局部更新全局 UI 偏好
  *   POST /api/translate        抽屉正文翻译转发（Google 免费通道；https_proxy 环境变量出代理）
  *   POST /api/context-edit   隐藏/解除一轮的模型上下文（需扩展注入 onContextEdit；独立模式 501）
  *
@@ -33,6 +35,7 @@ import { forwardToConsole } from "./console-forward.mjs";
 import { listSessions, DEFAULT_SESSIONS_ROOT, LIVE_WINDOW_MS } from "./sessions.mjs";
 import { listCodexSessions, readCodexSession, readGuardianApproval, DEFAULT_CODEX_ROOT } from "./codex.mjs";
 import { scanToolOrigins } from "./tool-origins.mjs";
+import { openStateDb } from "./state-db.mjs";
 
 // 翻译转发：免费通道（无 key）；目标语言白名单。Google translate_a/single 逐段，
 // 微软 Edge translatetext 批量纯数组（照 sider 同源接口：from 空 = 自动检测）。
@@ -110,8 +113,8 @@ function isJsonContentType(value) {
 	return value.split(";", 1)[0].trim().toLowerCase() === "application/json";
 }
 
-/** chat 前缀/所有 POST 的请求门：Host、Origin、chat POST Content-Type。 */
-function requestGate(req, isChatPrefix) {
+/** chat 前缀/所有 POST 的请求门：Host、Origin、需要 JSON 的 POST Content-Type。 */
+function requestGate(req, isChatPrefix, requireJson = false) {
 	const isPost = req.method === "POST";
 	if (!isChatPrefix && !isPost) return null;
 	const host = parseHostHeader(req.headers.host);
@@ -123,7 +126,7 @@ function requestGate(req, isChatPrefix) {
 		const actualPort = String(req.socket?.localPort ?? "");
 		if (parsed.port !== actualPort) return { status: 403, error: "Origin 端口与服务不一致" };
 	}
-	if (isChatPrefix && isPost && !isJsonContentType(req.headers["content-type"])) {
+	if ((isChatPrefix || requireJson) && isPost && !isJsonContentType(req.headers["content-type"])) {
 		return { status: 403, error: "Content-Type 必须为 application/json" };
 	}
 	return null;
@@ -185,6 +188,7 @@ const STATIC = new Map([
 	["/lib.js", ["lib.js", "text/javascript; charset=utf-8"]],
 	["/chat.js", ["chat.js", "text/javascript; charset=utf-8"]],
 	["/chat-lib.js", ["chat-lib.js", "text/javascript; charset=utf-8"]],
+	["/prefs.js", ["prefs.js", "text/javascript; charset=utf-8"]],
 	["/style.css", ["style.css", "text/css; charset=utf-8"]],
 	["/tokens.css", ["tokens.css", "text/css; charset=utf-8"]],
 ]);
@@ -205,6 +209,8 @@ const MAX_CACHED_PROJECTIONS = 4;
  *   toolOrigins?: Record<string, { kind: string, label: string }>,
  *   piDir?: string,
  *   agentDir?: string,
+ *   stateDbPath?: string,
+ *   stateDb?: object | false,
  *   sources?: string[],
  *   projectPath?: string,
  *   chat?: boolean,
@@ -222,7 +228,22 @@ const MAX_CACHED_PROJECTIONS = 4;
  */
 export function createTrajectoryServer(options) {
 	const webDir = resolve(options.webDir);
+	const log = options.log ?? (() => {});
 	const agentDir = resolve(options.agentDir ?? resolveAgentDir());
+	const stateDbPath = options.stateDbPath ? resolve(options.stateDbPath) : undefined;
+	const stateDbWanted = options.stateDb !== false && Boolean(options.stateDb || options.agentDir || stateDbPath);
+	const ownsStateDb = stateDbWanted && !options.stateDb;
+	let stateDb = null;
+	if (stateDbWanted) {
+		stateDb =
+			options.stateDb ??
+			openStateDb({
+				agentDir,
+				stateDbPath,
+				chatDir: options.chatDir ? resolve(options.chatDir) : join(agentDir, "pi-chat-helper", "chats"),
+				log,
+			});
+	}
 	const consolesDir = resolve(options.consolesDir ?? consolesDirFor(agentDir));
 	const sessionsRoot = options.sessionsRoot ? resolve(options.sessionsRoot) : DEFAULT_SESSIONS_ROOT;
 	const codexRoot = options.codexRoot ? resolve(options.codexRoot) : DEFAULT_CODEX_ROOT;
@@ -238,7 +259,6 @@ export function createTrajectoryServer(options) {
 	const projectPath = options.projectPath ? resolve(options.projectPath) : undefined;
 	// 源白名单：命令侧（--codex / --all）显式指定；缺省按 scope 推导（见文件头）。
 	const sourceAllow = Array.isArray(options.sources) && options.sources.length ? new Set(options.sources) : null;
-	const log = options.log ?? (() => {});
 
 	// 工具归属：模式 A 传精确映射提供者（每次请求现取，覆盖运行时才注册的工具，
 	// 如 context-mode 的 ctx_* 不在会话启动时的 getAllTools 里）；
@@ -381,6 +401,73 @@ export function createTrajectoryServer(options) {
 		res.end(text);
 	}
 
+	const PREF_THEMES = new Set(["system", "light", "dark"]);
+
+	/** prefs POST 的字段/类型校验；未知 key 交给 stateDb 统一拒绝。 */
+	function assertPrefsPatch(global) {
+		if (!global || typeof global !== "object" || Array.isArray(global)) throw new TypeError("global 需为对象");
+		if (Object.prototype.hasOwnProperty.call(global, "theme") && !PREF_THEMES.has(global.theme)) {
+			throw new TypeError("theme 非法");
+		}
+		if (Object.prototype.hasOwnProperty.call(global, "chatOpen") && typeof global.chatOpen !== "boolean") {
+			throw new TypeError("chatOpen 需为布尔值");
+		}
+		for (const key of ["chatWidth", "composerHeight"]) {
+			if (!Object.prototype.hasOwnProperty.call(global, key)) continue;
+			if (typeof global[key] !== "number" || !Number.isFinite(global[key]) || global[key] < 0) {
+				throw new TypeError(`${key} 需为非负数字`);
+			}
+		}
+		if (Object.prototype.hasOwnProperty.call(global, "filters") && (!global.filters || typeof global.filters !== "object" || Array.isArray(global.filters))) {
+			throw new TypeError("filters 需为对象");
+		}
+		if (Object.prototype.hasOwnProperty.call(global, "translate")) {
+			if (!global.translate || typeof global.translate !== "object" || Array.isArray(global.translate)) {
+				throw new TypeError("translate 需为对象");
+			}
+			if (global.translate.service !== undefined && !TRANSLATE_SERVICES.has(global.translate.service)) {
+				throw new TypeError("translate.service 非法");
+			}
+			if (global.translate.to !== undefined && !TRANSLATE_LANGS.has(global.translate.to)) {
+				throw new TypeError("translate.to 非法");
+			}
+			if (global.translate.mode !== undefined && typeof global.translate.mode !== "string") {
+				throw new TypeError("translate.mode 需为字符串");
+			}
+		}
+		if (Object.prototype.hasOwnProperty.call(global, "tools")) {
+			if (!global.tools || typeof global.tools !== "object" || Array.isArray(global.tools)) {
+				throw new TypeError("tools 需为对象");
+			}
+			if (global.tools.excluded !== undefined) {
+				if (!Array.isArray(global.tools.excluded) || global.tools.excluded.some((name) => typeof name !== "string" || !name)) {
+					throw new TypeError("tools.excluded 需为字符串数组");
+				}
+			}
+			if (global.tools.excludeAll !== undefined && typeof global.tools.excludeAll !== "boolean") {
+				throw new TypeError("tools.excludeAll 需为布尔值");
+			}
+		}
+	}
+
+	/** 首帧主题：状态库可用时读 theme；失败一律回退 system。 */
+	function bootTheme() {
+		try {
+			if (!stateDb?.capabilities?.ok) return "system";
+			const theme = stateDb.getGlobalPrefs()?.global?.theme;
+			return PREF_THEMES.has(theme) ? theme : "system";
+		} catch {
+			return "system";
+		}
+	}
+
+	/** index.html 的首帧 boot 占位替换；主题 JSON 转义 <，避免提前闭合 script。 */
+	function renderIndexHtml() {
+		const html = readFileSync(join(webDir, "index.html"), "utf8");
+		const payload = JSON.stringify({ theme: bootTheme() }).replace(/</g, "\\u003c");
+		return html.replace("/*__TW_BOOT__*/ null", `/*__TW_BOOT__*/ ${payload}`);
+	}
+
 	// ---- 对话控制面（T1 起：capabilities；后续加线程/SSE） ----
 	const requestedChat =
 		options.chat === false ? false : options.chat === true || Boolean(options.chatDir || options.piBin || options.hostEntry);
@@ -439,19 +526,64 @@ export function createTrajectoryServer(options) {
 			}
 			const pathname = url.pathname;
 			const isChatPrefix = pathname.startsWith("/api/chat/");
-			const gate = requestGate(req, isChatPrefix);
+			const gate = requestGate(req, isChatPrefix, pathname === "/api/prefs");
 			if (gate) {
 				sendJson(res, gate.status, { error: gate.error });
 				return;
 			}
 			if (req.method === "POST") {
-				// 只开放翻译、裁剪与对话；其余 POST 一律 405
-				if (pathname !== "/api/translate" && pathname !== "/api/context-edit" && pathname !== "/api/crop-entry" && !CHAT_POSTS.has(pathname)) {
+				// 只开放翻译、裁剪、偏好与对话；其余 POST 一律 405
+				if (
+					pathname !== "/api/translate" &&
+					pathname !== "/api/context-edit" &&
+					pathname !== "/api/crop-entry" &&
+					pathname !== "/api/prefs" &&
+					!CHAT_POSTS.has(pathname)
+				) {
 					sendJson(res, 405, { error: "method not allowed" });
 					return;
 				}
 			} else if (req.method !== "GET" && req.method !== "HEAD") {
 				sendJson(res, 405, { error: "method not allowed" });
+				return;
+			}
+
+			if (pathname === "/api/prefs") {
+				if (!stateDb?.capabilities?.ok) {
+					sendJson(res, 503, {
+						error: "状态存储不可用",
+						reason: stateDb?.capabilities?.reason ?? "状态存储未启用",
+					});
+					return;
+				}
+				if (req.method === "GET" || req.method === "HEAD") {
+					sendJson(res, 200, stateDb.getGlobalPrefs());
+					return;
+				}
+				let raw;
+				try {
+					raw = await readBody(req);
+				} catch (err) {
+					sendJson(res, err.status ?? 400, { error: err.message });
+					return;
+				}
+				let body;
+				try {
+					body = JSON.parse(raw);
+				} catch {
+					sendJson(res, 400, { error: "请求体不是 JSON" });
+					return;
+				}
+				if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some((key) => key !== "global")) {
+					sendJson(res, 400, { error: "请求体需为 { global: {...} }" });
+					return;
+				}
+				try {
+					assertPrefsPatch(body.global);
+					sendJson(res, 200, stateDb.setGlobalPrefs(body.global));
+				} catch (err) {
+					sendJson(res, err instanceof TypeError ? 400 : 500, { error: err?.message ?? "偏好保存失败" });
+				}
 				return;
 			}
 
@@ -920,12 +1052,13 @@ export function createTrajectoryServer(options) {
 					sendText(res, 404, `静态资源缺失：${full}`);
 					return;
 				}
+				const payload = file === "index.html" ? Buffer.from(renderIndexHtml()) : readFileSync(full);
 				res.writeHead(200, {
 					"content-type": type,
-					"content-length": statSync(full).size,
+					"content-length": payload.length,
 					"cache-control": "no-store",
 				});
-				res.end(req.method === "HEAD" ? undefined : readFileSync(full));
+				res.end(req.method === "HEAD" ? undefined : payload);
 				return;
 			}
 
@@ -964,6 +1097,7 @@ export function createTrajectoryServer(options) {
 						Promise.resolve(chat?.close())
 							.catch((err) => log(`对话服务关闭失败：${err.message}`))
 							.finally(() => {
+								if (ownsStateDb) stateDb?.close();
 								server.closeAllConnections?.();
 								server.close(() => done());
 							});

@@ -42,14 +42,8 @@ import {
 } from "./lib.js";
 import { chatSessionRef, consoleStatusLabel, mergeContextIds, normalizeContextIds, pruneContextIds } from "./chat-lib.js";
 import { initChatPanel } from "./chat.js";
+import { clearLegacyGlobalPrefs, normalizeGlobalPrefs, normalizeToolsPrefs, readLegacyGlobalPrefs } from "./prefs.js";
 
-const LS_FILTERS = "tw.filters";
-const LS_THEME = "tw.theme";
-const LS_TRANSLATE = "tw.translate";
-const LS_TOOLS = "tw.tools";
-const LS_CHAT = "tw.chat";
-const LS_COMPOSER_H = "tw.composerHeight";
-const LS_CHAT_W = "tw.chatWidth";
 const POLL_MS = 2000;
 const SESSION_LIST_EVERY = 3; // 每 3 个 tick 刷一次会话列表（约 6s）
 
@@ -123,6 +117,22 @@ const state = {
 	tick: 0,
 };
 
+// 全局偏好：S2 起服务端 /api/prefs 是唯一真源；localStorage 只由 prefs.js 一次性迁移读取。
+const GLOBAL_PREF_SAVE_MS = 120;
+let globalPrefs = {
+	theme: "system",
+	filters: presetFilters("all"),
+	tools: { excluded: [], excludeAll: false },
+	translate: { service: "bing", to: "zh-CN", mode: "bilingual" },
+	chatOpen: false,
+	chatWidth: 0,
+	composerHeight: 0,
+};
+let prefsRevision = 0;
+let prefsAvailable = false;
+let prefsSaveTimer = null;
+let pendingPrefsPatch = {};
+
 // ---------------------------------------------------------------------------
 // 主题（deepseek token 的暗色契约：body[data-ds-dark-theme]；偏好三态 light/dark/system）
 // ---------------------------------------------------------------------------
@@ -138,15 +148,6 @@ function applyTheme() {
 	document.documentElement.style.colorScheme = dark ? "dark" : "light";
 }
 
-function loadTheme() {
-	try {
-		const saved = localStorage.getItem(LS_THEME);
-		if (THEMES.includes(saved)) themePref = saved;
-	} catch {
-		/* 忽略损坏的本地状态 */
-	}
-}
-
 function renderThemeButton() {
 	const btn = el("theme-btn");
 	btn.replaceChildren(svgIcon(themePref === "system" ? "auto" : themePref));
@@ -157,11 +158,7 @@ function renderThemeButton() {
 
 function cycleTheme() {
 	themePref = THEMES[(THEMES.indexOf(themePref) + 1) % THEMES.length];
-	try {
-		localStorage.setItem(LS_THEME, themePref);
-	} catch {
-		/* 无痕模式等场景忽略 */
-	}
+	queueGlobalPrefs({ theme: themePref });
 	applyTheme();
 	renderThemeButton();
 }
@@ -285,65 +282,137 @@ function svgIcon(name, className = "tb-icon") {
 // 持久化
 // ---------------------------------------------------------------------------
 
-function loadPrefs() {
-	try {
-		const raw = localStorage.getItem(LS_FILTERS);
-		// 工具不再是开关（走子菜单），旧存档里若被关掉要强制打开
-		if (raw) state.filters = { ...presetFilters("all"), ...JSON.parse(raw), tools: true };
-	} catch {
-		/* 忽略损坏的本地状态 */
+function applyFiltersPref(value) {
+	const saved = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+	state.filters = { ...presetFilters("all"), ...saved, tools: true };
+}
+
+function applyToolsPref(value) {
+	const saved = normalizeToolsPrefs(value);
+	state.toolExcluded = new Set(saved.excluded);
+	state.toolExcludeAll = saved.excludeAll;
+}
+
+function applyTranslatePref(value) {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return;
+	if (TRANSLATE_SERVICES.some(([v]) => v === value.service)) transPrefs.service = value.service;
+	if (TRANSLATE_LANGS.some(([v]) => v === value.to)) transPrefs.to = value.to;
+	if (TRANSLATE_MODES.some(([v]) => v === value.mode)) transPrefs.mode = value.mode;
+}
+
+function applyGlobalPrefs(global) {
+	const normalized = normalizeGlobalPrefs(global);
+	if (normalized.filters) applyFiltersPref(normalized.filters);
+	if (normalized.tools) applyToolsPref(normalized.tools);
+	if (normalized.translate) applyTranslatePref(normalized.translate);
+	if (normalized.theme) themePref = normalized.theme;
+	if (typeof normalized.chatOpen === "boolean") globalPrefs.chatOpen = normalized.chatOpen;
+	if (normalized.chatWidth !== undefined) globalPrefs.chatWidth = normalized.chatWidth;
+	if (normalized.composerHeight !== undefined) globalPrefs.composerHeight = normalized.composerHeight;
+	globalPrefs = { ...globalPrefs, ...normalized };
+	applyTheme();
+	renderThemeButton();
+}
+
+/** 局部更新内存状态并防抖写 `/api/prefs`；服务端不可用时只保留当前页面状态。 */
+function queueGlobalPrefs(patch) {
+	const normalized = normalizeGlobalPrefs(patch);
+	if (Object.keys(normalized).length === 0) return;
+	globalPrefs = { ...globalPrefs, ...normalized };
+	if (!prefsAvailable) return;
+	pendingPrefsPatch = { ...pendingPrefsPatch, ...normalized };
+	if (prefsSaveTimer) clearTimeout(prefsSaveTimer);
+	prefsSaveTimer = setTimeout(() => {
+		prefsSaveTimer = null;
+		void flushGlobalPrefs();
+	}, GLOBAL_PREF_SAVE_MS);
+}
+
+async function flushGlobalPrefs(keepalive = false) {
+	if (prefsSaveTimer) {
+		clearTimeout(prefsSaveTimer);
+		prefsSaveTimer = null;
 	}
+	if (!prefsAvailable) {
+		pendingPrefsPatch = {};
+		return;
+	}
+	const patch = pendingPrefsPatch;
+	pendingPrefsPatch = {};
+	if (Object.keys(patch).length === 0) return;
+	try {
+		const res = await fetch("/api/prefs", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ global: patch }),
+			keepalive,
+		});
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		const saved = await res.json();
+		prefsRevision = Number(saved.revision) || prefsRevision;
+	} catch (err) {
+		pendingPrefsPatch = { ...patch, ...pendingPrefsPatch };
+		console.error(`[prefs] 偏好保存失败：${err.message}`);
+	}
+}
+
+async function initGlobalPrefs() {
+	let loaded = null;
+	try {
+		const res = await fetch("/api/prefs", { headers: { accept: "application/json" } });
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		loaded = await res.json();
+		prefsRevision = Number(loaded?.revision) || 0;
+		prefsAvailable = true;
+	} catch {
+		loaded = null;
+		prefsAvailable = false;
+	}
+
+	// 服务端 revision=0 才导入旧 Origin 的全局键；已有状态时旧值一律忽略。
+	if (loaded && prefsRevision === 0) {
+		const legacy = readLegacyGlobalPrefs();
+		if (Object.keys(legacy).length) {
+			try {
+				const res = await fetch("/api/prefs", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ global: legacy }),
+				});
+				if (!res.ok) throw new Error(`HTTP ${res.status}`);
+				const saved = await res.json();
+				prefsRevision = Number(saved.revision) || 1;
+				loaded = { ...loaded, global: saved.global };
+				clearLegacyGlobalPrefs();
+			} catch {
+				prefsAvailable = false;
+				loaded = { ...loaded, global: { ...(loaded.global ?? {}), ...legacy } };
+			}
+		}
+	}
+	applyGlobalPrefs(loaded?.global ?? {});
 }
 
 function saveFilters() {
-	try {
-		localStorage.setItem(LS_FILTERS, JSON.stringify(state.filters));
-	} catch {
-		/* 无痕模式等场景忽略 */
-	}
-}
-
-function loadTranslatePrefs() {
-	try {
-		const saved = JSON.parse(localStorage.getItem(LS_TRANSLATE) ?? "null");
-		if (saved && typeof saved === "object") {
-			if (TRANSLATE_SERVICES.some(([v]) => v === saved.service)) transPrefs.service = saved.service;
-			if (TRANSLATE_LANGS.some(([v]) => v === saved.to)) transPrefs.to = saved.to;
-			if (TRANSLATE_MODES.some(([v]) => v === saved.mode)) transPrefs.mode = saved.mode;
-		}
-	} catch {
-		/* 忽略损坏的本地状态 */
-	}
+	queueGlobalPrefs({ filters: state.filters });
 }
 
 function saveTranslatePrefs() {
-	try {
-		localStorage.setItem(LS_TRANSLATE, JSON.stringify(transPrefs));
-	} catch {
-		/* 无痕模式等场景忽略 */
-	}
-}
-
-function loadToolsPrefs() {
-	try {
-		const saved = JSON.parse(localStorage.getItem(LS_TOOLS) ?? "null");
-		if (saved && typeof saved === "object") {
-			// 恢复的排除集可能含当前会话不存在的工具名，syncToolNames 会清洗
-			if (Array.isArray(saved.excluded)) state.toolExcluded = new Set(saved.excluded.filter((name) => typeof name === "string" && name));
-			if (saved.excludeAll === true) state.toolExcludeAll = true;
-		}
-	} catch {
-		/* 忽略损坏的本地状态 */
-	}
+	queueGlobalPrefs({ translate: transPrefs });
 }
 
 function saveToolsPrefs() {
-	try {
-		localStorage.setItem(LS_TOOLS, JSON.stringify({ excluded: [...state.toolExcluded], excludeAll: state.toolExcludeAll }));
-	} catch {
-		/* 无痕模式等场景忽略 */
-	}
+	queueGlobalPrefs({ tools: { excluded: [...state.toolExcluded], excludeAll: state.toolExcludeAll } });
 }
+
+// 页面关闭时把最后一个防抖窗口内的改动带出去（服务端可用时）。
+window.addEventListener("pagehide", () => {
+	if (prefsSaveTimer) {
+		clearTimeout(prefsSaveTimer);
+		prefsSaveTimer = null;
+	}
+	if (prefsAvailable && Object.keys(pendingPrefsPatch).length) void flushGlobalPrefs(true);
+});
 
 // ---------------------------------------------------------------------------
 // 顶部
@@ -1441,7 +1510,7 @@ function autoGrowChatInput() {
 }
 
 // ---------------------------------------------------------------------------
-// 侧边对话栏开关：顶栏对话按钮（主题按钮右侧）驱动，开态存 localStorage
+// 侧边对话栏开关：顶栏对话按钮（主题按钮右侧）驱动，开态写服务端全局偏好
 // ---------------------------------------------------------------------------
 
 function setChatOpen(open) {
@@ -1454,18 +1523,14 @@ function setChatOpen(open) {
 	const label = open ? "收起侧边对话" : "打开侧边对话";
 	btn.title = label;
 	btn.setAttribute("aria-label", label);
-	try {
-		localStorage.setItem(LS_CHAT, open ? "1" : "0");
-	} catch {
-		/* 无痕模式等场景忽略 */
-	}
+	queueGlobalPrefs({ chatOpen: open });
 	chat.setOpen(open);
 	renderMain();
 	updateDistillButton();
 }
 
 // ---------------------------------------------------------------------------
-// 对话栏宽度：左缘拖拽（260px ~ 90vw），双击恢复默认，宽度存 localStorage
+// 对话栏宽度：左缘拖拽（260px ~ 90vw），双击恢复默认，宽度写服务端全局偏好
 // ---------------------------------------------------------------------------
 
 const CHAT_DEFAULT_W = 440;
@@ -1484,23 +1549,14 @@ function previewChatWidth(width) {
 	el("chat-drawer").style.setProperty("--tw-chat-w", `${clampChatWidth(width)}px`);
 }
 
-/** 落定宽度并持久化到 localStorage。 */
+/** 落定宽度并写服务端全局偏好。 */
 function commitChatWidth(width) {
 	previewChatWidth(width);
-	try {
-		localStorage.setItem(LS_CHAT_W, String(clampChatWidth(width)));
-	} catch {
-		/* 无痕模式忽略 */
-	}
+	queueGlobalPrefs({ chatWidth: clampChatWidth(width) });
 }
 
 function loadChatWidth() {
-	let saved = 0;
-	try {
-		saved = Number(localStorage.getItem(LS_CHAT_W)) || 0;
-	} catch {
-		saved = 0;
-	}
+	const saved = Number(globalPrefs.chatWidth) || 0;
 	if (saved > 0) previewChatWidth(saved);
 }
 
@@ -1546,7 +1602,7 @@ function bindChatResize() {
 }
 
 // ---------------------------------------------------------------------------
-// 输入区高度：拖拽编辑框上边（96px ~ 70vh），双击恢复自适应，高度存 localStorage
+// 输入区高度：拖拽编辑框上边（96px ~ 70vh），双击恢复自适应，高度写服务端全局偏好
 // ---------------------------------------------------------------------------
 
 const COMPOSER_MIN_H = 96;
@@ -1571,14 +1627,10 @@ function previewComposerHeight(height) {
 	drawerEl.style.setProperty("--tw-composer-h", `${clampComposerHeight(height)}px`);
 }
 
-/** 落定高度并持久化到 localStorage。 */
+/** 落定高度并写服务端全局偏好。 */
 function commitComposerHeight(height) {
 	previewComposerHeight(height);
-	try {
-		localStorage.setItem(LS_COMPOSER_H, String(clampComposerHeight(height)));
-	} catch {
-		/* 无痕模式忽略 */
-	}
+	queueGlobalPrefs({ composerHeight: clampComposerHeight(height) });
 }
 
 /** 恢复自适应：清掉手动高度（textarea 重新按内容 + 132px 上限增长）。 */
@@ -1588,20 +1640,11 @@ function resetComposerHeight() {
 	drawerEl.style.removeProperty("--tw-composer-h");
 	el("chat-input").style.height = "";
 	autoGrowChatInput();
-	try {
-		localStorage.removeItem(LS_COMPOSER_H);
-	} catch {
-		/* 无痕模式忽略 */
-	}
+	queueGlobalPrefs({ composerHeight: 0 });
 }
 
 function loadComposerHeight() {
-	let saved = 0;
-	try {
-		saved = Number(localStorage.getItem(LS_COMPOSER_H)) || 0;
-	} catch {
-		saved = 0;
-	}
+	const saved = Number(globalPrefs.composerHeight) || 0;
 	if (saved > 0) previewComposerHeight(saved);
 }
 
@@ -2535,12 +2578,7 @@ if (restoredView) {
 	}
 }
 
-loadTheme();
-applyTheme();
-renderThemeButton();
-loadPrefs();
-loadToolsPrefs();
-loadTranslatePrefs();
+await initGlobalPrefs();
 renderToolbar();
 // 对话栏：消息流与 SSE 由 chat.js 接管；本文件只提供 DOM 助手、当前会话与输入框自增高
 const chat = initChatPanel({
@@ -2579,11 +2617,7 @@ loadChatWidth();
 bindChatResize();
 loadComposerHeight();
 bindComposerResize();
-try {
-	if (localStorage.getItem(LS_CHAT) === "1") setChatOpen(true);
-} catch {
-	/* 无痕模式等场景忽略 */
-}
+if (globalPrefs.chatOpen) setChatOpen(true);
 void ensureToolOrigins();
 void pollSources();
 pollSessions();

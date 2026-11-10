@@ -16,6 +16,7 @@
  *   --web <dir>            静态资源目录，默认 ../web
  *   --agent-dir <dir>      pi agent 目录（工具归属静态扫描），默认 ~/.pi/agent
  *   --pi-dir <dir>         pi 安装目录（扫描内置工具名）
+ *   --state-db <file>      状态库，默认 <agentDir>/pi-chat-helper/state.db
  *   --chat-dir <dir>       对话目录，默认 <agentDir>/pi-chat-helper/chats
  *   --no-chat              禁用对话（不创建 chat host）
  *   --pi-bin <path>        指定 pi 可执行文件（默认自动解析）
@@ -23,6 +24,7 @@
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createTrajectoryServer } from "./app.mjs";
+import { resolveAgentDir } from "./chat-host.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -40,6 +42,7 @@ function parseArgs(argv) {
 		agentDir: undefined,
 		piDir: undefined,
 		chatDir: undefined,
+		stateDbPath: undefined,
 		noChat: false,
 		piBin: undefined,
 	};
@@ -83,6 +86,9 @@ function parseArgs(argv) {
 			case "--chat-dir":
 				out.chatDir = next();
 				break;
+			case "--state-db":
+				out.stateDbPath = next();
+				break;
 			case "--no-chat":
 				out.noChat = true;
 				break;
@@ -122,7 +128,8 @@ createTrajectoryServer({
 	webDir: options.web,
 	host: options.host,
 	port: options.port,
-	agentDir: options.agentDir,
+	agentDir: options.agentDir ?? resolveAgentDir(),
+	stateDbPath: options.stateDbPath,
 	piDir: options.piDir,
 	chat: options.noChat ? false : true,
 	chatDir: options.chatDir,

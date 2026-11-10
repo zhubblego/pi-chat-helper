@@ -6,13 +6,13 @@
 	<title>轨迹观察 · pi-chat-helper</title>
 	<link rel="stylesheet" href="/tokens.css">
 	<link rel="stylesheet" href="/style.css">
+	<script>window.__TW_BOOT__ = /*__TW_BOOT__*/ null;</script>
 </head>
 <body>
 	<script>
-		// 主题引导：解析期即应用持久化偏好，避免暗色用户首帧闪浅色（键与 app.js 的 tw.theme 一致）
+		// 主题引导：服务端注入 __TW_BOOT__，解析期即应用偏好，避免暗色用户首帧闪浅色。
 		(() => {
-			let pref = "system";
-			try { pref = localStorage.getItem("tw.theme") || "system"; } catch { /* 无痕模式等场景忽略 */ }
+			const pref = window.__TW_BOOT__?.theme || "system";
 			const dark = pref === "dark" || (pref === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
 			if (dark) document.body.toggleAttribute("data-ds-dark-theme", true);
 			document.documentElement.dataset.dsThemeSource = pref;

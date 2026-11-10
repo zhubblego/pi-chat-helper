@@ -38,6 +38,45 @@ const check = (label, cond, extra = "") => {
 		rememberThread,
 		forgetThread,
 	} = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "chat-lib.js")).href);
+	// ---- 全局偏好迁移纯函数（prefs.js） ----
+	const prefs = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "prefs.js")).href);
+	const legacyMap = new Map([
+		["tw.filters", JSON.stringify({ user: false, tools: false })],
+		["tw.tools", JSON.stringify({ excluded: ["bash", "bash", "", 3], excludeAll: true })],
+		["tw.theme", "dark"],
+		["tw.translate", JSON.stringify({ service: "google", to: "en" })],
+		["tw.chat", "1"],
+		["tw.chatWidth", "512"],
+		["tw.composerHeight", "144"],
+	]);
+	const fakeStorage = {
+		getItem: (key) => (legacyMap.has(key) ? legacyMap.get(key) : null),
+		removeItem: (key) => legacyMap.delete(key),
+	};
+	const legacyPrefs = prefs.readLegacyGlobalPrefs(fakeStorage);
+	check(
+		"prefs：旧全局键映射与规范化",
+		legacyPrefs.theme === "dark" &&
+			legacyPrefs.filters?.user === false &&
+			legacyPrefs.filters?.tools === true &&
+			legacyPrefs.tools?.excluded?.join(",") === "bash" &&
+			legacyPrefs.tools?.excludeAll === true &&
+			legacyPrefs.translate?.service === "google" &&
+			legacyPrefs.chatOpen === true &&
+			legacyPrefs.chatWidth === 512 &&
+			legacyPrefs.composerHeight === 144,
+		JSON.stringify(legacyPrefs),
+	);
+	check(
+		"prefs：服务端 global 裁剪未知字段/非法值",
+		(() => {
+			const out = prefs.normalizeGlobalPrefs({ theme: "neon", chatOpen: "yes", chatWidth: -1, nope: 1, tools: { excluded: ["a"], excludeAll: 1 } });
+			return !("theme" in out) && !("chatOpen" in out) && !("chatWidth" in out) && !("nope" in out) && out.tools?.excluded?.join(",") === "a" && out.tools?.excludeAll === false;
+		})(),
+	);
+	prefs.clearLegacyGlobalPrefs(fakeStorage);
+	check("prefs：迁移成功后旧键清理", legacyMap.size === 0, JSON.stringify([...legacyMap.keys()]));
+
 	const sseOne = parseSseChunk('event: meta\ndata: {"a":1}\n\n');
 	check("SSE：单事件", sseOne.events.length === 1 && sseOne.events[0].event === "meta" && sseOne.rest === "", JSON.stringify(sseOne));
 	check("SSE：data 可 JSON 解析", parseSseData(sseOne.events[0])?.a === 1);
@@ -490,26 +529,29 @@ const check = (label, cond, extra = "") => {
 	// document.importNode 只做克隆，不把节点从源文档摘除；在 while (doc.body.firstChild)
 	// 里用它条件永远成立，死循环冻结页面（2026-10-15 实测事故）。必须直接 appendChild。
 	const appSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "web", "app.js"), "utf8");
+	const prefsSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "web", "prefs.js"), "utf8");
 	check("app.js 不再使用 importNode（克隆不移除源节点，会死循环）", !appSource.includes("importNode("));
 	check("mdNode 直接移入节点保证循环收敛", /wrapper\.appendChild\(\s*doc\.body\.firstChild\s*\)/.test(appSource));
 	check("派生行内联化：不再有独立派生视图", !appSource.includes("deriveView") && !appSource.includes("renderDeriveList"));
 	check("派生行渲染走 deriveTargets 映射", appSource.includes("state.deriveTargets.get(ev.id)") && appSource.includes("openEventRow"));
 
-	// ---- 回归守卫：工具子菜单排除状态持久化（服务重启/刷新后不再回到全选） ----
+	// ---- 回归守卫：全局偏好走服务端，工具排除集只做迁移/规范化 ----
 	check(
-		"工具排除集持久化：独立 key tw.tools + 读写函数就位",
-		appSource.includes('const LS_TOOLS = "tw.tools"') && appSource.includes("function loadToolsPrefs") && appSource.includes("function saveToolsPrefs"),
+		"工具排除集持久化：tw.tools 由 prefs.js 迁移 + app 写服务端",
+		prefsSource.includes('tools: "tw.tools"') && prefsSource.includes("export function normalizeToolsPrefs") && appSource.includes("function saveToolsPrefs"),
 	);
 	check(
 		"恢复时校验字段并重建 Set（损坏存档不致崩）",
-		/Array\.isArray\(saved\.excluded\)/.test(appSource) && /new Set\(saved\.excluded\.filter/.test(appSource) && appSource.includes("saved.excludeAll === true"),
+		prefsSource.includes("Array.isArray(value.excluded)") && appSource.includes("new Set(saved.excluded)") && appSource.includes("normalizeToolsPrefs"),
 	);
-	check("初始化恢复：loadPrefs 后紧跟 loadToolsPrefs", appSource.includes("loadPrefs();\nloadToolsPrefs();"));
+	check("初始化恢复：await initGlobalPrefs 后 renderToolbar", appSource.includes("await initGlobalPrefs();\nrenderToolbar();"));
 	check("子菜单每次变更即保存（含全选/全不勾切换）", /state\.toolExcluded\.add\(name\);\n\t\tsaveToolsPrefs\(\);/.test(appSource));
-	check("切会话与切源清空排除集时同步存储（防刷新回旧会话状态）", appSource.split("saveToolsPrefs();").length - 1 === 3);
+	check("切会话与切源仍写入全局工具偏好（3 处调用）", appSource.split("saveToolsPrefs();").length - 1 === 3);
+	check("全局 localStorage 键不再由 app.js 长期写入", ["tw.filters", "tw.tools", "tw.theme", "tw.translate", "tw.chat", "tw.chatWidth", "tw.composerHeight"].every((key) => !appSource.includes(`localStorage.setItem("${key}"`)));
 
 	// ---- 回归守卫：会话表头的分组总开关 ----
 	const indexSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "web", "index.html"), "utf8");
+	check("主题首帧由服务端 __TW_BOOT__ 注入，不再读 tw.theme", indexSource.includes("__TW_BOOT__") && !indexSource.includes('localStorage.getItem("tw.theme")'));
 	check("会话表头有分组总开关按钮", indexSource.includes('id="groups-toggle"'));
 	check("分组总开关的同步态与点击都接上了", appSource.includes("function updateGroupsToggle") && appSource.includes('el("groups-toggle").addEventListener("click"'));
 
@@ -576,10 +618,10 @@ const check = (label, cond, extra = "") => {
 	// ---- 回归守卫：侧边对话栏（顶栏按钮开关，主题按钮右侧） ----
 	check("顶栏对话按钮在主题按钮右侧", indexSource.includes('id="chat-btn"') && indexSource.indexOf('id="theme-btn"') < indexSource.indexOf('id="chat-btn"'));
 	check("对话栏独立成侧栏，顶部上下文行与关闭按钮已移除（顶部直接是消息流）", indexSource.includes('id="chat-drawer"') && !indexSource.includes("chat-ctx") && !indexSource.includes('id="chat-close"'));
-	check("对话栏开关接线：按钮切换 + 开态持久化 + Esc 兕底", appSource.includes("function setChatOpen") && appSource.includes('el("chat-btn").addEventListener("click"') && appSource.includes('"tw.chat"') && appSource.includes("if (state.chatOpen) {"));
+	check("对话栏开关接线：按钮切换 + 开态持久化 + Esc 兕底", appSource.includes("function setChatOpen") && appSource.includes('el("chat-btn").addEventListener("click"') && prefsSource.includes('chatOpen: "tw.chat"') && appSource.includes("queueGlobalPrefs({ chatOpen: open })") && appSource.includes("if (state.chatOpen) {"));
 	check("对话栏样式就位（分屏 flex 列，非 fixed 覆盖）", styleSource.includes(".chat-drawer") && styleSource.includes(".chat-context-menu") && !/\.chat-drawer\s*\{[^}]*position:\s*fixed/s.test(styleSource));
-	check("对话栏支持拖拽编辑框上边调高输入区（把手 + 拖拽接线 + 高度持久化）", indexSource.includes('id="composer-resize"') && indexSource.includes('aria-orientation="horizontal"') && appSource.includes("function bindComposerResize") && appSource.includes("previewComposerHeight(start.height - (ev.clientY - start.y))") && appSource.includes('"tw.composerHeight"') && appSource.includes("function resetComposerHeight") && styleSource.includes(".composer-resize") && styleSource.includes('[data-composer="manual"]'));
-	check("对话栏左缘拖拽调宽（把手 + 接线 + 宽度持久化）", indexSource.includes('id="chat-resize"') && indexSource.includes('aria-orientation="vertical"') && appSource.includes("function bindChatResize") && appSource.includes("previewChatWidth(start.width - (ev.clientX - start.x))") && appSource.includes('"tw.chatWidth"') && styleSource.includes(".chat-resize") && /\.chat-drawer \{[^}]*width: min\(var\(--tw-chat-w, 440px\), 90vw\)/s.test(styleSource));
+	check("对话栏支持拖拽编辑框上边调高输入区（把手 + 拖拽接线 + 高度持久化）", indexSource.includes('id="composer-resize"') && indexSource.includes('aria-orientation="horizontal"') && appSource.includes("function bindComposerResize") && appSource.includes("previewComposerHeight(start.height - (ev.clientY - start.y))") && prefsSource.includes('composerHeight: "tw.composerHeight"') && appSource.includes("queueGlobalPrefs({ composerHeight") && appSource.includes("function resetComposerHeight") && styleSource.includes(".composer-resize") && styleSource.includes('[data-composer="manual"]'));
+	check("对话栏左缘拖拽调宽（把手 + 接线 + 宽度持久化）", indexSource.includes('id="chat-resize"') && indexSource.includes('aria-orientation="vertical"') && appSource.includes("function bindChatResize") && appSource.includes("previewChatWidth(start.width - (ev.clientX - start.x))") && prefsSource.includes('chatWidth: "tw.chatWidth"') && appSource.includes("queueGlobalPrefs({ chatWidth") && styleSource.includes(".chat-resize") && /\.chat-drawer \{[^}]*width: min\(var\(--tw-chat-w, 440px\), 90vw\)/s.test(styleSource));
 	check("两个拖拽把手并存（左缘调宽 + 输入区上边调高）", appSource.includes("bindChatResize()") && appSource.includes("bindComposerResize()") && appSource.includes("loadChatWidth()") && appSource.includes("loadComposerHeight()") && indexSource.indexOf('id="chat-resize"') < indexSource.indexOf('id="composer-resize"'));
 	check("分屏结构：chat-drawer 在 #layout 内、#main 之后，layout 随其后闭合（主区收窄不遮盖）", indexSource.indexOf('id="main"') < indexSource.indexOf('id="chat-drawer"') && /<\/main>\s*<!--[\s\S]*?-->\s*<aside id="chat-drawer"/.test(indexSource) && /<\/aside>\s*<\/div>/.test(indexSource));
 
