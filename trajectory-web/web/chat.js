@@ -73,9 +73,7 @@ export function initChatPanel(deps) {
 	const addBtn = el("chat-add");
 	const modelBtn = el("chat-model-label");
 	const sendBtn = el("chat-send");
-	const modeSwitchEl = el("chat-mode-switch");
-	const modeIndependentBtn = el("chat-mode-independent");
-	const modeForwardBtn = el("chat-mode-forward");
+	const modeToggleBtn = el("chat-mode-toggle");
 	const forwardDeliveryEl = el("chat-forward-delivery");
 	const announcer = el("chat-announcer");
 	const paletteEl = el("chat-palette");
@@ -886,17 +884,17 @@ export function initChatPanel(deps) {
 		const forward = state.mode === "forward";
 		const info = currentConsoleInfo();
 		const hasConsole = Boolean(info);
-		modeSwitchEl?.setAttribute("data-mode", state.mode);
-		if (modeIndependentBtn) {
-			modeIndependentBtn.classList.toggle("is-active", !forward);
-			modeIndependentBtn.setAttribute("aria-selected", String(!forward));
-		}
-		if (modeForwardBtn) {
-			modeForwardBtn.classList.toggle("is-active", forward);
-			modeForwardBtn.setAttribute("aria-selected", String(forward));
-			modeForwardBtn.disabled = !hasConsole;
-			modeForwardBtn.setAttribute("aria-disabled", String(!hasConsole));
-			modeForwardBtn.title = hasConsole ? "转发到当前控制台" : "当前会话没有可转发控制台";
+		// 单钮反转：文案/高亮显示当前模式，点击切到另一模式；独立模式下无控制台时禁用
+		if (modeToggleBtn) {
+			modeToggleBtn.textContent = forward ? "转发" : "独立";
+			modeToggleBtn.setAttribute("data-mode", state.mode);
+			modeToggleBtn.setAttribute("aria-pressed", String(forward));
+			modeToggleBtn.disabled = !forward && !hasConsole;
+			modeToggleBtn.title = forward
+				? "转发到当前控制台：点击切回独立对话"
+					: hasConsole
+						? "独立对话：点击切到转发模式"
+						: "当前会话没有可转发控制台";
 		}
 		if (addBtn) addBtn.hidden = forward;
 		const profileBtn = el("chat-profile");
@@ -2804,8 +2802,7 @@ export function initChatPanel(deps) {
 			void send();
 		});
 	}
-	if (modeIndependentBtn) modeIndependentBtn.addEventListener("click", () => setMode("independent"));
-	if (modeForwardBtn) modeForwardBtn.addEventListener("click", () => setMode("forward"));
+	if (modeToggleBtn) modeToggleBtn.addEventListener("click", () => setMode(state.mode === "forward" ? "independent" : "forward"));
 	if (forwardDeliveryEl) {
 		forwardDeliveryEl.addEventListener("change", () => {
 			state.forwardDelivery = forwardDeliveryEl.value === "steer" ? "steer" : "auto";

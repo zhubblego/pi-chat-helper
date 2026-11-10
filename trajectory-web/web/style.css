@@ -2619,35 +2619,29 @@ mark.ev-hit {
 	}
 }
 
-.chat-mode-switch {
+.chat-mode-toggle {
 	display: inline-flex;
 	align-items: center;
 	flex: none;
 	height: 28px;
-	padding: 2px;
-	border-radius: 999px;
-	background: var(--dsw-alias-bg-layer-2);
-}
-
-.chat-mode-btn {
-	height: 24px;
-	padding: 0 8px;
+	padding: 0 12px;
 	border: 0;
 	border-radius: 999px;
-	background: transparent;
+	background: var(--dsw-alias-bg-layer-2);
 	color: var(--dsw-alias-label-caption);
 	font-size: 12px;
 	line-height: 20px;
 	cursor: pointer;
 }
 
-.chat-mode-btn.is-active {
+/* 转发态高亮当前模式（原双钮 tablist 的选中色），一眼可辨当前在哪边 */
+.chat-mode-toggle[data-mode="forward"] {
 	background: var(--dsw-specific-selector);
 	color: var(--dsw-alias-label-primary);
 }
 
-.chat-mode-btn:disabled {
-	color: var(--dsw-alias-label-dimmed);
+.chat-mode-toggle:disabled {
+	opacity: 0.5;
 	cursor: default;
 }
 

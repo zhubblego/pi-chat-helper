@@ -723,17 +723,19 @@ const check = (label, cond, extra = "") => {
 			styleSource.includes(".chat-console-status"),
 	);
 	check(
-		"T4 双模式：开关/发送/转发记录/禁用接线",
-		indexSource.includes('id="chat-mode-switch"') &&
-			indexSource.includes('id="chat-mode-forward"') &&
+		"T4 双模式：单钮反转/发送/转发记录/禁用接线",
+		indexSource.includes('id="chat-mode-toggle"') &&
 			indexSource.includes('id="chat-forward-delivery"') &&
 			chatSource.includes("function setMode") &&
+			chatSource.includes('state.mode === "forward" ? "independent" : "forward"') &&
+			chatSource.includes("modeToggleBtn.disabled = !forward && !hasConsole") &&
 			chatSource.includes("function sendForward") &&
 			chatSource.includes("/api/chat/forward") &&
 			chatSource.includes("forwardLogs") &&
 			chatSource.includes("forwardDeliveryEl") &&
 			chatSource.includes("state.mode === \"forward\"") &&
-			styleSource.includes(".chat-mode-switch") &&
+			styleSource.includes(".chat-mode-toggle") &&
+			styleSource.includes('.chat-mode-toggle[data-mode="forward"]') &&
 			styleSource.includes(".chat-forward-status"),
 	);
 	check("对话前端接线：send/stop/SSE 解析/response.ok", chatSource.includes("/api/chat/send") && chatSource.includes("/api/chat/stop") && chatSource.includes("/api/chat/thread") && chatSource.includes("parseSseChunk") && chatSource.includes("response.ok"));
@@ -796,11 +798,12 @@ const check = (label, cond, extra = "") => {
 	);
 	const chatAddTag = /<button id="chat-add"[^>]*>/.exec(indexSource)?.[0] ?? "";
 	check(
-		"输入卡 dsh 结构：+ / 权限 / 模型 / 发送",
+		"输入卡 dsh 结构：+ 在最左 / 单钮模式 / 权限 / 模型 / 发送",
 		chatAddTag.includes('aria-haspopup="listbox"') &&
 			chatAddTag.includes('aria-expanded="false"') &&
 			indexSource.indexOf('class="chat-tools"') < indexSource.indexOf('id="chat-add"') &&
-			indexSource.indexOf('id="chat-add"') < indexSource.indexOf('class="chat-modes"') &&
+			indexSource.indexOf('id="chat-add"') < indexSource.indexOf('id="chat-mode-toggle"') &&
+			indexSource.indexOf('id="chat-mode-toggle"') < indexSource.indexOf('class="chat-modes"') &&
 			indexSource.indexOf('id="chat-profile"') < indexSource.indexOf('class="chat-trailing"') &&
 			indexSource.indexOf('class="chat-standard-controls"') < indexSource.indexOf('id="chat-model-label"') &&
 			indexSource.indexOf('id="chat-model-label"') < indexSource.indexOf('id="chat-thinking"') &&
