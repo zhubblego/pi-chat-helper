@@ -531,12 +531,24 @@ export function createTrajectoryServer(options) {
 						sendJson(res, 400, { error: "delivery 非法", code: "bad_delivery" });
 						return;
 					}
-					const session = resolveSession(readSessions("pi"), sessionId);
+					const sessions = readSessions("pi");
+					const session = resolveSession(sessions, sessionId);
+					const records = readConsoles({ consolesDir });
+					let sessionFile = session?.file;
 					if (!session) {
-						sendJson(res, 404, { error: "会话不存在（可能已被删除或列表已刷新）", code: "session_not_found" });
-						return;
+						// 新 TUI 可能已注册但 session 文件尚未落盘（首条消息前）：按注册表里的 sessionId 精确回落。
+						const byId = records.filter((record) => record.sessionId === sessionId);
+						if (byId.length === 0) {
+							sendJson(res, 404, { error: "会话不存在（可能已被删除或列表已刷新）", code: "session_not_found" });
+							return;
+						}
+						if (byId.length > 1) {
+							sendJson(res, 409, { error: "检测到多个控制台", code: "ambiguous_console" });
+							return;
+						}
+						sessionFile = byId[0].sessionFile;
 					}
-					const matched = matchConsole(readConsoles({ consolesDir }), session.file);
+					const matched = matchConsole(records, sessionFile);
 					if (matched.error) {
 						sendJson(res, 409, {
 							error: matched.error === "ambiguous_console" ? "检测到多个控制台" : "未检测到可转发控制台",

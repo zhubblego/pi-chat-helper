@@ -141,6 +141,8 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 		check("空 prompt 400", empty.res.status === 400 && empty.json?.code === "prompt_empty", empty.text);
 		const tooLong = await post({ sessionFile: sessionA, prompt: "x".repeat(32_001) });
 		check("超长 prompt 400", tooLong.res.status === 400 && tooLong.json?.code === "prompt_too_large", tooLong.text);
+		const tooBig = await post({ sessionFile: sessionA, prompt: "x".repeat((1 << 20) + 10) });
+		check("bridge 请求体超过 1MB 413", tooBig.res.status === 413 && tooBig.json?.code === "body_too_large", tooBig.text);
 		const badDelivery = await post({ sessionFile: sessionA, prompt: "x", delivery: "later" });
 		check("非法 delivery 400", badDelivery.res.status === 400 && badDelivery.json?.code === "bad_delivery", badDelivery.text);
 		const mismatch = await post({ sessionFile: sessionB, prompt: "x" });

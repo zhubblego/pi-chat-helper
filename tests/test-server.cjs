@@ -379,6 +379,28 @@ async function stopServer(child) {
 			body: JSON.stringify({ source: "pi", session: "srv-a1", prompt: "x" }),
 		});
 		check("forward：错误 Origin 403", fwdBadOrigin.status === 403, String(fwdBadOrigin.status));
+
+		// 新 TUI 首条消息前 session 文件可能尚未落盘：按 registry sessionId 回落。
+		bridgeMode = "success";
+		const freshFile = path.join(tmp, "fresh-not-in-list.jsonl");
+		writeConsole("console-fresh.json", {
+			pid: 4202,
+			sessionId: "srv-fresh",
+			sessionFile: freshFile,
+			cwd: "/tmp/projA",
+			port: bridgePort,
+			token: "fresh-token",
+			state: "idle",
+			startedAt: new Date().toISOString(),
+			heartbeatAt: new Date().toISOString(),
+		});
+		const fwdFresh = await fwdPost({ source: "pi", session: "srv-fresh", prompt: "fresh", delivery: "auto" });
+		check(
+			"forward：session 文件未落盘时按 registry 回落",
+			fwdFresh.status === 200 && bridgeLast?.body?.sessionFile === freshFile && bridgeLast.body?.prompt === "fresh",
+			JSON.stringify({ status: fwdFresh.status, text: fwdFresh.text, bridgeLast }),
+		);
+		fs.unlinkSync(path.join(consolesDir, "console-fresh.json"));
 		await new Promise((resolve) => bridgeServer.close(resolve));
 
 		const listing = await (await fetch(`${base}/api/sessions`)).json();
