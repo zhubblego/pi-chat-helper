@@ -798,12 +798,14 @@ const check = (label, cond, extra = "") => {
 	);
 	const chatAddTag = /<button id="chat-add"[^>]*>/.exec(indexSource)?.[0] ?? "";
 	check(
-		"输入卡 dsh 结构：+ 在最左 / 单钮模式 / 权限 / 模型 / 发送",
+		"输入卡 dsh 结构：+ 最左 / 模式钮在控制台状态条前 / 权限 / 模型 / 发送",
 		chatAddTag.includes('aria-haspopup="listbox"') &&
 			chatAddTag.includes('aria-expanded="false"') &&
+			indexSource.indexOf('class="chat-accessory"') < indexSource.indexOf('id="chat-mode-toggle"') &&
+			indexSource.indexOf('id="chat-mode-toggle"') < indexSource.indexOf('id="chat-console-status"') &&
+			indexSource.indexOf('id="chat-console-status"') < indexSource.indexOf('class="chat-scroll"') &&
 			indexSource.indexOf('class="chat-tools"') < indexSource.indexOf('id="chat-add"') &&
-			indexSource.indexOf('id="chat-add"') < indexSource.indexOf('id="chat-mode-toggle"') &&
-			indexSource.indexOf('id="chat-mode-toggle"') < indexSource.indexOf('class="chat-modes"') &&
+			indexSource.indexOf('id="chat-add"') < indexSource.indexOf('class="chat-modes"') &&
 			indexSource.indexOf('id="chat-profile"') < indexSource.indexOf('class="chat-trailing"') &&
 			indexSource.indexOf('class="chat-standard-controls"') < indexSource.indexOf('id="chat-model-label"') &&
 			indexSource.indexOf('id="chat-model-label"') < indexSource.indexOf('id="chat-thinking"') &&
