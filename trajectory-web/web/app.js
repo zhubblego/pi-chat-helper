@@ -46,6 +46,7 @@ import { initChatPanel } from "./chat.js";
 const LS_FILTERS = "tw.filters";
 const LS_THEME = "tw.theme";
 const LS_TRANSLATE = "tw.translate";
+const LS_TOOLS = "tw.tools";
 const LS_CHAT = "tw.chat";
 const LS_COMPOSER_H = "tw.composerHeight";
 const LS_CHAT_W = "tw.chatWidth";
@@ -313,6 +314,27 @@ function loadTranslatePrefs() {
 function saveTranslatePrefs() {
 	try {
 		localStorage.setItem(LS_TRANSLATE, JSON.stringify(transPrefs));
+	} catch {
+		/* 无痕模式等场景忽略 */
+	}
+}
+
+function loadToolsPrefs() {
+	try {
+		const saved = JSON.parse(localStorage.getItem(LS_TOOLS) ?? "null");
+		if (saved && typeof saved === "object") {
+			// 恢复的排除集可能含当前会话不存在的工具名，syncToolNames 会清洗
+			if (Array.isArray(saved.excluded)) state.toolExcluded = new Set(saved.excluded.filter((name) => typeof name === "string" && name));
+			if (saved.excludeAll === true) state.toolExcludeAll = true;
+		}
+	} catch {
+		/* 忽略损坏的本地状态 */
+	}
+}
+
+function saveToolsPrefs() {
+	try {
+		localStorage.setItem(LS_TOOLS, JSON.stringify({ excluded: [...state.toolExcluded], excludeAll: state.toolExcludeAll }));
 	} catch {
 		/* 无痕模式等场景忽略 */
 	}
@@ -1698,6 +1720,7 @@ function switchSource(id) {
 	state.toolExcluded = new Set();
 	state.toolNames = [];
 	state.searchIndex = new TrajectorySearchIndex();
+	saveToolsPrefs();
 	closePanel();
 	restoreChatContext();
 	renderRail();
@@ -2101,6 +2124,7 @@ el("filter-menu").addEventListener("click", (e) => {
 			state.toolExcluded.delete(name);
 			state.toolExcludeAll = false; // 单独勾回某个工具即退出「全部反选」模式
 		} else state.toolExcluded.add(name);
+		saveToolsPrefs();
 		updateSubmenuChecks();
 		renderMain();
 		item.focus();
@@ -2231,6 +2255,7 @@ function selectSession(id, from = null) {
 	state.deriveTargets = new Map();
 	state.deriveNames = new Map();
 	state.searchIndex = new TrajectorySearchIndex();
+	saveToolsPrefs();
 	setMenuOpen(false);
 	el("search").value = "";
 	closePanel();
@@ -2431,6 +2456,7 @@ loadTheme();
 applyTheme();
 renderThemeButton();
 loadPrefs();
+loadToolsPrefs();
 loadTranslatePrefs();
 renderToolbar();
 // 对话栏：消息流与 SSE 由 chat.js 接管；本文件只提供 DOM 助手、当前会话与输入框自增高

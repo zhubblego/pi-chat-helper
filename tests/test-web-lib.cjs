@@ -458,6 +458,19 @@ const check = (label, cond, extra = "") => {
 	check("派生行内联化：不再有独立派生视图", !appSource.includes("deriveView") && !appSource.includes("renderDeriveList"));
 	check("派生行渲染走 deriveTargets 映射", appSource.includes("state.deriveTargets.get(ev.id)") && appSource.includes("openEventRow"));
 
+	// ---- 回归守卫：工具子菜单排除状态持久化（服务重启/刷新后不再回到全选） ----
+	check(
+		"工具排除集持久化：独立 key tw.tools + 读写函数就位",
+		appSource.includes('const LS_TOOLS = "tw.tools"') && appSource.includes("function loadToolsPrefs") && appSource.includes("function saveToolsPrefs"),
+	);
+	check(
+		"恢复时校验字段并重建 Set（损坏存档不致崩）",
+		/Array\.isArray\(saved\.excluded\)/.test(appSource) && /new Set\(saved\.excluded\.filter/.test(appSource) && appSource.includes("saved.excludeAll === true"),
+	);
+	check("初始化恢复：loadPrefs 后紧跟 loadToolsPrefs", appSource.includes("loadPrefs();\nloadToolsPrefs();"));
+	check("子菜单每次变更即保存（含全选/全不勾切换）", /state\.toolExcluded\.add\(name\);\n\t\tsaveToolsPrefs\(\);/.test(appSource));
+	check("切会话与切源清空排除集时同步存储（防刷新回旧会话状态）", appSource.split("saveToolsPrefs();").length - 1 === 3);
+
 	// ---- 回归守卫：会话表头的分组总开关 ----
 	const indexSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "web", "index.html"), "utf8");
 	check("会话表头有分组总开关按钮", indexSource.includes('id="groups-toggle"'));
