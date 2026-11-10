@@ -624,6 +624,7 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 
 	// ---- 与 HTTP 服务集成 ----
 	const { createTrajectoryServer } = await import(urlOf("trajectory-web/server/app.mjs"));
+	const { openStateDb } = await import(urlOf("trajectory-web/server/state-db.mjs"));
 	const sessionsRoot = path.join(tmp, "sessions-http");
 	const codexRoot = path.join(tmp, "codex-http");
 	fs.mkdirSync(sessionsRoot, { recursive: true });
@@ -670,6 +671,7 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 		agentDir: chatHttpAgent,
 		piBin: fakePi,
 	});
+	const chatState = openStateDb({ agentDir: chatHttpAgent, chatDir: chatHttpDir });
 	const capHttp = await (await fetch(`${handle.url}api/chat/capabilities`)).json();
 	check("HTTP：capabilities 200 且 enabled", capHttp.enabled === true && capHttp.piVersion === "1.5.0", JSON.stringify(capHttp));
 	const health = await (await fetch(`${handle.url}api/health`)).json();
@@ -911,7 +913,7 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 
 	// ---- T5：技能选择 / 大小守卫 / 直输 / ordinal / turns ----
 	const skillMetaDir = path.join(chatHttpDir, "pi", "chat-sess-1", "meta");
-	chatSession.upsertTurn(skillMetaDir, { threadId: "thread-dummy", ordinal: 5, displayText: "占位" });
+	chatState.upsertTurn("pi", "chat-sess-1", { threadId: "thread-dummy", ordinal: 5, displayText: "占位" });
 	const traceBeforeSkill = fs.readFileSync(traceFile, "utf8");
 	const bigSkill = await readSse(await send("hi", { threadId: "thread-b", skill: "big" }));
 	const bigMeta = bigSkill.events.find((e) => e.event === "meta")?.data ?? {};
@@ -927,7 +929,7 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 	);
 	const traceAfterBig = fs.readFileSync(traceFile, "utf8").slice(traceBeforeSkill.length);
 	check("send skill：prompt 拼 /skill:name 前缀", traceAfterBig.includes('prompt:"/skill:big\\n\\nhi"'), traceAfterBig);
-	const bigTurn = chatSession.readTurns(skillMetaDir, "thread-b").find((turn) => turn.ordinal === 2);
+	const bigTurn = chatState.readTurns("pi", "chat-sess-1", "thread-b").find((turn) => turn.ordinal === 2);
 	check(
 		"send skill：upsertTurn 写 displayText/skill/contextRefs",
 		bigTurn?.displayText === "hi" && bigTurn?.skill?.name === "big" && Array.isArray(bigTurn?.contextRefs) && bigTurn?.profile === "read-only" && bigTurn?.threadId === "thread-b",
@@ -967,8 +969,8 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 	const isoBFile = path.join(chatHttpDir, "pi", "chat-sess-1", "sessions", "2026-01-01T00-00-00-000Z_thread-iso-b.jsonl");
 	writePiSessionFile(isoAFile, { id: "thread-iso-a", cwd: "/tmp/projA", userText: "原始 A" });
 	writePiSessionFile(isoBFile, { id: "thread-iso-b", cwd: "/tmp/projA", userText: "原始 B" });
-	chatSession.upsertTurn(skillMetaDir, { threadId: "thread-iso-a", ordinal: 1, displayText: "A 显示", contextRefs: [], skill: { name: "demo", chars: 1, warning: false } });
-	chatSession.upsertTurn(skillMetaDir, { threadId: "thread-iso-b", ordinal: 1, displayText: "B 显示", contextRefs: [], skill: { name: "big", chars: 2, warning: false } });
+	chatState.upsertTurn("pi", "chat-sess-1", { threadId: "thread-iso-a", ordinal: 1, displayText: "A 显示", contextRefs: [], skill: { name: "demo", chars: 1, warning: false } });
+	chatState.upsertTurn("pi", "chat-sess-1", { threadId: "thread-iso-b", ordinal: 1, displayText: "B 显示", contextRefs: [], skill: { name: "big", chars: 2, warning: false } });
 	const userMessageOf = (json) => json.thread?.messages?.find((message) => message.role === "user");
 	const isoA = await (await fetch(threadUrl("thread-iso-a"))).json();
 	const isoB = await (await fetch(threadUrl("thread-iso-b"))).json();
@@ -980,7 +982,7 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 			userMessageOf(isoB)?.skill?.name === "big",
 		JSON.stringify([userMessageOf(isoA), userMessageOf(isoB)]),
 	);
-	chatSession.upsertTurn(skillMetaDir, {
+	chatState.upsertTurn("pi", "chat-sess-1", {
 		threadId: "thread-iso-a",
 		ordinal: 1,
 		displayText: "A 改",
@@ -1002,6 +1004,7 @@ function writePiSessionFile(file, { id, cwd, userText, assistantText = "答复",
 		JSON.stringify(crash.events.at(-1)),
 	);
 
+	chatState.close();
 	await handle.close();
 	delete process.env.FAKE_PI_TRACE;
 

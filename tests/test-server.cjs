@@ -528,6 +528,7 @@ async function stopServer(child) {
 		project = null;
 
 		const { createTrajectoryServer } = await import(pathToFileURL(path.join(ROOT, "trajectory-web", "server", "app.mjs")).href);
+		const { openStateDb } = await import(pathToFileURL(path.join(ROOT, "trajectory-web", "server", "state-db.mjs")).href);
 
 		// ---- S2：全局偏好 API / 首帧主题 / 状态库持久化 ----
 		const prefsAgent = path.join(tmp, "prefs-agent");
@@ -726,6 +727,7 @@ async function stopServer(child) {
 			piBin: { cmd: process.execPath, argsPrefix: [FAKE], mode: false, display: "fake-pi" },
 			chatPingMs: 25,
 		});
+		const chatState = openStateDb({ agentDir: chatAgent, chatDir });
 		const chatBase = chatServer.url;
 		const send = (session, prompt, extra = {}) =>
 			fetch(`${chatBase}api/chat/send`, {
@@ -1233,7 +1235,7 @@ async function stopServer(child) {
 		);
 		const settingsOn = await (await fetch(settingsUrl())).json();
 		check("settings：projectSkills 持久化", settingsOn.projectSkills === true, JSON.stringify(settingsOn));
-		check("settings：落盘到 chatDir/settings.json", fs.existsSync(path.join(chatDir, "settings.json")));
+		check("settings：落盘到 chat_project", chatState.getChatProject("pi", otherProject).projectSkills === true);
 		const skillsOn = await (await fetch(skillsUrl("cs-4", "&refresh=1"))).json();
 		const traceAfterProjectSkills = fs.readFileSync(chatTrace, "utf8").slice(traceBeforeProjectSkills.length);
 		check(
@@ -1323,11 +1325,7 @@ async function stopServer(child) {
 		);
 		const traceAfterSkillSend = fs.readFileSync(chatTrace, "utf8").slice(traceBeforeSkillSend.length);
 		check("send skill：prompt 拼 /skill:name 前缀", traceAfterSkillSend.includes('prompt:"/skill:demo\\n\\n你好"'), traceAfterSkillSend);
-		const turnLines = fs
-			.readFileSync(path.join(chatDir, "pi", "cs-4", "meta", "turns.jsonl"), "utf8")
-			.split("\n")
-			.filter(Boolean)
-			.map((line) => JSON.parse(line));
+		const turnLines = chatState.readTurns("pi", "cs-4", "thread-ord");
 		const turn2 = turnLines.find((turn) => turn.ordinal === 2);
 		check(
 			"send skill：turns.jsonl 写 displayText/skill/contextRefs/profile",
@@ -1371,8 +1369,7 @@ async function stopServer(child) {
 		const lightCs1 = await (await fetch(`${chatBase}api/session?source=pi&id=cs-1`)).json();
 		const ctxIds = lightCs1.questions.flatMap((q) => (q.events ?? []).map((e) => e.id));
 		const [ctxA, ctxB] = ctxIds;
-		const ctxMetaDir = path.join(chatDir, "pi", "cs-1", "meta");
-		const ctxActivePath = path.join(ctxMetaDir, "context.active.json");
+
 		const traceLen = () => (fs.existsSync(chatTrace) ? fs.readFileSync(chatTrace, "utf8").length : 0);
 		const traceSince = (len) => (fs.existsSync(chatTrace) ? fs.readFileSync(chatTrace, "utf8").slice(len) : "");
 		const promptOf = (traceText) => {
@@ -1403,18 +1400,14 @@ async function stopServer(child) {
 			firstPrompt.includes(`<trajectory_index source="pi" session="cs-1" count="2">`) && firstPrompt.includes(`[${ctxA}]`) && firstPrompt.includes(`[${ctxB}]`),
 			firstPrompt.slice(0, 600),
 		);
-		const activeFirst = JSON.parse(fs.readFileSync(ctxActivePath, "utf8"));
+		const activeFirst = chatState.readContext("pi", "cs-1", "active");
 		check(
 			"context：active 快照写 source/session/items",
 			activeFirst.source === "pi" && activeFirst.sessionId === "cs-1" && activeFirst.items?.length === 2,
 			JSON.stringify(activeFirst).slice(0, 300),
 		);
-		const turnsAfterCtx = fs
-			.readFileSync(path.join(ctxMetaDir, "turns.jsonl"), "utf8")
-			.split("\n")
-			.filter(Boolean)
-			.map((line) => JSON.parse(line));
-		const ctxTurn = turnsAfterCtx.filter((turn) => turn.threadId === "fake-session-1").sort((a, b) => a.ordinal - b.ordinal).at(-1);
+		const turnsAfterCtx = chatState.readTurns("pi", "cs-1", "fake-session-1");
+		const ctxTurn = turnsAfterCtx.sort((a, b) => a.ordinal - b.ordinal).at(-1);
 		check(
 			"context：turns.contextRefs 写入 items",
 			ctxTurn?.contextRefs?.length === 2 &&
@@ -1424,7 +1417,7 @@ async function stopServer(child) {
 		const sessionFileCs1 = (await (await fetch(`${chatBase}api/sessions?source=pi`)).json()).sessions.find((session) => session.id === "cs-1")?.file;
 		check(
 			"context：工具 env 注入 active/trajectory",
-			traceCtx.includes(`env:pi|cs-1|${sessionFileCs1}|${ctxActivePath}`),
+			traceCtx.includes(`env:pi|cs-1|${sessionFileCs1}||${chatState.path}`),
 			traceCtx.slice(-800),
 		);
 		check(
@@ -1451,14 +1444,14 @@ async function stopServer(child) {
 				secondPrompt.includes(`<trajectory_index_delta>{"added":[],"removed":["${ctxA}"]}</trajectory_index_delta>`),
 			secondPrompt.slice(0, 600),
 		);
-		const activeSecond = JSON.parse(fs.readFileSync(ctxActivePath, "utf8"));
+		const activeSecond = chatState.readContext("pi", "cs-1", "active");
 		check("context：active 快照更新", activeSecond.items?.length === 1 && activeSecond.items[0].id === ctxB, JSON.stringify(activeSecond).slice(0, 300));
 
 		const traceBeforeEmpty = traceLen();
 		const ctxEmpty = await readSse(await send("cs-1", "不看上下文"));
 		const ctxMeta3 = ctxEmpty.events.find((event) => event.event === "meta")?.data ?? {};
 		const emptyPrompt = promptOf(traceSince(traceBeforeEmpty));
-		const activeEmpty = JSON.parse(fs.readFileSync(ctxActivePath, "utf8"));
+		const activeEmpty = chatState.readContext("pi", "cs-1", "active");
 		check(
 			"context：空选中写空 active、无 index",
 			ctxMeta3.context?.selected === 0 && ctxMeta3.context?.included?.length === 0 && activeEmpty.items?.length === 0 && !emptyPrompt.includes("<trajectory_index source"),
@@ -1713,6 +1706,7 @@ async function stopServer(child) {
 		}).catch(() => ({ events: [] }));
 		for (let i = 0; i < 100 && !closeApproval; i++) await sleep(20);
 		check("approval：close 前拿到 pending", Boolean(closeApproval));
+		chatState.close();
 		await chatServer.close();
 		await closeStreamPromise;
 		await sleep(200);

@@ -55,7 +55,7 @@ function trace(line) {
 
 trace(`spawn:${args.join(" ")}`);
 trace(
-	`env:${process.env.PI_CHAT_SOURCE ?? ""}|${process.env.PI_CHAT_SESSION_ID ?? ""}|${process.env.PI_CHAT_TRAJECTORY_FILE ?? ""}|${process.env.PI_CHAT_CONTEXT_FILE ?? ""}`,
+	`env:${process.env.PI_CHAT_SOURCE ?? ""}|${process.env.PI_CHAT_SESSION_ID ?? ""}|${process.env.PI_CHAT_TRAJECTORY_FILE ?? ""}|${process.env.PI_CHAT_CONTEXT_FILE ?? ""}|${process.env.PI_CHAT_STATE_DB ?? ""}`,
 );
 
 /** 测试技能目录：FAKE_PI_SKILL_DIR 下按 name/SKILL.md 布局。 */

@@ -454,7 +454,13 @@ function disabledCapabilities(chatDir, reason) {
  *   probeTimeoutMs?: number,
  *   sessionRoots?: string[],
  *   settingsPath?: string,
- *   stateDb?: { getSessionUi: Function, setSessionUi: Function } | null,
+ *   stateDb?: {
+ *     path?: string,
+ *     getSessionUi: Function, setSessionUi: Function,
+ *     getChatProject: Function, setChatProject: Function,
+ *     readTurns: Function, upsertTurn: Function,
+ *     writeContextNext: Function, promoteContext: Function,
+ *   } | null,
  *   readSessions?: (source: string) => object[],
  *   resolveSession?: (sessions: object[], id: string) => object | null,
  *   getProjection?: (session: object, source: string) => { full: object },
@@ -473,6 +479,7 @@ export function createChatHost(deps = {}) {
 	const agentDir = resolve(deps.agentDir ?? resolveAgentDir(env));
 	const chatDir = resolve(deps.chatDir ?? join(agentDir, "pi-chat-helper", "chats"));
 	const settingsPath = resolve(deps.settingsPath ?? join(chatDir, "settings.json"));
+	const stateDb = deps.stateDb ?? null;
 	const sessionRoots = (deps.sessionRoots ?? []).filter(Boolean).map((root) => resolve(root));
 	/** @type {Map<string, object>} */
 	const children = new Map();
@@ -512,6 +519,31 @@ export function createChatHost(deps = {}) {
 		} catch (err) {
 			log(`[chat] session_ui 写入失败：${err.message}`);
 		}
+	}
+
+	function readTurnsFor(record, threadId) {
+		if (stateDb?.readTurns && record?.source && record?.sessionId) return stateDb.readTurns(record.source, record.sessionId, threadId);
+		return readTurns(record.metaDir, threadId);
+	}
+
+	function readTurnsForSource(source, sessionId, metaDir, threadId) {
+		if (stateDb?.readTurns && source && sessionId) return stateDb.readTurns(source, sessionId, threadId);
+		return readTurns(metaDir, threadId);
+	}
+
+	function upsertTurnFor(record, turn) {
+		if (stateDb?.upsertTurn && record?.source && record?.sessionId) return stateDb.upsertTurn(record.source, record.sessionId, turn);
+		return upsertTurn(record.metaDir, turn);
+	}
+
+	function writeContextNextFor(record, snapshot) {
+		if (stateDb?.writeContextNext && record?.source && record?.sessionId) return stateDb.writeContextNext(record.source, record.sessionId, snapshot);
+		return writeContextNext(record.metaDir, snapshot);
+	}
+
+	function promoteContextFor(record) {
+		if (stateDb?.promoteContext && record?.source && record?.sessionId) return stateDb.promoteContext(record.source, record.sessionId);
+		return promoteContext(record.metaDir);
 	}
 
 	function remember(value) {
@@ -691,7 +723,9 @@ export function createChatHost(deps = {}) {
 	}
 
 	function projectOf(target, record) {
-		return projectSettings(readSettings(settingsPath), target.source, targetProjectPath(target, record));
+		const projectPath = targetProjectPath(target, record);
+		if (stateDb?.getChatProject) return stateDb.getChatProject(target.source, projectPath ?? "");
+		return projectSettings(readSettings(settingsPath), target.source, projectPath);
 	}
 
 	function approvalKey(source, projectPath) {
@@ -794,7 +828,7 @@ export function createChatHost(deps = {}) {
 		} catch {
 			// 文件正在写/损坏：退到同线程 turns 的最大 ordinal + 1，避免重复覆盖
 			const threadId = record.piSessionId ?? (record.sessionFile ? readSessionId(record.sessionFile) : null);
-			const turns = threadId ? readTurns(record.metaDir, threadId) : [];
+			const turns = threadId ? readTurnsFor(record, threadId) : [];
 			return Math.max(0, ...turns.map((turn) => Number(turn.ordinal) || 0)) + 1;
 		}
 	}
@@ -906,7 +940,7 @@ export function createChatHost(deps = {}) {
 		const dirs = chatSessionDirs(chatDir, source, sessionId);
 		// 先确定线程 id，再只取该线程的 turns；旧的无 threadId 记录不参与映射。
 		const id = readSessionId(fileRecord.file) ?? projection.meta?.id ?? null;
-		const turns = id ? readTurns(dirs.metaDir, id) : [];
+		const turns = id ? readTurnsForSource(source, sessionId, dirs.metaDir, id) : [];
 		const mapped = parseThreadProjection(projection, turns);
 		const pending = Boolean(record?.currentTurn) && (!id || record.piSessionId === id);
 		return {
@@ -1064,7 +1098,8 @@ export function createChatHost(deps = {}) {
 			cwd: record.cwd,
 			env: {
 				...env,
-				PI_CHAT_CONTEXT_FILE: join(dirs.metaDir, "context.active.json"),
+				PI_CHAT_STATE_DB: stateDb?.path ?? "",
+				PI_CHAT_CONTEXT_FILE: stateDb?.path ? "" : join(dirs.metaDir, "context.active.json"),
 				PI_CHAT_TRAJECTORY_FILE: record.trajectoryFile ?? "",
 				PI_CHAT_SOURCE: source,
 				PI_CHAT_SESSION_ID: sessionId,
@@ -1228,11 +1263,9 @@ export function createChatHost(deps = {}) {
 		const record = children.get(key) ?? null;
 		if (record?.currentTurn) throw httpError(409, "回复中，先停止再修改设置");
 		const projectPath = targetProjectPath(target, record) ?? resolve(process.cwd());
-		const next = updateProjectSettings(settingsPath, {
-			source: target.source,
-			projectPath,
-			patch,
-		});
+		const next = stateDb?.setChatProject
+			? stateDb.setChatProject(target.source, projectPath, patch)
+			: updateProjectSettings(settingsPath, { source: target.source, projectPath, patch });
 		// 同项目所有 idle child 立即按新参数重启；busy/starting 的标记 stale，
 		// 等当前 turn 结束后的下一次 ensureChild 再重启，避免杀掉正在生成的内容。
 		const sameProject = [...children.values()].filter(
@@ -1521,7 +1554,7 @@ export function createChatHost(deps = {}) {
 			const context = resolveContextItems(target, contextIds);
 			// delta 基线是「当前线程上一轮的 contextRefs」，不是按轨迹会话共享的 active；
 			// active 只作为 read_trajectory 的本轮快照。
-			const threadTurns = record.piSessionId ? readTurns(record.metaDir, record.piSessionId) : [];
+			const threadTurns = record.piSessionId ? readTurnsFor(record, record.piSessionId) : [];
 			const lastThreadTurn = threadTurns.length ? threadTurns[threadTurns.length - 1] : null;
 			const previousItems = Array.isArray(lastThreadTurn?.contextRefs) ? lastThreadTurn.contextRefs : [];
 			const delta = selectionDelta(previousItems, context.items);
@@ -1549,18 +1582,18 @@ export function createChatHost(deps = {}) {
 					contextIds,
 				});
 			}
-			writeContextNext(record.metaDir, {
+			writeContextNextFor(record, {
 				source: target.source,
 				sessionId: target.sessionId,
 				updatedAt: new Date().toISOString(),
 				items: context.items,
 			});
-			promoteContext(record.metaDir);
+			promoteContextFor(record);
 
 			const userOrdinal = countUserOrdinal(record);
 			// 先写 sidecar 再 prompt：显示文本/技能/上下文/模型由它保存；写失败只记日志，不阻断对话。
 			try {
-				upsertTurn(record.metaDir, {
+				upsertTurnFor(record, {
 					threadId: record.piSessionId,
 					ordinal: userOrdinal,
 					displayText: resolved.displayText,
@@ -1801,7 +1834,7 @@ export function createChatHost(deps = {}) {
 			if (!id) continue;
 			try {
 				const projection = buildProjection(file.file);
-				const mapped = parseThreadProjection(projection, readTurns(dirs.metaDir, id));
+				const mapped = parseThreadProjection(projection, readTurnsForSource(target.source, target.sessionId, dirs.metaDir, id));
 				const firstUser = mapped.messages.find((message) => message.role === "user");
 				threads.push({
 					id,

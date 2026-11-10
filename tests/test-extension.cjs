@@ -316,6 +316,23 @@ function freePort() {
 		}
 		check("read_trajectory：source/session mismatch 拒绝", mismatchRejected);
 		fs.writeFileSync(toolActivePath, JSON.stringify(toolActive));
+
+		// S4：优先从 state.db 的 chat_context.active 读取，不再依赖 context.active.json。
+		const { openStateDb } = await import(
+			pathToFileURL(path.join(__dirname, "..", "trajectory-web", "server", "state-db.mjs")).href
+		);
+		const toolDb = openStateDb({ agentDir: toolTmp, chatDir: path.join(toolTmp, "chats") });
+		toolDb.writeContext("pi", "ext-tool", "active", toolActive);
+		delete process.env.PI_CHAT_CONTEXT_FILE;
+		process.env.PI_CHAT_STATE_DB = toolDb.path;
+		const dbList = await toolRun({ action: "list" });
+		check(
+			"read_trajectory：state.db active 快照可用",
+			dbList.details?.selected === toolEvents.length && toolText(dbList).includes("当前选中"),
+			toolText(dbList).slice(0, 200),
+		);
+		delete process.env.PI_CHAT_STATE_DB;
+		toolDb.close();
 		delete process.env.PI_CHAT_CONTEXT_FILE;
 		delete process.env.PI_CHAT_TRAJECTORY_FILE;
 		delete process.env.PI_CHAT_SOURCE;

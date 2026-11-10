@@ -293,28 +293,6 @@ function listDirectories(dir) {
 	}
 }
 
-function listJsonlFiles(dir) {
-	try {
-		return readdirSync(dir, { withFileTypes: true })
-			.filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl") && !entry.name.startsWith("."))
-			.map((entry) => join(dir, entry.name))
-			.sort();
-	} catch {
-		return [];
-	}
-}
-
-function headerSessionId(file) {
-	try {
-		const first = readFileSync(file, "utf8").split("\n", 1)[0];
-		const parsed = JSON.parse(first);
-		return typeof parsed?.id === "string" && parsed.id ? parsed.id : null;
-	} catch {
-		return null;
-	}
-}
-
-/** 旧 sidecar 目录没有原始 sessionId；优先从 context 快照、其次从 pi session header 取。 */
 function legacySessionId(metaDir, sessionName) {
 	for (const kind of CONTEXT_KINDS) {
 		try {
@@ -324,11 +302,7 @@ function legacySessionId(metaDir, sessionName) {
 			/* 继续找 */
 		}
 	}
-	const sessionsDir = join(dirname(metaDir), "sessions");
-	for (const file of listJsonlFiles(sessionsDir).slice(0, 20)) {
-		const id = headerSessionId(file);
-		if (id) return id;
-	}
+	// 目录名是 chatSessionDirs 的 sanitizeSegment(sessionId)；context 缺失时以它为准。
 	return sessionName || null;
 }
 

@@ -2,7 +2,8 @@
  * chat-trajectory-tool.ts — 子进程扩展：只读轨迹工具 read_trajectory。
  *
  * 环境变量（chat host spawn 时注入）：
- *   PI_CHAT_CONTEXT_FILE    <meta>/context.active.json（当前选中集快照）
+ *   PI_CHAT_STATE_DB        state.db（优先：当前选中集快照在 chat_context.active）
+ *   PI_CHAT_CONTEXT_FILE    旧文件回退：<meta>/context.active.json
  *   PI_CHAT_TRAJECTORY_FILE 轨迹会话文件绝对路径
  *   PI_CHAT_SOURCE          pi / codex
  *   PI_CHAT_SESSION_ID      轨迹会话 id
@@ -11,7 +12,8 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import {
 	CONTEXT_SINGLE_LIMIT,
 	CONTEXT_TOTAL_LIMIT,
@@ -64,6 +66,7 @@ interface ToolDetails {
 
 function envConfig() {
 	return {
+		stateDb: process.env.PI_CHAT_STATE_DB ?? "",
 		contextFile: process.env.PI_CHAT_CONTEXT_FILE ?? "",
 		trajectoryFile: process.env.PI_CHAT_TRAJECTORY_FILE ?? "",
 		source: process.env.PI_CHAT_SOURCE ?? "pi",
@@ -74,15 +77,35 @@ function envConfig() {
 /** 读 active 快照；不存在返回空；source/sessionId 与 env 不一致直接报错。 */
 function readActive(): { snapshot: ActiveSnapshot; items: ActiveItem[] } {
 	const config = envConfig();
-	if (!config.contextFile) throw new Error("read_trajectory：PI_CHAT_CONTEXT_FILE 未设置");
+	if (!config.stateDb && !config.contextFile) throw new Error("read_trajectory：PI_CHAT_STATE_DB / PI_CHAT_CONTEXT_FILE 未设置");
 	if (!config.trajectoryFile) throw new Error("read_trajectory：PI_CHAT_TRAJECTORY_FILE 未设置");
 	let snapshot: ActiveSnapshot = {};
-	try {
-		const raw = readFileSync(config.contextFile, "utf8");
-		snapshot = JSON.parse(raw) as ActiveSnapshot;
-	} catch (err) {
-		if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return { snapshot: {}, items: [] };
-		throw new Error(`read_trajectory：上下文快照不可读（${(err as Error).message}）`);
+	if (config.stateDb) {
+		if (!existsSync(config.stateDb)) return { snapshot: {}, items: [] };
+		let db: DatabaseSync | null = null;
+		try {
+			db = new DatabaseSync(config.stateDb, { readOnly: true });
+			const row = db
+				.prepare("SELECT payload_json FROM chat_context WHERE source = ? AND session_id = ? AND kind = 'active'")
+				.get(config.source, config.sessionId) as { payload_json?: string } | undefined;
+			if (typeof row?.payload_json === "string") snapshot = JSON.parse(row.payload_json) as ActiveSnapshot;
+		} catch (err) {
+			throw new Error(`read_trajectory：上下文快照不可读（${(err as Error).message}）`);
+		} finally {
+			try {
+				db?.close();
+			} catch {
+				/* 已关闭 */
+			}
+		}
+	} else {
+		try {
+			const raw = readFileSync(config.contextFile, "utf8");
+			snapshot = JSON.parse(raw) as ActiveSnapshot;
+		} catch (err) {
+			if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return { snapshot: {}, items: [] };
+			throw new Error(`read_trajectory：上下文快照不可读（${(err as Error).message}）`);
+		}
 	}
 	if (snapshot.source !== undefined && snapshot.source !== config.source) {
 		throw new Error(`read_trajectory：上下文快照 source=${snapshot.source} 与当前 ${config.source} 不一致`);

@@ -184,6 +184,8 @@ function writeLines(file, lines) {
 		},
 	});
 	const legacyMeta = sessionDir(legacyChat, "pi", "legacy-dir");
+	const legacyNoctxMeta = sessionDir(legacyChat, "pi", "legacy-noctx");
+	writeLines(path.join(legacyNoctxMeta, "turns.jsonl"), [{ threadId: "noctx-t", ordinal: 1, displayText: "无 context" }]);
 	writeLines(path.join(legacyMeta, "turns.jsonl"), [
 		{ threadId: "lt1", ordinal: 1, displayText: "old" },
 		{ threadId: "lt1", ordinal: 2, displayText: "two" },
@@ -213,6 +215,7 @@ function writeLines(file, lines) {
 		JSON.stringify(legacyTurns),
 	);
 	check("迁移：context active/next 导入", legacy.readContext("pi", "sess-legacy", "active").items[0].id === "legacy-a" && legacy.readContext("pi", "sess-legacy", "next").items[0].id === "legacy-b");
+	check("迁移：无 context 时 turns 用目录 sessionId", legacy.readTurns("pi", "legacy-noctx", "noctx-t").length === 1);
 	check("迁移：旧文件保留", fs.existsSync(path.join(legacyChat, "settings.json")) && fs.existsSync(path.join(legacyMeta, "turns.jsonl")));
 	check("迁移：迁移标记", legacy.lastMigration.skipped === false && legacy.lastMigration.projects === 2, JSON.stringify(legacy.lastMigration));
 	legacy.close();
