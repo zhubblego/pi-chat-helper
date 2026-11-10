@@ -1009,7 +1009,6 @@ function renderMain() {
 					h("span", { class: "q-caret", text: folded ? "▸" : "▾", "aria-hidden": "true" }),
 					h("span", { class: "q-no", text: roundLabel, title: folded ? "点击展开本轮" : "点击收起本轮", role: "button", tabindex: 0 }),
 					h("span", { class: "q-time", text: fmtTime(q.ts) || "" }),
-					h("span", { class: "q-sum", title: q.summary }, highlightNodes(q.summary, terms)),
 					h("span", { class: "q-stats", text: qStats(q) }),
 			),
 				h("div", { class: "q-body" }, body),

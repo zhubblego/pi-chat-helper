@@ -797,13 +797,6 @@ body[data-ds-dark-theme] .ev-check:indeterminate {
 	font-family: var(--ds-font-family-code);
 }
 
-.q-sum {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	font: var(--dsw-font-xs-13);
-}
-
 /* ---------------------------------------------------------------- 轨迹主区 */
 
 .question {
@@ -823,8 +816,7 @@ body[data-ds-dark-theme] .ev-check:indeterminate {
 	opacity: 0.55;
 }
 
-/* 整轮裁剪：轮次头的标题与统计一并杠掉（子行由上面的 .ev.is-cropped 负责） */
-.question.is-cropped .q-sum,
+/* 整轮裁剪：轮次头杠掉（子行由上面的 .ev.is-cropped 负责） */
 .question.is-cropped .q-stats,
 .question.is-cropped .q-no,
 .question.is-cropped .q-time {
@@ -858,13 +850,8 @@ body[data-ds-dark-theme] .ev-check:indeterminate {
 	z-index: 2;
 }
 
-.q-head .q-sum {
-	flex: 1;
-	min-width: 0;
-	font: var(--dsw-font-s-strong-14);
-}
-
 .q-head .q-stats {
+	margin-left: auto;
 	color: var(--dsw-alias-label-tertiary);
 	font: var(--dsw-font-xxxs-11);
 	font-family: var(--ds-font-family-code);

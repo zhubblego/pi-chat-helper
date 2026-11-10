@@ -491,6 +491,7 @@ const check = (label, cond, extra = "") => {
 	check("单条裁剪真剔模型上下文：走 /api/crop-entry，按 entry id 存", appSource.includes("async function toggleEntryCrop") && appSource.includes('\"/api/crop-entry\"') && appSource.includes("function entryIdOf") && serverSource.includes('\"/api/crop-entry\"') && serverSource.includes("options.onCropEntry({ sessionFile: session.file, entryId, cropped })"));
 	check("裁剪与选中两套业务分开（croppedEntries / selectedEvs 互不影响）", appSource.includes("state.croppedEntries.has(entryIdOf(ev))") && appSource.includes("state.selectedEvs.has(ev.id)") && appSource.split("state.croppedEntries = new Set()").length - 1 === 2);
 	check("行级控件复用轮次控件样式 + 行内五列网格", /\.q-eye,\n\.ev-eye \{/.test(styleSource) && /\.q-check,\n\.ev-check \{/.test(styleSource) && /grid-template-columns: 18px 13px 60px 1fr auto/.test(styleSource));
+	check("轮次头不重复展示提问正文（首行 user 事件已含，q-sum 已删）", !appSource.includes("q-sum") && !styleSource.includes(".q-sum"));
 	check("checkbox 选中是无底黑勾（自定义渲染，不用 accent-color 的黑底白勾）", !styleSource.includes("accent-color:") && /\.q-check,\n\.ev-check \{[^}]*appearance: none/s.test(styleSource) && /\.q-check:checked,\n\.ev-check:checked \{[^}]*background-image: url\("data:image\/svg\+xml/s.test(styleSource) && /body\[data-ds-dark-theme\] \.q-check:checked/.test(styleSource));
 	check("剪刀图标（两个圆环把手 + 交叉刀刃），旧眼睛图标已移除", appSource.includes("scissors: [") && !appSource.includes('svgIcon("eye")') && !appSource.includes("\teye: ["));
 
