@@ -27,6 +27,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { buildProjection, buildProjectionFrom, toLight, findEvent } from "./session.mjs";
 import { createChatHost, resolveAgentDir } from "./chat-host.mjs";
+import { consolesDirFor, publicConsoles, readConsoles } from "./console-registry.mjs";
 import { listSessions, DEFAULT_SESSIONS_ROOT, LIVE_WINDOW_MS } from "./sessions.mjs";
 import { listCodexSessions, readCodexSession, readGuardianApproval, DEFAULT_CODEX_ROOT } from "./codex.mjs";
 import { scanToolOrigins } from "./tool-origins.mjs";
@@ -206,6 +207,7 @@ const MAX_CACHED_PROJECTIONS = 4;
  *   projectPath?: string,
  *   chat?: boolean,
  *   chatDir?: string,
+ *   consolesDir?: string,
  *   piBin?: { cmd: string, argsPrefix?: string[], mode?: boolean, display?: string },
  *   hostEntry?: string,
  *   hostExecPath?: string,
@@ -218,6 +220,8 @@ const MAX_CACHED_PROJECTIONS = 4;
  */
 export function createTrajectoryServer(options) {
 	const webDir = resolve(options.webDir);
+	const agentDir = resolve(options.agentDir ?? resolveAgentDir());
+	const consolesDir = resolve(options.consolesDir ?? consolesDirFor(agentDir));
 	const sessionsRoot = options.sessionsRoot ? resolve(options.sessionsRoot) : DEFAULT_SESSIONS_ROOT;
 	const codexRoot = options.codexRoot ? resolve(options.codexRoot) : DEFAULT_CODEX_ROOT;
 	const liveWindowMs = options.liveWindowMs ?? LIVE_WINDOW_MS;
@@ -244,7 +248,7 @@ export function createTrajectoryServer(options) {
 
 	function getScanOrigins() {
 		if (scanCache && Date.now() - Date.parse(scanCache.generatedAt) < ORIGINS_TTL_MS) return scanCache;
-		scanCache = scanToolOrigins({ piDir: options.piDir, agentDir: options.agentDir });
+		scanCache = scanToolOrigins({ piDir: options.piDir, agentDir });
 		return scanCache;
 	}
 
@@ -391,8 +395,8 @@ export function createTrajectoryServer(options) {
 			: options.piBin;
 	const chat = chatEnabled
 		? createChatHost({
-				agentDir: options.agentDir,
-				chatDir: options.chatDir ?? join(options.agentDir ?? resolveAgentDir(), "pi-chat-helper", "chats"),
+				agentDir,
+				chatDir: options.chatDir ?? join(agentDir, "pi-chat-helper", "chats"),
 				pi: piBin,
 				hostEntry: options.hostEntry,
 				hostExecPath: options.hostExecPath,
@@ -449,6 +453,26 @@ export function createTrajectoryServer(options) {
 			}
 
 			if (pathname.startsWith("/api/chat/")) {
+				if (pathname === "/api/chat/consoles") {
+					if (!chatEnabled) {
+						sendJson(res, 501, { error: chatDisabledReason });
+						return;
+					}
+					const src = sourceParam(url);
+					if (src.error) {
+						sendJson(res, 400, { error: src.error });
+						return;
+					}
+					const sessionFilter = url.searchParams.get("session");
+					const records = src.id === "pi" ? readConsoles({ consolesDir }) : [];
+					const filtered = sessionFilter ? records.filter((record) => record.sessionId === sessionFilter) : records;
+					sendJson(res, 200, {
+						source: src.id,
+						refreshedAt: new Date().toISOString(),
+						consoles: publicConsoles(filtered),
+					});
+					return;
+				}
 				if (chat) {
 					let chatBody = null;
 					if (req.method === "POST") {

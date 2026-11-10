@@ -281,6 +281,13 @@ function truncateDisplay(text, maxWidth) {
 	return `${out}…`;
 }
 
+/** 控制台状态文案；未知/离线返回空串。 */
+export function consoleStatusLabel(state) {
+	if (state === "working") return "控制台运行中";
+	if (state === "idle") return "控制台在线空闲";
+	return "";
+}
+
 /** preview 已带标签前缀时剥掉，避免摘要出现「模型模型 → litellm」。 */
 function stripPreviewLabel(label, preview) {
 	if (!label || !preview.startsWith(label)) return preview;

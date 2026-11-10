@@ -25,6 +25,9 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 		const mod = await import(
 			pathToFileURL(path.join(__dirname, "..", "trajectory-web", "server", "console-bridge.mjs")).href
 		);
+		const registry = await import(
+			pathToFileURL(path.join(__dirname, "..", "trajectory-web", "server", "console-registry.mjs")).href
+		);
 		const {
 			createConsoleBridge,
 			consolesDirFor,
@@ -241,6 +244,60 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 			JSON.stringify({ failedStart, port: failed.port }),
 		);
 		await failed.close();
+
+		// 注册表读取 / TTL / public 投影 / 精确匹配。
+		const registryNow = Date.now();
+		const registryDir = path.join(tmp, "registry");
+		fs.mkdirSync(registryDir, { recursive: true });
+		const makeReg = (overrides = {}) => ({
+			protocol: 1,
+			pid: 1111,
+			sessionId: "sess-a",
+			sessionFile: sessionA,
+			cwd: tmp,
+			port: 4444,
+			token: "a".repeat(64),
+			state: "working",
+			interactive: true,
+			startedAt: new Date(registryNow - 5000).toISOString(),
+			heartbeatAt: new Date(registryNow).toISOString(),
+			...overrides,
+		});
+		fs.writeFileSync(path.join(registryDir, "valid-a.json"), JSON.stringify(makeReg()));
+		fs.writeFileSync(
+			path.join(registryDir, "valid-b.json"),
+			JSON.stringify(makeReg({ pid: 2222, sessionId: "sess-b", sessionFile: sessionB, port: 5555, token: "b".repeat(64), state: "idle" })),
+		);
+		fs.writeFileSync(
+			path.join(registryDir, "stale.json"),
+			JSON.stringify(makeReg({ pid: 3333, sessionId: "sess-stale", sessionFile: path.join(tmp, "stale.jsonl"), heartbeatAt: new Date(registryNow - 60_000).toISOString() })),
+		);
+		fs.writeFileSync(path.join(registryDir, "bad.json"), "{not json");
+		const records = registry.readConsoles({ consolesDir: registryDir, now: registryNow, ttlMs: 15_000 });
+		check("registry：过滤 stale/坏 JSON，保留 2 条", records.length === 2 && records.every((record) => record.sessionId !== "sess-stale"), JSON.stringify(records.map((r) => r.sessionId)));
+		const pub = registry.publicConsoles(records);
+		check(
+			"registry：public 投影不含 token/port/sessionFile/cwd",
+			pub.length === 2 &&
+				pub.every((item) => !("token" in item) && !("port" in item) && !("sessionFile" in item) && !("cwd" in item)) &&
+				!/token|port|sessionFile|cwd/.test(JSON.stringify(pub)),
+			JSON.stringify(pub),
+		);
+		check(
+			"registry：public 字段完整",
+			pub.every((item) => typeof item.sessionId === "string" && typeof item.pid === "number" && (item.state === "idle" || item.state === "working") && typeof item.heartbeatAt === "string"),
+			JSON.stringify(pub),
+		);
+		const matchedA = registry.matchConsole(records, sessionA);
+		const matchedB = registry.matchConsole(records, sessionB);
+		const missing = registry.matchConsole(records, path.join(tmp, "missing.jsonl"));
+		const duplicate = registry.matchConsole([records[0], { ...records[0], pid: 9999 }], sessionA);
+		check(
+			"registry：按 canonical sessionFile 精确匹配",
+			matchedA.record?.sessionId === "sess-a" && matchedB.record?.sessionId === "sess-b",
+			JSON.stringify({ a: matchedA, b: matchedB }),
+		);
+		check("registry：无控制台/多控制台错误", missing.error === "no_console" && duplicate.error === "ambiguous_console", JSON.stringify({ missing, duplicate }));
 
 		// 直接导出 helper 的边界。
 		check("canonicalSessionFile 解析真实路径", canonicalSessionFile(sessionB) === fs.realpathSync(sessionB));

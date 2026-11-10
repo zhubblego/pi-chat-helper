@@ -389,6 +389,25 @@ body {
 	animation: tw-pulse 1.6s var(--ds-ease-in-out) infinite;
 }
 
+/* 控制台桥状态：和 live 文件活跃点分开，用方形描边避免混淆 */
+.console-badge {
+	width: 7px;
+	height: 7px;
+	flex: none;
+	border: 1px solid var(--dsw-alias-label-tertiary);
+	border-radius: 2px;
+	background: transparent;
+}
+
+.console-badge.is-working {
+	border-color: transparent;
+	background: var(--dsw-alias-state-success-primary);
+}
+
+.console-badge.is-idle {
+	border-color: var(--dsw-alias-state-success-primary);
+}
+
 @keyframes tw-pulse {
 	0%,
 	100% {
@@ -1814,6 +1833,52 @@ mark.ev-hit {
 
 .chat-accessory:not(:has(> :not([hidden]))) {
 	display: none;
+}
+
+/* 控制台桥状态条：T2 只展示，不提供转发 */
+.chat-console-status {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 24px;
+	min-width: 0;
+	max-width: 100%;
+	padding: 0 8px;
+	border-radius: var(--dsw-radius-sm);
+	background: var(--dsw-specific-sidebar-nav-item-hover);
+	color: var(--dsw-alias-label-secondary);
+	font-size: 12px;
+	line-height: 18px;
+}
+
+.chat-console-status[hidden] {
+	display: none;
+}
+
+.console-status-dot {
+	width: 6px;
+	height: 6px;
+	flex: none;
+	border: 1px solid var(--dsw-alias-state-success-primary);
+	border-radius: 2px;
+}
+
+.chat-console-status.is-working .console-status-dot {
+	border-color: transparent;
+	background: var(--dsw-alias-state-success-primary);
+}
+
+.console-status-label {
+	white-space: nowrap;
+}
+
+.console-status-pid {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--dsw-alias-label-tertiary);
+	font-size: 11px;
 }
 
 .chat-context {

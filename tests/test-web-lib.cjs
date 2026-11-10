@@ -20,6 +20,7 @@ const check = (label, cond, extra = "") => {
 		chatSessionRef,
 		isCurrentTurn,
 		modelLabel,
+		consoleStatusLabel,
 		formatChars,
 		formatContextWindow,
 		computeAnchoredMenuPosition,
@@ -79,6 +80,13 @@ const check = (label, cond, extra = "") => {
 			modelLabel({ id: "glm-5" }) === "glm-5" &&
 			modelLabel({ name: "abcdefghij", id: "x" }, 6) === "abcde…" &&
 			modelLabel(null) === "",
+	);
+	check(
+		"consoleStatusLabel：working/idle 文案，离线空串",
+		consoleStatusLabel("working") === "控制台运行中" &&
+			consoleStatusLabel("idle") === "控制台在线空闲" &&
+			consoleStatusLabel("offline") === "" &&
+			consoleStatusLabel(null) === "",
 	);
 
 	const summaryRefs = [
@@ -533,6 +541,16 @@ const check = (label, cond, extra = "") => {
 	// ---- 回归守卫：对话页 UI（消息流 + 输入卡，本地消息流未接模型） ----
 	check("对话页两段结构：消息流(role=log) + 输入卡", indexSource.includes('id="chat-list"') && indexSource.includes('role="log"') && indexSource.includes('id="chat-input"') && indexSource.includes('id="chat-send"'));
 	const chatSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "web", "chat.js"), "utf8");
+	check(
+		"控制台状态：API / 会话 badge / 侧边状态条接线",
+		appSource.includes("/api/chat/consoles?") &&
+			appSource.includes("console-badge") &&
+			chatSource.includes("onConsolesChanged") &&
+			chatSource.includes("renderConsoleStatus") &&
+			indexSource.includes('id="chat-console-status"') &&
+			styleSource.includes(".console-badge") &&
+			styleSource.includes(".chat-console-status"),
+	);
 	check("对话前端接线：send/stop/SSE 解析/response.ok", chatSource.includes("/api/chat/send") && chatSource.includes("/api/chat/stop") && chatSource.includes("/api/chat/thread") && chatSource.includes("parseSseChunk") && chatSource.includes("response.ok"));
 	check("流式解码必须是 TextDecoder + {stream:true}", chatSource.includes('new TextDecoder("utf-8")') && chatSource.includes("stream: true"));
 	check("app.js 已移交对话：initChatPanel + 移除本地消息流", appSource.includes("initChatPanel") && !appSource.includes("state.chat.push") && !appSource.includes("function sendChat") && !appSource.includes("function renderChat") && !appSource.includes("syncChatSend"));

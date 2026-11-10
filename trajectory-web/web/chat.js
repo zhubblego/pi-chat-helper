@@ -8,6 +8,7 @@
 import {
 	computeAnchoredMenuPosition,
 	contextSummaryLabel,
+	consoleStatusLabel,
 	filterPaletteItems,
 	forgetThread,
 	formatChars,
@@ -81,6 +82,7 @@ export function initChatPanel(deps) {
 	const profileMenuEl = el("chat-profile-menu");
 	const contextBtn = el("chat-context");
 	const contextMenuEl = el("chat-context-menu");
+	const consoleStatusEl = el("chat-console-status");
 	const overlayAnchorEl = paletteEl?.closest?.(".chat-overlay-anchor") ?? profileMenuEl?.closest?.(".chat-overlay-anchor") ?? null;
 	const approvalEl = el("chat-approval");
 	const sendIcon = sendBtn?.firstElementChild?.cloneNode(true) ?? null;
@@ -133,6 +135,8 @@ export function initChatPanel(deps) {
 		profileConfirm: false,
 		profileBusy: false,
 		fullConfirmed: false,
+		// 控制台桥状态（key = `${source}:${sessionId}`）；T2 只展示，转发在 T4
+		consoles: new Map(),
 		approvals: [],
 		approvalChecked: false,
 		approvalBusy: false,
@@ -713,11 +717,34 @@ export function initChatPanel(deps) {
 		renderComposer();
 		renderSkillChip();
 		renderContext();
+		renderConsoleStatus();
 		renderProfileMenu();
 		renderApproval();
 		updateSendButton();
 		updateA11y();
 		renderPalette();
+	}
+
+	/** 控制台状态条：T2 只显示桥状态，不提供转发。 */
+	function renderConsoleStatus() {
+		if (!consoleStatusEl) return;
+		const session = currentSession();
+		const info = session ? state.consoles.get(sessionKeyOf(session)) : null;
+		const label = consoleStatusLabel(info?.state);
+		if (!state.open || !info || !label) {
+			consoleStatusEl.hidden = true;
+			consoleStatusEl.replaceChildren();
+			consoleStatusEl.removeAttribute("title");
+			return;
+		}
+		consoleStatusEl.hidden = false;
+		consoleStatusEl.className = `chat-console-status is-${info.state}`;
+		consoleStatusEl.title = `${label}${info.pid ? `（PID ${info.pid}）` : ""}；回答和工具审批在控制台完成`;
+		consoleStatusEl.replaceChildren(
+			h("span", { class: "console-status-dot", "aria-hidden": "true" }),
+			h("span", { class: "console-status-label", text: label }),
+			info.pid ? h("span", { class: "console-status-pid", text: `PID ${info.pid}` }) : null,
+		);
 	}
 
 	function contextIds() {
@@ -2621,6 +2648,7 @@ export function initChatPanel(deps) {
 			}
 			if (state.open) void ensureLoaded();
 			renderContext();
+			renderConsoleStatus();
 		},
 		handleEscape() {
 			if (state.approvals.length) {
@@ -2682,8 +2710,17 @@ export function initChatPanel(deps) {
 			state.loadSeq++;
 			state.loading = false;
 			setMessages([]);
+			renderConsoleStatus();
 			if (state.open) void ensureLoaded();
 			else render();
+		},
+		onConsolesChanged(consoles) {
+			const next = new Map();
+			for (const item of Array.isArray(consoles) ? consoles : []) {
+				if (item && typeof item.sessionId === "string") next.set(`pi:${item.sessionId}`, item);
+			}
+			state.consoles = next;
+			renderConsoleStatus();
 		},
 		onSelectionChanged() {
 			renderContext();

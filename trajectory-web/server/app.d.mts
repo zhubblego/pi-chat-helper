@@ -32,6 +32,8 @@ export interface TrajectoryServerOptions {
 	/** 对话控制面。chat=false 强制禁用；chatDir/piBin/hostEntry 任一存在则启用。 */
 	chat?: boolean;
 	chatDir?: string;
+	/** 控制台桥注册目录；默认 <agentDir>/pi-chat-helper/consoles。 */
+	consolesDir?: string;
 	piBin?: PiBinSpec | string;
 	hostEntry?: string;
 	hostExecPath?: string;

@@ -160,7 +160,41 @@ async function stopServer(child) {
 		const old = recent - 3600_000;
 		const a1 = writeSession(projA, { id: "srv-a1", cwd: "/tmp/projA", first: "第一问", mtimeMs: recent });
 		const aOld = writeSession(projA, { id: "srv-a2", cwd: "/tmp/projA", first: "旧问", mtimeMs: old });
-		writeSession(projB, { id: "srv-b1", cwd: "/tmp/projB", first: "B 问", mtimeMs: recent - 120_000 });
+		const b1File = writeSession(projB, { id: "srv-b1", cwd: "/tmp/projB", first: "B 问", mtimeMs: recent - 120_000 });
+
+		// 控制台桥注册 fixture：all server 的 agentDir 指到 tmp/agent；token/port 不应出现在公开响应。
+		const consolesDir = path.join(tmp, "agent", "pi-chat-helper", "consoles");
+		fs.mkdirSync(consolesDir, { recursive: true });
+		const writeConsole = (name, overrides = {}) =>
+			fs.writeFileSync(
+				path.join(consolesDir, name),
+				JSON.stringify({
+					protocol: 1,
+					pid: 4100,
+					sessionId: "srv-a1",
+					sessionFile: a1,
+					cwd: "/tmp/projA",
+					port: 4567,
+					token: "secret-token-not-public",
+					state: "working",
+					interactive: true,
+					startedAt: new Date(recent - 5000).toISOString(),
+					heartbeatAt: new Date(recent).toISOString(),
+					...overrides,
+				}),
+			);
+		writeConsole("console-a1.json");
+		writeConsole("console-b1.json", { pid: 4101, sessionId: "srv-b1", sessionFile: b1File, cwd: "/tmp/projB", port: 4568, token: "b".repeat(64), state: "idle" });
+		writeConsole("console-stale.json", {
+			pid: 4102,
+			sessionId: "srv-a2",
+			sessionFile: aOld,
+			cwd: "/tmp/projA",
+			port: 4569,
+			token: "c".repeat(64),
+			heartbeatAt: new Date(recent - 60_000).toISOString(),
+		});
+		fs.writeFileSync(path.join(consolesDir, "bad.json"), "{not json");
 
 		// ---- 模式 B：全部范围 ----
 		// codex 源 fixture：年/月/日三层 + rollout 文件
@@ -180,6 +214,33 @@ async function stopServer(child) {
 
 		const health = await (await fetch(`${base}/api/health`)).json();
 		check("health：scope=all", health.ok === true && health.scope === "all", JSON.stringify(health));
+
+		// ---- T2：控制台注册表 API ----
+		const consoles = await (await fetch(`${base}/api/chat/consoles?source=pi`)).json();
+		check(
+			"consoles：返回 working + idle，过滤 stale",
+				consoles.source === "pi" &&
+				consoles.consoles.length === 2 &&
+				consoles.consoles.some((item) => item.sessionId === "srv-a1" && item.state === "working") &&
+				consoles.consoles.some((item) => item.sessionId === "srv-b1" && item.state === "idle") &&
+				!consoles.consoles.some((item) => item.sessionId === "srv-a2"),
+			JSON.stringify(consoles),
+		);
+		check(
+			"consoles：公开字段不含 token/port/sessionFile/cwd",
+			!/secret-token|"port"|"sessionFile"|"cwd"|4567|4568/.test(JSON.stringify(consoles)),
+			JSON.stringify(consoles),
+		);
+		const consolesA1 = await (await fetch(`${base}/api/chat/consoles?source=pi&session=srv-a1`)).json();
+		check("consoles：session 过滤", consolesA1.consoles.length === 1 && consolesA1.consoles[0].sessionId === "srv-a1", JSON.stringify(consolesA1));
+		const consolesCodex = await (await fetch(`${base}/api/chat/consoles?source=codex`)).json();
+		check("consoles：codex 空数组", consolesCodex.source === "codex" && consolesCodex.consoles.length === 0, JSON.stringify(consolesCodex));
+		check("consoles：非法 source 400", (await fetch(`${base}/api/chat/consoles?source=claude`)).status === 400);
+		const consolesBadOrigin = await rawRequest(base, {
+			pathname: "/api/chat/consoles?source=pi",
+			headers: { origin: "http://evil.example" },
+		});
+		check("consoles：错误 Origin 403", consolesBadOrigin.status === 403, String(consolesBadOrigin.status));
 
 		const listing = await (await fetch(`${base}/api/sessions`)).json();
 		check("列表包含全部项目会话", listing.sessions.length === 3, String(listing.sessions.length));

@@ -40,7 +40,7 @@ import {
 	renderMarkdown,
 	taskShort,
 } from "./lib.js";
-import { chatSessionRef, mergeContextIds, normalizeContextIds, pruneContextIds } from "./chat-lib.js";
+import { chatSessionRef, consoleStatusLabel, mergeContextIds, normalizeContextIds, pruneContextIds } from "./chat-lib.js";
 import { initChatPanel } from "./chat.js";
 
 const LS_FILTERS = "tw.filters";
@@ -115,6 +115,11 @@ const state = {
 	copyOpen: false,
 	pollingSession: false,
 	pollingSessions: false,
+	// 控制台桥状态：key = `${source}:${sessionId}`；与 live 文件活跃度分开
+	consoles: new Map(),
+	consolesSource: null,
+	consolesKey: "",
+	pollingConsoles: false,
 	tick: 0,
 };
 
@@ -387,6 +392,9 @@ function groupSet() {
 function sessionItem(session) {
 	const title = session.name || session.firstMessage || "(空会话)";
 	const sub = [`#${String(session.id).slice(0, 8)}`, fmtBytes(session.size)].filter(Boolean).join(" · ");
+	const consoleInfo = state.consoles.get(`${state.source}:${session.id}`);
+	const consoleState = consoleInfo?.state;
+	const consoleLabel = consoleStatusLabel(consoleState);
 	return h(
 		"button",
 		{ class: `session-item${session.id === state.selectedId ? " active" : ""}`, dataset: { id: session.id }, title: session.file ?? "" },
@@ -394,6 +402,14 @@ function sessionItem(session) {
 			"span",
 			{ class: "session-title" },
 			session.live ? h("span", { class: "live-dot" }) : null,
+			consoleState
+				? h("span", {
+						class: `console-badge is-${consoleState}`,
+						role: "img",
+						"aria-label": consoleLabel,
+						title: `${consoleLabel}${consoleInfo.pid ? `（PID ${consoleInfo.pid}）` : ""}`,
+					})
+				: null,
 			h("span", { class: "session-name", text: title }),
 		),
 		h("span", { class: "session-time", text: fmtRelative(session.modified) }),
@@ -1707,6 +1723,9 @@ function switchSource(id) {
 	state.etag = null;
 	state.sessions = [];
 	state.sessionListKey = "";
+	state.consoles = new Map();
+	state.consolesSource = null;
+	state.consolesKey = "";
 	state.folded = new Set();
 	state.hiddenQs = new Set();
 	state.selectedEvs = new Set();
@@ -1726,6 +1745,7 @@ function switchSource(id) {
 	renderRail();
 	renderTopbar();
 	renderSessions();
+	chat.onConsolesChanged?.([]);
 	chat.onSessionChanged();
 	pollSessions(true);
 	pollSession(true);
@@ -1970,6 +1990,50 @@ async function copyPanel(mode) {
 // ---------------------------------------------------------------------------
 // 轮询
 // ---------------------------------------------------------------------------
+
+async function pollConsoles() {
+	if (state.pollingConsoles) return;
+	state.pollingConsoles = true;
+	const requestedSource = state.source;
+	try {
+		const qs = new URLSearchParams({ source: requestedSource, t: String(Date.now()) });
+		const res = await fetch(`/api/chat/consoles?${qs}`);
+		if (requestedSource !== state.source) return;
+		if (!res.ok) {
+			// chat 未启用/非回环：清掉旧状态，避免把别的源的控制台显示在当前源。
+			if (state.consolesSource !== requestedSource || state.consoles.size) {
+				state.consoles = new Map();
+				state.consolesSource = requestedSource;
+				state.consolesKey = "";
+				renderSessions();
+				chat.onConsolesChanged?.([]);
+			}
+			return;
+		}
+		const data = await res.json();
+		if (requestedSource !== state.source) return;
+		const next = new Map();
+		for (const item of Array.isArray(data.consoles) ? data.consoles : []) {
+			if (!item || typeof item.sessionId !== "string") continue;
+			next.set(`${requestedSource}:${item.sessionId}`, item);
+		}
+		const key = JSON.stringify(
+			[...next.entries()]
+				.map(([sessionKey, item]) => [sessionKey, item.state ?? null, item.pid ?? null])
+				.sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+		);
+		if (key === state.consolesKey && state.consolesSource === requestedSource) return;
+		state.consoles = next;
+		state.consolesSource = requestedSource;
+		state.consolesKey = key;
+		renderSessions();
+		chat.onConsolesChanged?.(Array.isArray(data.consoles) ? data.consoles : []);
+	} catch {
+		/* 网络失败保留旧状态；下一轮重试 */
+	} finally {
+		state.pollingConsoles = false;
+	}
+}
 
 async function pollSessions(force = false) {
 	if (state.pollingSessions) return;
@@ -2434,6 +2498,7 @@ document.addEventListener("visibilitychange", () => {
 	if (document.hidden) return;
 	pollSessions();
 	pollSession();
+	pollConsoles();
 });
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
 
@@ -2505,10 +2570,12 @@ void ensureToolOrigins();
 void pollSources();
 pollSessions();
 pollSession();
+pollConsoles();
 setInterval(() => {
 	if (document.hidden) return;
 	state.tick++;
 	if (state.tick % SESSION_LIST_EVERY === 0) pollSessions();
 	if (state.tick % 30 === 0) void pollSources(); // 约 60s 刷新源列表
 	pollSession();
+	pollConsoles();
 }, POLL_MS);

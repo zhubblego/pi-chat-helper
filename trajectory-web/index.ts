@@ -330,6 +330,7 @@ async function startInProcess(
 		webDir: WEB_DIR,
 		host: "127.0.0.1",
 		toolOrigins,
+		agentDir: AGENT_DIR,
 		// 对话：子进程 pi；默认目录在 agentDir 下，避免落入 sessions
 		chat: true,
 		chatDir: CHAT_DIR,
