@@ -1,6 +1,6 @@
 # SQLite 状态持久化：设计与边界（v1）
 
-> 状态：边界已确认；S1–S4 已完成并验证；S5 未开始。
+> 状态：边界已确认；S1–S5 已完成并验证。
 > 日期：2026-11-10。
 > 关联：[implementation.md](./implementation.md)（分阶段实施清单）。
 > 上游背景：trajectory-web 的过滤、布局、对话指针等状态目前分散在浏览器 localStorage 与 JSON/JSONL 文件。
@@ -306,6 +306,15 @@ POST body 示例：
 - 修正旧 turns 迁移的 sessionId：无 context 快照时使用 chat 目录名（trajectory session id），不再误用 pi thread header。
 - 旧 settings/turns/context 文件保留备份；SQLite 为唯一读写真源。
 - 验证：test-server 247、test-web-lib 239、test-state-db 53、test-extension 92；全量 15 套 1009 PASS、0 FAIL；`tsc` 0；`pi` 0；read_trajectory 的 DB active 测试通过。
-- 未做：S5 切会话工具排除清理与「全部」当前集合语义。
+- 未做（S4 当时）：S5 切会话工具排除清理与「全部」当前集合语义。
+
+### S5（2026-11-10）
+
+- `lib.js` 新增 `allToolsIncluded` / `toggleAllTools`：工具「全部」只看当前会话可见集合，未知排除名不影响勾选态。
+- `syncToolNames` 不再删除当前会话不存在的排除名；`excludeAll=true` 时只把新出现工具加入排除集并持久化。
+- 删除 `selectSession()` / `switchSource()` 清空 `toolExcluded` 与 `saveToolsPrefs()` 的逻辑；切会话/切源保留全局排除集。
+- 浏览器实测两个会话：seed `ghost-tool` 时当前工具「全部」仍为勾选；点「全部」后 ghost+bash 排除、excludeAll=true；切到另一会话 read 自动排除；单独勾回 read 后 excludeAll=false，ghost/bash 保留。
+- 验证：全量 15 套 1013 PASS、0 FAIL；test-web-lib 243；`tsc` 0；`pi` 0；浏览器无 pageerror。
+- 代码提交：`6178fe5`。
 
 实施顺序、文件清单、测试矩阵见 [implementation.md](./implementation.md)。

@@ -1,6 +1,6 @@
 # SQLite 状态持久化：实施计划（v1）
 
-> 状态：方案已确认边界；S1–S4 已完成并验证；S5 未开始。
+> 状态：方案已确认边界；S1–S5 已完成并验证。
 > 上游：[README.md](./README.md)。本文给出逐文件改动、阶段验收、测试矩阵和迁移/回滚边界。
 > 原则：先让 SQLite 成为插件自有状态的唯一真源，再删除 localStorage/JSON 的长期写入；pi session 格式不动。
 
@@ -260,9 +260,12 @@ threadId, threadNew, mode, contextIds
 
 ### 8.3 S5 验收
 
+**状态：已完成（2026-11-10，代码提交 `6178fe5`）。**
+
 - 上述端到端全过。
 - 全量现有测试 + 新 state-db/prefs 测试通过。
 - `tsc`、`pi -ne -e . --print` 通过。
+- 验证：全量 15 套 1013 PASS、0 FAIL；test-web-lib 243；`tsc` 0；`pi` 0；浏览器双会话工具排除/全部切换通过。
 - README/plan/ROADMAP 记录真实验证；不发布、不改版本号。
 
 ## 9. 测试矩阵
@@ -271,7 +274,7 @@ threadId, threadNew, mode, contextIds
 | --- | --- |
 | `test-state-db.cjs` | schema/版本、WAL、CRUD、事务回滚、损坏 DB、迁移幂等、旧文件导入、文件权限 |
 | `test-server.cjs` | prefs GET/POST、session、白名单、Host/Origin/JSON/1MB、DB 故障、boot HTML 注入、chat settings/turns/context |
-| `test-web-lib.cjs` | localStorage 迁移纯函数、未知字段拒绝、工具「全部」语义、无 localStorage 长期写入守卫、无切会话工具重置 |
+| `test-web-lib.cjs` | prefs/session-prefs 迁移纯函数、工具「全部」当前集合语义、无 localStorage 长期写入守卫、切会话不重置 |
 | `test-chat.cjs` | 线程/context/settings sidecar 回归、DB 失败降级 |
 | `test-extension.cjs` | 模式 A DB 生命周期、关闭释放、不写真实 agentDir |
 | Playwright | 两端口同 DB、刷新/切会话/切源、主题首帧、迁移冲突、离线/DB 故障 |
