@@ -1,6 +1,6 @@
 # SQLite 状态持久化：实施计划（v1）
 
-> 状态：方案已确认边界；S1 已完成并验证；S2–S5 未开始。
+> 状态：方案已确认边界；S1–S2 已完成并验证；S3–S5 未开始。
 > 上游：[README.md](./README.md)。本文给出逐文件改动、阶段验收、测试矩阵和迁移/回滚边界。
 > 原则：先让 SQLite 成为插件自有状态的唯一真源，再删除 localStorage/JSON 的长期写入；pi session 格式不动。
 
@@ -31,7 +31,6 @@
 | --- | --- | --- |
 | `trajectory-web/server/state-db.mjs` | 新增 | 打开 DB、schema、schema_meta、WAL、事务、CRUD、JSON/JSONL 迁移、损坏保护 |
 | `trajectory-web/server/state-db.d.mts` | 新增 | 服务端/扩展侧类型声明 |
-| `trajectory-web/server/prefs-api.mjs` | 新增 | prefs 路由纯逻辑：GET/POST、字段白名单、session 读写 |
 | `trajectory-web/server/app.mjs` | 修改 | 打开 DB、注入 stateDb、挂 `/api/prefs*`、POST 白名单、HTML 主题 boot 注入 |
 | `trajectory-web/server/main.mjs` | 修改 | `--state-db`（可选）/agentDir 派生；把 DB 传给 server |
 | `trajectory-web/index.ts` | 修改 | 模式 A 打开/复用 DB；传入 server；关闭时释放 |
@@ -39,14 +38,13 @@
 | `trajectory-web/server/chat-session.mjs` | 修改 | turns/context 读写改走 `chat_turn`/`chat_context`；旧函数保留兼容层 |
 | `trajectory-web/server/chat-host.mjs` | 修改 | 注入 stateDb；thread/send 读取新表；降级 reason |
 | `trajectory-web/web/index.html` | 修改 | 移除 localStorage 主题首帧；注入 `window.__TW_BOOT__` 占位；prefs 初始化钩子 |
-| `trajectory-web/web/app.js` | 修改 | 读 prefs API、迁移 localStorage、过滤/工具/布局/翻译/主题改用服务端；删除切会话/切源工具重置 |
+| `trajectory-web/web/prefs.js` | 新增 | 旧全局键迁移、规范化、清理；不碰 DOM/网络 |
+| `trajectory-web/web/app.js` | 修改 | 读 prefs API、迁移 localStorage、过滤/工具/布局/翻译/主题改用服务端 |
 | `trajectory-web/web/chat.js` | 修改 | thread/threadNew/mode/context 读写改走 session prefs API；本地不再长期写 localStorage |
-| `trajectory-web/web/chat-lib.js` | 修改 | prefs 规范化/迁移纯函数；工具「全部」当前集合判断 |
-| `trajectory-web/server/app.mjs` 的 `index.html` 服务 | 修改 | 读取 boot prefs 后替换 `__TW_BOOT__`；失败时默认 `system` |
 | `package.json` | 修改 | `engines >=22.19`（如确认） |
 | `tests/test-state-db.cjs` | 新增 | schema/WAL/CRUD/事务/迁移/损坏/并发读 |
 | `tests/test-server.cjs` | 修改 | prefs API 安全、session、chat settings/turns/context、HTML boot |
-| `tests/test-web-lib.cjs` | 修改 | 迁移纯函数、无 localStorage 长期写入守卫、工具菜单全选语义 |
+| `tests/test-web-lib.cjs` | 修改 | prefs.js 迁移纯函数、无 localStorage 长期写入守卫 |
 | `tests/test-chat.cjs` | 修改 | chat sidecar 读写回归、DB 失败降级 |
 | `README.md` | 修改 | 状态存储、过滤行为、Node 要求、迁移说明 |
 | `docs/plan/sqlite-state/*` | 修改 | 实施完成状态与验证回写 |
@@ -149,6 +147,8 @@ filters, tools, theme, translate, chatOpen, chatWidth, composerHeight
 threadId, threadNew, mode, contextIds
 ```
 
+> S2 只落地 global 端点与字段；session 端点/字段在 S3。
+
 `mode` 只允许 `independent|forward`；`contextIds` 去重、字符串、总数上限沿用现有策略；`tools.excluded` 只接受字符串数组。
 
 ### 5.2 前端启动
@@ -174,11 +174,14 @@ threadId, threadNew, mode, contextIds
 
 ### 5.4 S2 验收
 
+**状态：已完成（2026-11-10，代码提交 `a3f687e`）。**
+
 - 同一 agentDir 两个不同端口打开：主题、过滤、布局一致。
 - 刷新/换 Origin 不再出现“全部回全选”。
 - 首次导入只发生一次；服务端已有数据时旧 localStorage 被忽略。
 - 主题首帧 dark 无浅色闪烁。
 - prefs API 安全测试通过；DB 故障时 viewer 仍可读轨迹。
+- 验证：test-server 237、test-web-lib 235、test-state-db 52；全量 15 套 993 PASS、0 FAIL；`tsc` 0；`pi` 0；两端口/跨 Origin 浏览器验证通过。
 
 ## 6. S3：按会话 UI 状态
 

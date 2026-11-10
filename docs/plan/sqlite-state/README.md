@@ -1,6 +1,6 @@
 # SQLite 状态持久化：设计与边界（v1）
 
-> 状态：边界已确认；S1 已完成并验证（state-db 核心 + 旧 JSON/JSONL 迁移）；S2–S5 未开始。
+> 状态：边界已确认；S1–S2 已完成并验证；S3–S5 未开始。
 > 日期：2026-11-10。
 > 关联：[implementation.md](./implementation.md)（分阶段实施清单）。
 > 上游背景：trajectory-web 的过滤、布局、对话指针等状态目前分散在浏览器 localStorage 与 JSON/JSONL 文件。
@@ -182,6 +182,8 @@ POST body 示例：
 
 所有字段都可局部更新；`mode` 只接受 `independent` / `forward`；`contextIds` 去重并限制为字符串。
 
+> S2 当前只实现全局 `GET/POST /api/prefs`；`/api/prefs/session` 与 `session_ui` 接线在 S3。
+
 ### 5.3 安全
 
 - 新增 POST 路径加入现有 POST 白名单。
@@ -273,6 +275,18 @@ POST body 示例：
 - 新增 `tests/test-state-db.cjs`：52 PASS。
 - 代码提交：`78b1783`。
 - 验证：全量 15 套 976 PASS、0 FAIL；`tsc` 0；`pi -ne -e . --print` 0。
-- 尚未接线 viewer / API / localStorage 迁移（S2–S5）；当前页面仍用旧 localStorage 状态。
+- S1 时尚未接线；S2 已接入全局偏好 API 与 localStorage 迁移；会话级 localStorage 在 S3 处理。
+
+### S2（2026-11-10）
+
+- 新增 `trajectory-web/web/prefs.js`：旧 `tw.*` 全局键读取/规范化/清理；`app.js` 不再长期写这些键。
+- `app.mjs` 打开 `state.db`（显式 `agentDir` / `stateDbPath`）、新增 `GET/POST /api/prefs`、POST JSON/1MB/Host/Origin 门禁、HTML 首帧 `window.__TW_BOOT__` 注入。
+- `app.js` 启动先 `GET /api/prefs`；`revision=0` 时一次性导入旧 localStorage，成功后清理；之后局部变更防抖 `POST /api/prefs`。
+- 主题、过滤、工具排除、翻译、对话栏开关、对话栏宽度、输入区高度改由服务端偏好驱动；主题首帧由服务端注入。
+- `main.mjs` 新增 `--state-db`，默认把 `agentDir` 传给 server；模式 A 走扩展已有的 `agentDir`。
+- 代码提交：`a3f687e`。
+- 验证：test-server 237、test-web-lib 235、test-state-db 52；全量 15 套 993 PASS、0 FAIL；`tsc` 0；`pi -ne -e . --print` 0。
+- 浏览器实测：旧全局键 → revision 1；刷新/两个不同端口共享主题与过滤；旧键清理；无 pageerror（chat=false 时有预期 501，favicon 404）。
+- 未做：S3 的 session prefs / chat thread/context/mode；S5 的切会话工具排除清理与「全部」当前集合语义。当前仍保留旧会话级 localStorage 和切会话重置逻辑。
 
 实施顺序、文件清单、测试矩阵见 [implementation.md](./implementation.md)。
