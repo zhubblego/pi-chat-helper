@@ -11,7 +11,7 @@ const check = (label, cond, extra = "") => {
 
 (async () => {
 	const lib = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "lib.js")).href);
-	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, buildAgentTree, deriveInfo, deriveTargets, deriveTaskName, DERIVE_TOOL, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments, hitSnippet } = lib;
+	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, buildAgentTree, deriveInfo, deriveTargets, deriveTaskName, DERIVE_TOOL, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments, hitSnippet, allToolsIncluded, toggleAllTools } = lib;
 
 	// ---- SSE 解析（chat-lib.js） ----
 	const {
@@ -38,6 +38,26 @@ const check = (label, cond, extra = "") => {
 		rememberThread,
 		forgetThread,
 	} = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "chat-lib.js")).href);
+	// ---- S5：工具「全部」只看当前会话可见集合 ----
+	const toolExcluded = new Set(["bash", "ghost-tool"]);
+	check(
+		"工具全部：未知排除名不影响当前集合判断",
+		allToolsIncluded(["read"], toolExcluded) === true && allToolsIncluded(["read", "bash"], toolExcluded) === false,
+		JSON.stringify([...toolExcluded]),
+	);
+	const toolOff = toggleAllTools(["read", "bash"], new Set(["ghost-tool"]), false);
+	check(
+		"工具全部：关掉当前全部并保留未知排除名",
+		toolOff.excludeAll === true && toolOff.excluded.has("read") && toolOff.excluded.has("bash") && toolOff.excluded.has("ghost-tool"),
+		JSON.stringify([...toolOff.excluded]),
+	);
+	const toolOn = toggleAllTools(["read"], new Set(["read", "ghost-tool"]), true);
+	check(
+		"工具全部：恢复当前集合且未知排除名不被清",
+		toolOn.excludeAll === false && !toolOn.excluded.has("read") && toolOn.excluded.has("ghost-tool"),
+		JSON.stringify([...toolOn.excluded]),
+	);
+
 	// ---- 全局偏好迁移纯函数（prefs.js） ----
 	const prefs = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "prefs.js")).href);
 	const legacyMap = new Map([
@@ -587,7 +607,18 @@ const check = (label, cond, extra = "") => {
 	);
 	check("初始化恢复：await initGlobalPrefs 后 renderToolbar", appSource.includes("await initGlobalPrefs();\nrenderToolbar();"));
 	check("子菜单每次变更即保存（含全选/全不勾切换）", /state\.toolExcluded\.add\(name\);\n\t\tsaveToolsPrefs\(\);/.test(appSource));
-	check("切会话与切源仍写入全局工具偏好（3 处调用）", appSource.split("saveToolsPrefs();").length - 1 === 3);
+	check(
+		"切会话/切源不再清空或重写工具排除集",
+		appSource.split("saveToolsPrefs();").length - 1 === 2 &&
+			!appSource.slice(appSource.indexOf("function switchSource"), appSource.indexOf("// Agent 派生结构")).includes("state.toolExcluded = new Set") &&
+			!appSource.slice(appSource.indexOf("function selectSession"), appSource.indexOf("/** 点事件行")).includes("saveToolsPrefs()"),
+	);
+	check(
+		"工具「全部」按当前集合计算并保留未知名",
+		appSource.includes("allToolsIncluded(state.toolNames") &&
+			appSource.includes("toggleAllTools(state.toolNames") &&
+			appSource.includes("if (state.toolExcludeAll)"),
+	);
 	check("全局 localStorage 键不再由 app.js 长期写入", ["tw.filters", "tw.tools", "tw.theme", "tw.translate", "tw.chat", "tw.chatWidth", "tw.composerHeight"].every((key) => !appSource.includes(`localStorage.setItem("${key}"`)));
 
 	// ---- 回归守卫：会话表头的分组总开关 ----

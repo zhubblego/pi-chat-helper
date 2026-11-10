@@ -61,6 +61,23 @@ export function eventToolPasses(toolExcluded, event) {
 	return !toolExcluded.has(event.tool?.name);
 }
 
+/** 「全部」勾选态：只看当前会话可见工具；未知排除名不影响。 */
+export function allToolsIncluded(names, excluded) {
+	const set = excluded instanceof Set ? excluded : new Set(excluded ?? []);
+	return (names ?? []).every((name) => !set.has(name));
+}
+
+/** 点击「全部」：保留未知排除名；勾选当前全部或取消当前全部，并切换 excludeAll。 */
+export function toggleAllTools(names, excluded, excludeAll) {
+	const next = new Set(excluded instanceof Set ? excluded : excluded ?? []);
+	const allIncluded = allToolsIncluded(names, next);
+	for (const name of names ?? []) {
+		if (allIncluded) next.add(name);
+		else next.delete(name);
+	}
+	return { excluded: next, excludeAll: allIncluded };
+}
+
 /** mcp__<server>__<tool> → “MCP: <server>”；非 MCP 工具返回 null。 */
 export function mcpLabel(name) {
 	if (!name.startsWith("mcp__")) return null;

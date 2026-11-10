@@ -16,6 +16,7 @@ import {
 	DERIVE_TOOL,
 	GROUP_LABELS,
 	TrajectorySearchIndex,
+	allToolsIncluded,
 	collectToolNames,
 	deriveInfo,
 	deriveTargets,
@@ -39,6 +40,7 @@ import {
 	presetFilters,
 	renderMarkdown,
 	taskShort,
+	toggleAllTools,
 } from "./lib.js";
 import { chatSessionRef, consoleStatusLabel, pruneContextIds } from "./chat-lib.js";
 import { initChatPanel } from "./chat.js";
@@ -661,7 +663,7 @@ function renderFilterMenu() {
 
 /** 工具子菜单：全部 + 工具名（按归属分组，空分组不渲染；勾选态 = 未排除）。 */
 function buildToolSubmenu() {
-	const itemNodes = [submenuItem("", "全部", state.toolExcluded.size === 0)];
+	const itemNodes = [submenuItem("", "全部", allToolsIncluded(state.toolNames, state.toolExcluded))];
 	for (const group of groupToolNames(state.toolNames, state.toolOrigins)) {
 		itemNodes.push(h("div", { class: "menu-label", role: "presentation", text: group.label }));
 		for (const name of group.names) itemNodes.push(submenuItem(name, name, !state.toolExcluded.has(name)));
@@ -699,16 +701,23 @@ function submenuItem(toolName, label, checked) {
 	);
 }
 
-/** 同步工具名列表：新出现的工具进子菜单，消失的工具从排除集里摘除；「全部反选」模式下新工具默认排除（跨会话继承的全局意图）。 */
+/** 同步当前会话可见工具：不删除全局排除集里的未知工具名；excludeAll 下新工具默认排除。 */
 function syncToolNames() {
 	const names = collectToolNames(state.data?.questions ?? []);
 	const changed = names.length !== state.toolNames.length || names.some((name, i) => name !== state.toolNames[i]);
-	if (changed) {
-		state.toolNames = names;
-		for (const name of [...state.toolExcluded]) if (!names.includes(name)) state.toolExcluded.delete(name);
-		if (state.toolExcludeAll) for (const name of names) state.toolExcluded.add(name);
+	if (changed) state.toolNames = names;
+	// 排除集是全局习惯：当前会话不存在的工具名保留，不在这里清洗。
+	let exclusionChanged = false;
+	if (state.toolExcludeAll) {
+		for (const name of names) {
+			if (!state.toolExcluded.has(name)) {
+				state.toolExcluded.add(name);
+				exclusionChanged = true;
+			}
+		}
 	}
-	return changed;
+	if (exclusionChanged) saveToolsPrefs();
+	return changed || exclusionChanged;
 }
 
 function setSubmenuOpen(open, focusFirst = false) {
@@ -727,7 +736,7 @@ function updateSubmenuChecks() {
 	if (!submenu) return;
 	for (const item of submenu.querySelectorAll('button[role^="menuitem"]')) {
 		const name = item.dataset.tool ?? "";
-		const checked = name === "" ? state.toolExcluded.size === 0 : !state.toolExcluded.has(name);
+		const checked = name === "" ? allToolsIncluded(state.toolNames, state.toolExcluded) : !state.toolExcluded.has(name);
 		item.setAttribute("aria-checked", String(checked));
 		const existing = item.querySelector(".menu-check");
 		if (checked && !existing) item.appendChild(svgIcon("check", "menu-check"));
@@ -1776,10 +1785,8 @@ function switchSource(id) {
 	state.hiddenUserIds = new Set();
 	state.query = "";
 	el("search").value = "";
-	state.toolExcluded = new Set();
 	state.toolNames = [];
 	state.searchIndex = new TrajectorySearchIndex();
-	saveToolsPrefs();
 	closePanel();
 	restoreChatContext();
 	renderRail();
@@ -2216,14 +2223,10 @@ el("filter-menu").addEventListener("click", (e) => {
 	if (item.dataset.tool !== undefined) {
 		const name = item.dataset.tool;
 		if (name === "") {
-			// 全选开关：已全勾 → 全不勾（排除全部，跨会话继承）；否则恢复全勾
-			if (state.toolExcluded.size === 0) {
-				for (const toolName of state.toolNames) state.toolExcluded.add(toolName);
-				state.toolExcludeAll = true;
-			} else {
-				state.toolExcluded.clear();
-				state.toolExcludeAll = false;
-			}
+			// 全选开关：只看当前会话可见工具；未知排除名保留，excludeAll 控制新工具。
+			const next = toggleAllTools(state.toolNames, state.toolExcluded, state.toolExcludeAll);
+			state.toolExcluded = next.excluded;
+			state.toolExcludeAll = next.excludeAll;
 		} else if (state.toolExcluded.has(name)) {
 			state.toolExcluded.delete(name);
 			state.toolExcludeAll = false; // 单独勾回某个工具即退出「全部反选」模式
@@ -2354,12 +2357,10 @@ function selectSession(id, from = null) {
 	state.canCropEntry = false;
 	state.hiddenUserIds = new Set();
 	state.query = "";
-	state.toolExcluded = new Set();
 	state.toolNames = [];
 	state.deriveTargets = new Map();
 	state.deriveNames = new Map();
 	state.searchIndex = new TrajectorySearchIndex();
-	saveToolsPrefs();
 	setMenuOpen(false);
 	el("search").value = "";
 	closePanel();
