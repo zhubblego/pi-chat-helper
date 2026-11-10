@@ -1,6 +1,6 @@
 # 控制台转发：设计与边界（v1）
 
-> 状态：T1 控制台桥核心、T2 viewer 发现与状态已完成并验证；T3–T5 未实施。
+> 状态：T1 控制台桥核心、T2 viewer 发现与状态、T3 转发链路已完成并验证；T4–T5 未实施。
 > 日期：2026-11-10。
 > 关联文档：[api.md](./api.md)（接口 / 注册表 / 安全契约）、[ui.md](./ui.md)（双模式与状态）、[implementation.md](./implementation.md)（逐阶段落地计划）。
 > 上游背景：[对话页 v2](../aichat/README.md)。

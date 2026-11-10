@@ -1,6 +1,6 @@
 # 控制台转发：交互与状态（v1）
 
-> 状态：T2 控制台状态展示已实施；T4 侧边双模式未实施。
+> 状态：T2 控制台状态展示、T3 转发后端已实施；T4 侧边双模式未实施。
 > 上游：[README.md](./README.md)。接口：[api.md](./api.md)。落地计划：[implementation.md](./implementation.md)。
 
 ## 1. 目标交互

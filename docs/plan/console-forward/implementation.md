@@ -1,6 +1,6 @@
 # 控制台转发：实施计划（v1）
 
-> 状态：T1–T2 已完成并验证；T3–T5 未实施。
+> 状态：T1–T3 已完成并验证；T4–T5 未实施。
 > 上游：[README.md](./README.md)。接口：[api.md](./api.md)。交互：[ui.md](./ui.md)。
 > 本文是逐阶段落地计划；完成一个阶段后再进入下一阶段，每阶段独立验证、独立 commit。
 
@@ -375,7 +375,7 @@ pi -ne -e . --print
 - headless Chromium：会话 badge working/idle、对话状态条 working/idle、无 JS error。
 - 全量 13 套 905 PASS，0 FAIL；`tsc` 0；`pi -ne -e . --print` 0。
 
-### T3 转发链路
+### T3 转发链路（已完成）
 
 - 新增 `console-forward.mjs`。
 - `POST /api/chat/forward`；精确 sessionFile；错误映射；5 秒超时。
@@ -387,6 +387,13 @@ pi -ne -e . --print
 - 空闲转发进入控制台；
 - 忙碌默认排队；steer 需显式；
 - 会话不匹配/多控制台拒绝。
+
+验证：
+
+- `tests/test-console.cjs` 44 PASS（新增 forward client 超时）。
+- `tests/test-server.cjs` 224 PASS（新增 11 条 forward API/bridge 测试）。
+- 全量 13 套 917 PASS，0 FAIL；`tsc` 0；`pi -ne -e . --print` 0。
+- 成功、session_mismatch、bridge_error、console_offline、ambiguous_console、no_console、参数校验与 Origin 全部覆盖；响应无 token。
 
 ### T4 侧边双模式
 
