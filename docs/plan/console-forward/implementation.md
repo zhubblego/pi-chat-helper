@@ -1,6 +1,6 @@
 # 控制台转发：实施计划（v1）
 
-> 状态：T1–T3 已完成并验证；T4–T5 未实施。
+> 状态：T1–T4 已完成并验证；T5 未实施。
 > 上游：[README.md](./README.md)。接口：[api.md](./api.md)。交互：[ui.md](./ui.md)。
 > 本文是逐阶段落地计划；完成一个阶段后再进入下一阶段，每阶段独立验证、独立 commit。
 
@@ -395,20 +395,26 @@ pi -ne -e . --print
 - 全量 13 套 917 PASS，0 FAIL；`tsc` 0；`pi -ne -e . --print` 0。
 - 成功、session_mismatch、bridge_error、console_offline、ambiguous_console、no_console、参数校验与 Origin 全部覆盖；响应无 token。
 
-### T4 侧边双模式
+### T4 侧边双模式（已完成）
 
-- `index.html` 模式开关/状态条/提示。
-- `chat.js` 模式、转发记录、发送、离线、禁用控件、独立隔离。
-- `chat-lib.js` 纯函数；`style.css`。
-- `preview-mock.js` + Playwright。
-- 测试：test-web-lib + 浏览器。
+- `index.html` 模式开关、控制台状态条、转发“排队/插话”选择器。
+- `chat.js` 独立/转发模式、转发记录、发送、离线/不可用、禁用独立控件、自定义插话确认。
+- `chat-lib.js` 纯函数（模式存储、状态/错误/delivery 文案）；`style.css`。
+- 浏览器验证用 headless Chromium + 临时 fake bridge harness（临时脚本，不入库；仓库未维护 preview-mock）。
+- 测试：test-web-lib 纯函数/静态守卫 + 浏览器。
 
 退出标准：
 
 - 独立模式不回归；
 - 转发忙闲/错误/离线性清楚；
 - `/` 不在转发模式打开命令面板；
-- 刷新、切会话、断连不丢草稿。
+- 模式内切回独立保留独立消息；本版草稿只在当前页面内存，刷新不持久化。
+
+验证：
+
+- `tests/test-web-lib.cjs` 228 PASS（T4 新增 3 条）。
+- headless Chromium：模式切换、隐藏独立控件、auto→followUp、steer 自定义确认、独立恢复、控制台消失离线/恢复、无 JS error。
+- 全量 13 套 920 PASS，0 FAIL；`tsc` 0；`pi -ne -e . --print` 0。
 
 ### T5 安全、文档与验收
 
