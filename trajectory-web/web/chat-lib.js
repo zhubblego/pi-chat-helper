@@ -288,6 +288,55 @@ export function consoleStatusLabel(state) {
 	return "";
 }
 
+/** 对话模式：只认 forward，其余一律 independent。 */
+export function readChatMode(map, key) {
+	const value = map && typeof map === "object" && !Array.isArray(map) ? map[key] : null;
+	return value === "forward" ? "forward" : "independent";
+}
+
+/** 写入/删除模式偏好，返回新 map；不修改入参。 */
+export function writeChatMode(map, key, mode) {
+	const next = map && typeof map === "object" && !Array.isArray(map) ? { ...map } : {};
+	if (!key) return next;
+	if (mode === "forward") next[key] = "forward";
+	else delete next[key];
+	return next;
+}
+
+/** 转发状态条文案：转发生效后无控制台也要给出明确不可用态。 */
+export function forwardStatusLabel(mode, info, lost = false) {
+	if (mode !== "forward") return consoleStatusLabel(info?.state);
+	if (info) return consoleStatusLabel(info.state);
+	return lost ? "控制台已离线" : "未检测到可转发控制台";
+}
+
+/** 桥实际接受的 delivery → 转发记录文案。 */
+export function forwardDeliveryLabel(delivery) {
+	if (delivery === "now") return "已发送，控制台开始执行";
+	if (delivery === "followUp") return "已排队，控制台完成当前任务后处理";
+	if (delivery === "steer") return "已插话，控制台会在当前工具结果后处理";
+	return "已转发";
+}
+
+/** /api/chat/forward 错误码 → 用户可读文案。 */
+export function forwardFailureText(code) {
+	const messages = {
+		no_console: "未检测到可转发控制台",
+		console_offline: "控制台已离线",
+		ambiguous_console: "检测到多个控制台，无法确定目标",
+		session_mismatch: "控制台已切换到其他会话",
+		bridge_timeout: "控制台响应超时",
+		bridge_error: "控制台发送失败",
+		chat_disabled: "转发不可用",
+		forbidden: "请求被拒绝",
+		prompt_empty: "问题不能为空",
+		prompt_too_large: "问题太长",
+		bad_delivery: "转发方式非法",
+		unsupported_source: "只支持 pi 控制台",
+	};
+	return messages[code] ?? "转发失败";
+}
+
 /** preview 已带标签前缀时剥掉，避免摘要出现「模型模型 → litellm」。 */
 function stripPreviewLabel(label, preview) {
 	if (!label || !preview.startsWith(label)) return preview;

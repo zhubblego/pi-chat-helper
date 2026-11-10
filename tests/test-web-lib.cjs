@@ -21,6 +21,11 @@ const check = (label, cond, extra = "") => {
 		isCurrentTurn,
 		modelLabel,
 		consoleStatusLabel,
+		readChatMode,
+		writeChatMode,
+		forwardStatusLabel,
+		forwardDeliveryLabel,
+		forwardFailureText,
 		formatChars,
 		formatContextWindow,
 		computeAnchoredMenuPosition,
@@ -87,6 +92,30 @@ const check = (label, cond, extra = "") => {
 			consoleStatusLabel("idle") === "控制台在线空闲" &&
 			consoleStatusLabel("offline") === "" &&
 			consoleStatusLabel(null) === "",
+	);
+	const modeMap = { "pi:a": "forward", "codex:b": "forward" };
+	const modeWritten = writeChatMode(modeMap, "pi:c", "forward");
+	const modeCleared = writeChatMode(modeWritten, "pi:c", "independent");
+	check(
+		"chat mode：读取只认 forward / 写入不修改入参 / independent 删除键",
+		readChatMode(modeMap, "pi:a") === "forward" &&
+			readChatMode(modeMap, "pi:none") === "independent" &&
+			readChatMode({ "pi:a": "bogus" }, "pi:a") === "independent" &&
+			modeMap["pi:c"] === undefined &&
+			modeWritten["pi:c"] === "forward" &&
+			modeCleared["pi:c"] === undefined &&
+			modeCleared["pi:a"] === "forward",
+	);
+	check(
+		"forward：状态/ delivery / 错误码文案",
+		forwardStatusLabel("independent", { state: "working" }) === "控制台运行中" &&
+			forwardStatusLabel("forward", null, false) === "未检测到可转发控制台" &&
+			forwardStatusLabel("forward", null, true) === "控制台已离线" &&
+			forwardDeliveryLabel("now").includes("开始") &&
+			forwardDeliveryLabel("followUp").includes("排队") &&
+			forwardDeliveryLabel("steer").includes("插话") &&
+			forwardFailureText("session_mismatch").includes("其他会话") &&
+			forwardFailureText("unknown") === "转发失败",
 	);
 
 	const summaryRefs = [
@@ -550,6 +579,20 @@ const check = (label, cond, extra = "") => {
 			indexSource.includes('id="chat-console-status"') &&
 			styleSource.includes(".console-badge") &&
 			styleSource.includes(".chat-console-status"),
+	);
+	check(
+		"T4 双模式：开关/发送/转发记录/禁用接线",
+		indexSource.includes('id="chat-mode-switch"') &&
+			indexSource.includes('id="chat-mode-forward"') &&
+			indexSource.includes('id="chat-forward-delivery"') &&
+			chatSource.includes("function setMode") &&
+			chatSource.includes("function sendForward") &&
+			chatSource.includes("/api/chat/forward") &&
+			chatSource.includes("forwardLogs") &&
+			chatSource.includes("forwardDeliveryEl") &&
+			chatSource.includes("state.mode === \"forward\"") &&
+			styleSource.includes(".chat-mode-switch") &&
+			styleSource.includes(".chat-forward-status"),
 	);
 	check("对话前端接线：send/stop/SSE 解析/response.ok", chatSource.includes("/api/chat/send") && chatSource.includes("/api/chat/stop") && chatSource.includes("/api/chat/thread") && chatSource.includes("parseSseChunk") && chatSource.includes("response.ok"));
 	check("流式解码必须是 TextDecoder + {stream:true}", chatSource.includes('new TextDecoder("utf-8")') && chatSource.includes("stream: true"));

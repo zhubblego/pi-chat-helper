@@ -8,17 +8,21 @@
 import {
 	computeAnchoredMenuPosition,
 	contextSummaryLabel,
-	consoleStatusLabel,
 	filterPaletteItems,
 	forgetThread,
 	formatChars,
 	formatContextWindow,
+	forwardDeliveryLabel,
+	forwardFailureText,
+	forwardStatusLabel,
 	isCurrentTurn,
 	modelLabel,
 	parseSseChunk,
 	parseSseData,
+	readChatMode,
 	readThreadId,
 	rememberThread,
+	writeChatMode,
 } from "./chat-lib.js";
 import { fmtTokens } from "./lib.js";
 
@@ -35,6 +39,7 @@ const PROFILE_OPTIONS = Object.freeze([
 ]);
 const CHAT_THREAD_KEY = "tw.chatThread";
 const CHAT_THREAD_NEW_KEY = "tw.chatThreadNew";
+const CHAT_MODE_KEY = "tw.chatMode";
 const SKILL_SCOPE_LABEL = { user: "全局技能", project: "项目技能", temporary: "临时技能", path: "路径技能" };
 const SKILL_SCOPE_ORDER = { user: 0, project: 1, temporary: 2, path: 3 };
 const ANCHORED_PALETTE_LAYERS = new Set(["modelRoot", "model", "thinking"]);
@@ -75,6 +80,10 @@ export function initChatPanel(deps) {
 	const addBtn = el("chat-add");
 	const modelBtn = el("chat-model-label");
 	const sendBtn = el("chat-send");
+	const modeSwitchEl = el("chat-mode-switch");
+	const modeIndependentBtn = el("chat-mode-independent");
+	const modeForwardBtn = el("chat-mode-forward");
+	const forwardDeliveryEl = el("chat-forward-delivery");
 	const announcer = el("chat-announcer");
 	const paletteEl = el("chat-palette");
 	const paletteListEl = el("chat-palette-list");
@@ -137,6 +146,15 @@ export function initChatPanel(deps) {
 		fullConfirmed: false,
 		// 控制台桥状态（key = `${source}:${sessionId}`）；T2 只展示，转发在 T4
 		consoles: new Map(),
+		consoleLost: new Set(),
+		// T4：独立 / 转发双模式；转发记录只存当前页面内存，按 session 分桶
+		mode: "independent",
+		drafts: { independent: "", forward: "" },
+		forwardLogs: new Map(),
+		forwardDelivery: "auto",
+		forwardBusy: false,
+		forwardSeq: 0,
+		forwardConfirm: null,
 		approvals: [],
 		approvalChecked: false,
 		approvalBusy: false,
@@ -165,6 +183,65 @@ export function initChatPanel(deps) {
 
 	function currentKey() {
 		return sessionKeyOf(currentSession());
+	}
+
+	function readModeMap() {
+		try {
+			const parsed = JSON.parse(localStorage.getItem(CHAT_MODE_KEY) || "{}");
+			return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+		} catch {
+			return {};
+		}
+	}
+
+	function saveModeFor(key, mode) {
+		if (!key) return;
+		try {
+			localStorage.setItem(CHAT_MODE_KEY, JSON.stringify(writeChatMode(readModeMap(), key, mode)));
+		} catch {
+			/* 无痕模式等场景忽略 */
+		}
+	}
+
+	function syncModeForSession() {
+		state.mode = readChatMode(readModeMap(), currentKey());
+		state.forwardDelivery = "auto";
+	}
+
+	function currentConsoleInfo() {
+		const session = currentSession();
+		return session ? state.consoles.get(sessionKeyOf(session)) : null;
+	}
+
+	function independentBusy() {
+		return state.streaming || Boolean(state.turn && !state.turn.settled);
+	}
+
+	function setMode(mode) {
+		if (mode !== "independent" && mode !== "forward") return;
+		if (mode === state.mode) return;
+		const session = currentSession();
+		if (!session) return;
+		if (mode === "forward" && !currentConsoleInfo()) return;
+		if (input) state.drafts[state.mode] = input.value;
+		if (mode === "forward") {
+			closePalette({ restore: false, clearInput: false, focus: false });
+			closeProfileMenu();
+			closeContextMenu({ focus: false });
+		}
+		state.mode = mode;
+		state.forwardBusy = false;
+		state.forwardSeq++;
+		state.forwardConfirm = null;
+		saveModeFor(sessionKeyOf(session), mode);
+		if (input) {
+			input.value = state.drafts[mode] ?? "";
+			deps.autoGrowInput?.();
+		}
+		if (mode === "independent" && state.open) void ensureLoaded();
+		render();
+		announce(mode === "forward" ? "已切换到转发模式" : "已切换到独立模式");
+		input?.focus?.();
 	}
 
 	function readChatThreadMap() {
@@ -325,6 +402,7 @@ export function initChatPanel(deps) {
 
 	async function ensureLoaded() {
 		if (!state.open) return;
+		syncModeForSession();
 		if (state.enabled === null) await loadCapabilities();
 		if (state.enabled === false) return;
 		await loadSettings();
@@ -575,8 +653,93 @@ export function initChatPanel(deps) {
 	function renderMessages() {
 		if (!list) return;
 		const stick = isNearBottom();
-		list.replaceChildren(...buildMessageNodes());
+		if (state.mode === "forward") {
+			list.replaceChildren(...buildForwardNodes());
+		} else {
+			list.replaceChildren(...buildMessageNodes());
+		}
 		if (stick) list.scrollTop = list.scrollHeight;
+	}
+
+	function currentForwardLog() {
+		const key = currentKey();
+		if (!key) return [];
+		return state.forwardLogs.get(key) ?? [];
+	}
+
+	function appendForwardLog(entry) {
+		const key = currentKey();
+		if (!key) return;
+		const log = state.forwardLogs.get(key) ?? [];
+		log.push(entry);
+		state.forwardLogs.set(key, log);
+	}
+
+	function buildForwardNodes() {
+		const nodes = [h("div", { class: "chat-forward-note", text: "转发模式：回答和工具审批在控制台完成；主轨迹区会显示新事件。" })];
+		if (!currentSession()) {
+			nodes.push(h("div", { class: "chat-empty", text: "先在左侧选择一个会话" }));
+			return nodes;
+		}
+		const confirm = state.forwardConfirm;
+		if (confirm && confirm.key === currentKey()) {
+			nodes.push(
+				h(
+					"div",
+					{ class: "chat-forward-confirm" },
+					h("div", { class: "chat-forward-confirm-text", text: "插话会改变控制台当前任务的方向，确定发送？" }),
+					h(
+						"div",
+						{ class: "chat-forward-confirm-actions" },
+						h("button", { class: "chat-forward-confirm-yes", type: "button", text: "确认插话", onClick: () => void sendForward() }),
+						h(
+							"button",
+							{
+								class: "chat-forward-confirm-no",
+								type: "button",
+								text: "取消",
+								onClick: () => {
+									state.forwardConfirm = null;
+									state.forwardDelivery = "auto";
+									if (forwardDeliveryEl) forwardDeliveryEl.value = "auto";
+									render();
+								},
+							},
+						),
+					),
+				),
+			);
+		}
+		const log = currentForwardLog();
+		if (!log.length) {
+			nodes.push(
+				h("div", {
+					class: "chat-empty",
+					text: currentConsoleInfo() ? "输入问题，转发到当前控制台。" : "未检测到可转发控制台。",
+				}),
+			);
+			return nodes;
+		}
+		for (const entry of log) {
+			if (entry.kind === "user") {
+				nodes.push(
+					h(
+						"div",
+						{ class: "chat-forward-user" },
+						h("div", { class: "chat-forward-tag", text: "→ 控制台" }),
+						h("div", { class: "chat-forward-text", text: entry.text }),
+					),
+				);
+			} else {
+				nodes.push(
+					h("div", {
+						class: `chat-forward-status${entry.tone === "error" ? " is-error" : ""}`,
+						text: entry.text,
+					}),
+				);
+			}
+		}
+		return nodes;
 	}
 
 	function buildMessageNodes() {
@@ -691,6 +854,24 @@ export function initChatPanel(deps) {
 
 	function updateSendButton() {
 		if (!sendBtn) return;
+		if (state.mode === "forward") {
+			const info = currentConsoleInfo();
+			const canSend =
+				Boolean(info) && !state.forwardBusy && !independentBusy() && !state.palette && input?.value.trim().length > 0;
+			sendBtn.disabled = !canSend;
+			sendBtn.classList.remove("is-stop");
+			const label = state.forwardBusy
+				? "转发中…"
+				: !info
+					? "未检测到可转发控制台"
+					: independentBusy()
+						? "独立对话正在运行，先停止或等待完成"
+						: "转发到控制台";
+			sendBtn.title = label;
+			sendBtn.setAttribute("aria-label", label);
+			if (sendIcon && sendBtn.firstElementChild !== sendIcon) sendBtn.replaceChildren(sendIcon.cloneNode(true));
+			return;
+		}
 		const canSend = state.enabled === true && !!currentSession() && !state.palette && input?.value.trim().length > 0;
 		sendBtn.disabled = state.streaming ? false : !canSend;
 		sendBtn.classList.toggle("is-stop", state.streaming);
@@ -706,6 +887,19 @@ export function initChatPanel(deps) {
 
 	function renderComposer() {
 		if (!input) return;
+		if (state.mode === "forward") {
+			const session = currentSession();
+			const info = currentConsoleInfo();
+			input.disabled = !session || !info;
+			input.placeholder = !session
+				? "先在左侧选择一个会话"
+				: !info
+					? "未检测到可转发控制台"
+					: info.state === "working"
+						? "转发到控制台（忙碌，默认排队）…"
+						: "转发到控制台…";
+			return;
+		}
 		const blocked = state.enabled === false || !currentSession();
 		input.disabled = blocked;
 		input.placeholder = state.enabled === false ? "对话不可用" : blocked ? "先在左侧选择一个会话" : "问问这条轨迹…";
@@ -715,6 +909,7 @@ export function initChatPanel(deps) {
 		renderHead();
 		renderMessages();
 		renderComposer();
+		renderModeControls();
 		renderSkillChip();
 		renderContext();
 		renderConsoleStatus();
@@ -725,25 +920,60 @@ export function initChatPanel(deps) {
 		renderPalette();
 	}
 
-	/** 控制台状态条：T2 只显示桥状态，不提供转发。 */
+	function renderModeControls() {
+		const forward = state.mode === "forward";
+		const info = currentConsoleInfo();
+		const hasConsole = Boolean(info);
+		modeSwitchEl?.setAttribute("data-mode", state.mode);
+		if (modeIndependentBtn) {
+			modeIndependentBtn.classList.toggle("is-active", !forward);
+			modeIndependentBtn.setAttribute("aria-selected", String(!forward));
+		}
+		if (modeForwardBtn) {
+			modeForwardBtn.classList.toggle("is-active", forward);
+			modeForwardBtn.setAttribute("aria-selected", String(forward));
+			modeForwardBtn.disabled = !hasConsole;
+			modeForwardBtn.setAttribute("aria-disabled", String(!hasConsole));
+			modeForwardBtn.title = hasConsole ? "转发到当前控制台" : "当前会话没有可转发控制台";
+		}
+		if (addBtn) addBtn.hidden = forward;
+		const profileBtn = el("chat-profile");
+		if (profileBtn) profileBtn.hidden = forward;
+		if (modelBtn) modelBtn.hidden = forward;
+		if (forwardDeliveryEl) {
+			const show = forward && info?.state === "working";
+			forwardDeliveryEl.hidden = !show;
+			if (state.forwardDelivery !== "auto" && state.forwardDelivery !== "steer") state.forwardDelivery = "auto";
+			forwardDeliveryEl.value = state.forwardDelivery;
+		}
+	}
+
+	/** 控制台状态条：独立模式只在有桥时显示；转发模式显示在线/离线/不可用。 */
 	function renderConsoleStatus() {
 		if (!consoleStatusEl) return;
 		const session = currentSession();
-		const info = session ? state.consoles.get(sessionKeyOf(session)) : null;
-		const label = consoleStatusLabel(info?.state);
-		if (!state.open || !info || !label) {
+		const info = session ? currentConsoleInfo() : null;
+		const key = session ? sessionKeyOf(session) : "";
+		const lost = key ? state.consoleLost.has(key) : false;
+		const label = forwardStatusLabel(state.mode, info, lost);
+		if (!state.open || !session || !label) {
 			consoleStatusEl.hidden = true;
 			consoleStatusEl.replaceChildren();
 			consoleStatusEl.removeAttribute("title");
 			return;
 		}
+		const tone = info ? info.state : lost ? "offline" : "unavailable";
 		consoleStatusEl.hidden = false;
-		consoleStatusEl.className = `chat-console-status is-${info.state}`;
-		consoleStatusEl.title = `${label}${info.pid ? `（PID ${info.pid}）` : ""}；回答和工具审批在控制台完成`;
+		consoleStatusEl.className = `chat-console-status is-${tone}`;
+		consoleStatusEl.title = info
+			? `${label}${info.pid ? `（PID ${info.pid}）` : ""}；回答和工具审批在控制台完成`
+			: state.mode === "forward"
+				? "转发模式下需要当前会话有已注册控制台"
+				: label;
 		consoleStatusEl.replaceChildren(
 			h("span", { class: "console-status-dot", "aria-hidden": "true" }),
 			h("span", { class: "console-status-label", text: label }),
-			info.pid ? h("span", { class: "console-status-pid", text: `PID ${info.pid}` }) : null,
+			info?.pid ? h("span", { class: "console-status-pid", text: `PID ${info.pid}` }) : null,
 		);
 	}
 
@@ -762,7 +992,7 @@ export function initChatPanel(deps) {
 		const box = el("chat-context");
 		if (!box) return;
 		const ids = contextIds();
-		if (!state.open || ids.length === 0) {
+		if (!state.open || state.mode === "forward" || ids.length === 0) {
 			box.hidden = true;
 			box.replaceChildren();
 			box.setAttribute("aria-expanded", "false");
@@ -878,7 +1108,7 @@ export function initChatPanel(deps) {
 	}
 
 	function openContextMenu() {
-		if (!state.open || contextIds().length === 0) return;
+		if (state.mode === "forward" || !state.open || contextIds().length === 0) return;
 		if (state.palette) closePalette({ restore: true, focus: false });
 		closeProfileMenu();
 		state.contextMenuOpen = true;
@@ -1020,6 +1250,7 @@ export function initChatPanel(deps) {
 	// ------------------------------------------------------------------
 
 	function openProfileMenu() {
+		if (state.mode === "forward") return;
 		if (state.streaming) {
 			pushNotice("回复中，先停止", "warn");
 			flushRender();
@@ -1243,6 +1474,10 @@ export function initChatPanel(deps) {
 
 	function renderApproval() {
 		if (!approvalEl) return;
+		if (state.mode === "forward") {
+			approvalEl.hidden = true;
+			return;
+		}
 		const approval = state.approvals[0];
 		if (!approval) {
 			stopApprovalTimer();
@@ -1721,7 +1956,7 @@ export function initChatPanel(deps) {
 	}
 
 	function openPalette(layer, { draft = null, clearOnSelect = null, initialIndex = 0, back = null } = {}) {
-		if (!currentSession() || state.enabled !== true) return;
+		if (state.mode !== "independent" || !currentSession() || state.enabled !== true) return;
 		closeProfileMenu();
 		closeContextMenu({ focus: false });
 		const previousDraft = draft ?? state.palette?.draft ?? input?.value ?? "";
@@ -1964,6 +2199,11 @@ export function initChatPanel(deps) {
 	function renderSkillChip() {
 		const box = el("chat-skill");
 		if (!box) return;
+		if (state.mode === "forward") {
+			box.hidden = true;
+			box.replaceChildren();
+			return;
+		}
 		if (!state.skill) {
 			box.hidden = true;
 			box.replaceChildren();
@@ -2354,7 +2594,7 @@ export function initChatPanel(deps) {
 	}
 
 	async function send() {
-		if (state.streaming || state.palette) return;
+		if (state.mode !== "independent" || state.streaming || state.palette) return;
 		closeProfileMenu();
 		const session = currentSession();
 		if (!session || state.enabled !== true || !input) return;
@@ -2395,6 +2635,7 @@ export function initChatPanel(deps) {
 			model: state.model,
 		});
 		input.value = "";
+		state.drafts.independent = "";
 		deps.autoGrowInput?.();
 		announce("");
 		flushRender();
@@ -2433,6 +2674,7 @@ export function initChatPanel(deps) {
 				// meta 前失败：清掉乐观消息，恢复输入内容
 				state.messages = state.messages.filter((message) => !turn.ids.has(message.id));
 				input.value = text;
+				state.drafts.independent = text;
 				deps.autoGrowInput?.();
 				pushNotice(aborted ? "已停止" : `发送失败：${err?.message ?? err}`, "error");
 				turn.settled = true;
@@ -2440,6 +2682,103 @@ export function initChatPanel(deps) {
 				return;
 			}
 			finishTurn(turn, { aborted, error: aborted ? null : `连接中断：${err?.message ?? err}` });
+		}
+	}
+
+	async function sendForward() {
+		if (state.mode !== "forward" || state.forwardBusy || !input) return;
+		const session = currentSession();
+		const info = currentConsoleInfo();
+		if (!session) return;
+		if (!info) {
+			pushNotice("未检测到可转发控制台", "warn");
+			flushRender();
+			return;
+		}
+		if (independentBusy()) {
+			pushNotice("独立对话正在运行，先停止或等待完成", "warn");
+			flushRender();
+			return;
+		}
+		const text = input.value.trim();
+		if (!text) return;
+		if (text.length > PROMPT_MAX) {
+			pushNotice(`消息超过 ${PROMPT_MAX} 字符`, "error");
+			flushRender();
+			return;
+		}
+		let delivery = forwardDeliveryEl?.value === "steer" ? "steer" : "auto";
+		const key = sessionKeyOf(session);
+		if (
+			delivery === "steer" &&
+			!(state.forwardConfirm && state.forwardConfirm.key === key && state.forwardConfirm.text === text)
+		) {
+			state.forwardConfirm = { key, text };
+			state.forwardDelivery = "steer";
+			render();
+			return;
+		}
+		state.forwardConfirm = null;
+		const seq = ++state.forwardSeq;
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), 8000);
+		state.forwardBusy = true;
+		state.forwardDelivery = delivery;
+		updateSendButton();
+		try {
+			const res = await fetch("/api/chat/forward", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ source: session.source, session: session.id, prompt: text, delivery }),
+				signal: controller.signal,
+			});
+			let data = null;
+			try {
+				data = await res.json();
+			} catch {
+				/* 非 JSON 错误体 */
+			}
+			if (seq !== state.forwardSeq || currentKey() !== key || state.mode !== "forward") {
+				state.forwardBusy = false;
+				return;
+			}
+			if (!res.ok || data?.ok !== true) {
+				const code = typeof data?.code === "string" ? data.code : `http_${res.status}`;
+				if (["no_console", "console_offline", "ambiguous_console", "session_mismatch"].includes(code)) state.consoleLost.add(key);
+				appendForwardLog({ kind: "status", tone: "error", text: forwardFailureText(code) });
+				state.forwardBusy = false;
+				render();
+				return;
+			}
+			const actual = typeof data.delivery === "string" ? data.delivery : "auto";
+			state.consoleLost.delete(key);
+			const local = state.consoles.get(key);
+			if (local) state.consoles.set(key, { ...local, state: "working" });
+			appendForwardLog({ kind: "user", text });
+			appendForwardLog({ kind: "status", tone: "ok", text: forwardDeliveryLabel(actual) });
+			input.value = "";
+			state.drafts.forward = "";
+			deps.autoGrowInput?.();
+			state.forwardDelivery = "auto";
+			if (forwardDeliveryEl) forwardDeliveryEl.value = "auto";
+			state.forwardBusy = false;
+			render();
+			announce(forwardDeliveryLabel(actual));
+			input.focus?.();
+		} catch (err) {
+			if (seq !== state.forwardSeq || currentKey() !== key || state.mode !== "forward") {
+				state.forwardBusy = false;
+				return;
+			}
+			appendForwardLog({
+				kind: "status",
+				tone: "error",
+				text: err?.name === "AbortError" ? "控制台响应超时" : `转发失败：${err?.message ?? err}`,
+			});
+			state.forwardBusy = false;
+			render();
+		} finally {
+			clearTimeout(timer);
 		}
 	}
 
@@ -2470,12 +2809,14 @@ export function initChatPanel(deps) {
 	if (input) {
 		input.addEventListener("input", () => {
 			deps.autoGrowInput?.();
+			state.drafts[state.mode] = input.value;
 			updateSendButton();
 			// 面板打开时 textarea 不参与搜索；输入即视为焦点离开搜索框。
 			if (state.palette) {
 				closePalette({ restore: false, focus: false });
 				return;
 			}
+			if (state.mode === "forward") return;
 			const value = input.value;
 			if (/^\/[A-Za-z]*$/.test(value.trim())) {
 				const command = value.trim().slice(1).toLowerCase();
@@ -2493,13 +2834,26 @@ export function initChatPanel(deps) {
 			// Enter 发送、Shift+Enter 换行；面板打开时 Enter 已在上面消费
 			if (e.key !== "Enter" || e.shiftKey) return;
 			e.preventDefault();
+			if (state.mode === "forward") {
+				void sendForward();
+				return;
+			}
 			if (state.streaming || state.palette) return;
 			void send();
+		});
+	}
+	if (modeIndependentBtn) modeIndependentBtn.addEventListener("click", () => setMode("independent"));
+	if (modeForwardBtn) modeForwardBtn.addEventListener("click", () => setMode("forward"));
+	if (forwardDeliveryEl) {
+		forwardDeliveryEl.addEventListener("change", () => {
+			state.forwardDelivery = forwardDeliveryEl.value === "steer" ? "steer" : "auto";
+			state.forwardConfirm = null;
 		});
 	}
 	if (addBtn) {
 		addBtn.addEventListener("click", (e) => {
 			e.stopPropagation();
+			if (state.mode === "forward") return;
 			if (state.palette?.layer === "command") closePalette({ restore: true });
 			else openPalette("command", { draft: input?.value ?? "", clearOnSelect: false });
 		});
@@ -2507,6 +2861,7 @@ export function initChatPanel(deps) {
 	if (modelBtn) {
 		modelBtn.addEventListener("click", (e) => {
 			e.stopPropagation();
+			if (state.mode === "forward") return;
 			if (state.streaming) {
 				pushNotice("回复中，先停止", "warn");
 				flushRender();
@@ -2522,6 +2877,7 @@ export function initChatPanel(deps) {
 	if (contextBtn) {
 		contextBtn.addEventListener("click", (e) => {
 			e.stopPropagation();
+			if (state.mode === "forward") return;
 			if (state.contextMenuOpen) closeContextMenu({ focus: true });
 			else openContextMenu();
 		});
@@ -2529,6 +2885,10 @@ export function initChatPanel(deps) {
 	if (sendBtn) {
 		sendBtn.addEventListener("click", () => {
 			if (state.palette) return;
+			if (state.mode === "forward") {
+				if (!state.forwardBusy) void sendForward();
+				return;
+			}
 			if (state.streaming) void stop();
 			else void send();
 		});
@@ -2639,8 +2999,9 @@ export function initChatPanel(deps) {
 	render();
 
 	return {
-		setOpen(open) {
+			setOpen(open) {
 			state.open = open === true;
+			syncModeForSession();
 			if (!state.open) {
 				closePalette({ restore: true, focus: false });
 				closeProfileMenu();
@@ -2649,8 +3010,10 @@ export function initChatPanel(deps) {
 			if (state.open) void ensureLoaded();
 			renderContext();
 			renderConsoleStatus();
+			renderModeControls();
 		},
 		handleEscape() {
+			if (state.mode === "forward") return false;
 			if (state.approvals.length) {
 				void respondApproval(false);
 				return true;
@@ -2710,7 +3073,12 @@ export function initChatPanel(deps) {
 			state.loadSeq++;
 			state.loading = false;
 			setMessages([]);
+			state.forwardBusy = false;
+			state.forwardSeq++;
+			state.forwardConfirm = null;
+			syncModeForSession();
 			renderConsoleStatus();
+			renderModeControls();
 			if (state.open) void ensureLoaded();
 			else render();
 		},
@@ -2719,8 +3087,12 @@ export function initChatPanel(deps) {
 			for (const item of Array.isArray(consoles) ? consoles : []) {
 				if (item && typeof item.sessionId === "string") next.set(`pi:${item.sessionId}`, item);
 			}
+			for (const key of state.consoles.keys()) {
+				if (!next.has(key)) state.consoleLost.add(key);
+			}
+			for (const key of next.keys()) state.consoleLost.delete(key);
 			state.consoles = next;
-			renderConsoleStatus();
+			render();
 		},
 		onSelectionChanged() {
 			renderContext();

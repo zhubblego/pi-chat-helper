@@ -117,6 +117,10 @@
 					</div>
 					<div class="chat-row">
 						<div class="chat-tools">
+							<div id="chat-mode-switch" class="chat-mode-switch" role="tablist" aria-label="对话模式">
+								<button id="chat-mode-independent" class="chat-mode-btn is-active" type="button" role="tab" aria-selected="true" title="独立对话：使用侧边自己的 pi 子进程">独立</button>
+								<button id="chat-mode-forward" class="chat-mode-btn" type="button" role="tab" aria-selected="false" title="转发到当前控制台" disabled>转发</button>
+							</div>
 							<button id="chat-add" class="chat-add" type="button" title="命令菜单" aria-label="打开命令菜单" aria-haspopup="listbox" aria-expanded="false">
 								<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
 							</button>
@@ -128,6 +132,10 @@
 							</div>
 						</div>
 						<div class="chat-trailing">
+							<select id="chat-forward-delivery" class="chat-forward-delivery" hidden title="控制台忙碌时的转发方式" aria-label="转发方式">
+								<option value="auto">排队</option>
+								<option value="steer">插话</option>
+							</select>
 							<div class="chat-standard-controls">
 								<button id="chat-model-label" class="chat-model-label" type="button" aria-haspopup="menu" aria-expanded="false" title="模型与思考级别">
 									<span id="chat-model-name" class="chat-trigger-label">读取模型中…</span>
