@@ -40,9 +40,10 @@ import {
 	renderMarkdown,
 	taskShort,
 } from "./lib.js";
-import { chatSessionRef, consoleStatusLabel, mergeContextIds, normalizeContextIds, pruneContextIds } from "./chat-lib.js";
+import { chatSessionRef, consoleStatusLabel, pruneContextIds } from "./chat-lib.js";
 import { initChatPanel } from "./chat.js";
 import { clearLegacyGlobalPrefs, normalizeGlobalPrefs, normalizeToolsPrefs, readLegacyGlobalPrefs } from "./prefs.js";
+import { loadSessionPrefs, updateSessionPrefs } from "./session-prefs.js";
 
 const POLL_MS = 2000;
 const SESSION_LIST_EVERY = 3; // 每 3 个 tick 刷一次会话列表（约 6s）
@@ -77,7 +78,7 @@ const state = {
 	hiddenQs: new Set(),
 	// 行级选中（对话/蒸馏模式下共享的上下文选择；轮头勾选态由它派生）
 	selectedEvs: new Set(),
-	// 当前选中集对应的 source:session 键（切会话时重载 tw.chatCtx）
+	// 当前选中集对应的 source:session 键（切会话时重载 session_ui.contextIds）
 	chatCtxKey: null,
 	// 单条裁剪（entry id）：模型上下文真的剔掉
 	croppedEntries: new Set(),
@@ -118,6 +119,7 @@ const state = {
 };
 
 // 全局偏好：S2 起服务端 /api/prefs 是唯一真源；localStorage 只由 prefs.js 一次性迁移读取。
+// 会话偏好：S3 起 session-prefs.js 管理 session_ui；旧 tw.chat* 只做一次性迁移。
 const GLOBAL_PREF_SAVE_MS = 120;
 let globalPrefs = {
 	theme: "system",
@@ -1447,29 +1449,15 @@ function closePanel() {
 // ---------------------------------------------------------------------------
 
 const CHAT_INPUT_MAX_H = 132; // 与 CSS .chat-input max-height 同步（约 6 行封顶后内部滚动）
-const CHAT_CTX_KEY = "tw.chatCtx";
 
 function currentChatKey() {
 	return `${state.source}:${state.selectedId ?? ""}`;
 }
 
-function loadChatCtxMap() {
-	try {
-		const parsed = JSON.parse(localStorage.getItem(CHAT_CTX_KEY) || "{}");
-		return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-	} catch {
-		return {};
-	}
-}
-
-/** 把当前选中集写入 tw.chatCtx（不删旧 key）。 */
+/** 把当前选中集写回 session_ui.contextIds。 */
 function saveChatContext() {
-	try {
-		const map = mergeContextIds(loadChatCtxMap(), currentChatKey(), [...state.selectedEvs]);
-		localStorage.setItem(CHAT_CTX_KEY, JSON.stringify(map));
-	} catch {
-		/* 无痕模式等场景忽略 */
-	}
+	if (!state.selectedId) return;
+	updateSessionPrefs(state.source, state.selectedId, { contextIds: [...state.selectedEvs] });
 }
 
 /** 剪掉投影里已不存在的事件 id；返回是否有变化。 */
@@ -1486,14 +1474,23 @@ function pruneChatContext() {
 	return changed;
 }
 
-/** 从 tw.chatCtx 恢复当前 source:session 的选中集（有投影时顺带 prune）。 */
-function restoreChatContext() {
+/** 从 session_ui.contextIds 恢复当前 source:session 的选中集（有投影时顺带 prune）。 */
+async function restoreChatContext() {
 	const key = currentChatKey();
-	const map = loadChatCtxMap();
-	const ids = normalizeContextIds(map, state.source, state.selectedId ?? "");
-	state.selectedEvs = new Set(ids);
+	const source = state.source;
+	const sessionId = state.selectedId;
+	if (!sessionId) {
+		state.selectedEvs = new Set();
+		state.chatCtxKey = key;
+		return;
+	}
+	const prefs = await loadSessionPrefs(source, sessionId);
+	if (currentChatKey() !== key) return;
+	state.selectedEvs = new Set(prefs.contextIds ?? []);
 	state.chatCtxKey = key;
 	pruneChatContext();
+	renderMain();
+	chat?.onSelectionChanged?.();
 }
 
 function addSelectedIds(ids) {
@@ -1514,7 +1511,7 @@ function autoGrowChatInput() {
 // ---------------------------------------------------------------------------
 
 function setChatOpen(open) {
-	if (open) restoreChatContext();
+	if (open) void restoreChatContext();
 	else saveChatContext();
 	state.chatOpen = open;
 	el("chat-drawer").hidden = !open;
@@ -2143,7 +2140,7 @@ async function pollSession(force = false) {
 			return;
 		}
 		state.data = { meta: j.meta, questions: j.questions };
-		// 首次投影/切换会话后恢复 tw.chatCtx 并剪掉失效 id
+		// 首次投影/切换会话后恢复 session_ui.contextIds 并剪掉失效 id
 		if (state.chatCtxKey !== currentChatKey()) restoreChatContext();
 		else pruneChatContext();
 		chat.onTrajectoryChanged();

@@ -77,6 +77,47 @@ const check = (label, cond, extra = "") => {
 	prefs.clearLegacyGlobalPrefs(fakeStorage);
 	check("prefs：迁移成功后旧键清理", legacyMap.size === 0, JSON.stringify([...legacyMap.keys()]));
 
+	// ---- 会话级偏好迁移纯函数（session-prefs.js） ----
+	const sessionPrefs = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "session-prefs.js")).href);
+	const sessionMap = new Map([
+		["tw.chatThread", JSON.stringify({ "pi:s1": "thread-a", "pi:s2": "thread-b" })],
+		["tw.chatThreadNew", JSON.stringify({ "pi:s1": "thread-a" })],
+		["tw.chatMode", JSON.stringify({ "pi:s1": "forward" })],
+		["tw.chatCtx", JSON.stringify({ "pi:s1": ["u1:0", "u1:0", "a1:0"] })],
+	]);
+	const sessionStorage = {
+		getItem: (key) => (sessionMap.has(key) ? sessionMap.get(key) : null),
+		setItem: (key, value) => sessionMap.set(key, value),
+		removeItem: (key) => sessionMap.delete(key),
+	};
+	const legacySession = sessionPrefs.readLegacySessionPrefs("pi:s1", sessionStorage);
+	check(
+		"session-prefs：旧 thread/new/mode/context 映射与去重",
+		legacySession.threadId === "thread-a" &&
+			legacySession.threadNew === true &&
+			legacySession.mode === "forward" &&
+			legacySession.contextIds?.join(",") === "u1:0,a1:0",
+		JSON.stringify(legacySession),
+	);
+	check(
+		"session-prefs：默认值与非法值裁剪",
+		sessionPrefs.getSessionPrefs("pi", "missing").mode === "independent" &&
+			(() => {
+				const out = sessionPrefs.normalizeSessionPrefs({ mode: "bad", threadNew: "yes", contextIds: ["x", 1, "x"] });
+				return out.mode === undefined && out.threadNew === undefined && out.contextIds?.join(",") === "x";
+			})(),
+	);
+	sessionPrefs.clearLegacySessionPrefs("pi:s1", sessionStorage);
+	const remainingThreads = JSON.parse(sessionMap.get("tw.chatThread") || "{}");
+	check(
+		"session-prefs：只清理当前 key，保留其它会话",
+		remainingThreads["pi:s2"] === "thread-b" && !remainingThreads["pi:s1"] && !sessionMap.has("tw.chatMode") && !sessionMap.has("tw.chatCtx"),
+		JSON.stringify([...sessionMap.entries()]),
+	);
+
+	prefs.clearLegacyGlobalPrefs(fakeStorage);
+	check("prefs：迁移成功后旧键清理", legacyMap.size === 0, JSON.stringify([...legacyMap.keys()]));
+
 	const sseOne = parseSseChunk('event: meta\ndata: {"a":1}\n\n');
 	check("SSE：单事件", sseOne.events.length === 1 && sseOne.events[0].event === "meta" && sseOne.rest === "", JSON.stringify(sseOne));
 	check("SSE：data 可 JSON 解析", parseSseData(sseOne.events[0])?.a === 1);
@@ -959,13 +1000,14 @@ const check = (label, cond, extra = "") => {
 	check("输入卡与输入框圆角收敛（16px，不用 28px 的 panel 圆角）", /\.chat-card \{[^}]*border-radius: var\(--dsw-radius-lg\)/s.test(styleSource) && /\.chat-input \{[^}]*border-radius: var\(--dsw-radius-lg\)/s.test(styleSource) && !/\.chat-card \{[^}]*radius-panel/s.test(styleSource));
 	check("对话页样式复刻上游：用户气泡 + 输入卡 + info 圆发送钮", styleSource.includes(".chat-msg.user") && styleSource.includes("var(--dsw-specific-bubble)") && styleSource.includes(".chat-card") && styleSource.includes("var(--dsw-specific-input-major)") && styleSource.includes(".chat-send") && styleSource.includes("var(--dsw-alias-button-info-fill)"));
 	check(
-		"上下文选择：tw.chatCtx 恢复保存 / 不截断 / prune",
-		appSource.includes('const CHAT_CTX_KEY = "tw.chatCtx"') &&
+		"上下文选择：session_ui.contextIds 恢复保存 / 不截断 / prune",
+		appSource.includes("loadSessionPrefs") &&
+			appSource.includes("updateSessionPrefs") &&
 			appSource.includes("function saveChatContext()") &&
-			appSource.includes("function restoreChatContext()") &&
+			appSource.includes("async function restoreChatContext()") &&
 			appSource.includes("pruneChatContext()") &&
 			appSource.includes("function addSelectedIds") &&
-			appSource.includes("if (open) restoreChatContext();") &&
+			appSource.includes("if (open) void restoreChatContext();") &&
 			appSource.includes("saveChatContext();") &&
 			!appSource.includes("CHAT_CTX_LIMIT") &&
 			!appSource.includes("上下文最多选择") &&
@@ -1078,9 +1120,9 @@ const check = (label, cond, extra = "") => {
 			chatSource.indexOf("if (state.approvals.length)") < chatSource.indexOf("if (state.profileMenuOpen)"),
 	);
 	check(
-		"T7 线程记忆：tw.chatThread / 新线程标记 / 以此新开保留选择",
-		chatSource.includes('const CHAT_THREAD_KEY = "tw.chatThread"') &&
-			chatSource.includes('const CHAT_THREAD_NEW_KEY = "tw.chatThreadNew"') &&
+		"T7 线程记忆：session-prefs threadId/threadNew / 以此新开保留选择",
+		chatSource.includes("loadSessionPrefs") &&
+			chatSource.includes("getSessionPrefs") &&
 			chatSource.includes("function rememberedThreadFor") &&
 			chatSource.includes("function rememberThreadFor") &&
 			chatSource.includes("function newThread({ preserveSelection = false } = {})") &&

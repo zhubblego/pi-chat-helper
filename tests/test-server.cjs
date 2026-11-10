@@ -560,12 +560,49 @@ async function stopServer(child) {
 		const bootDark = await (await fetch(prefsServer.url)).text();
 		check("prefs：首帧 boot 跟随服务端 theme", bootDark.includes("window.__TW_BOOT__ = /*__TW_BOOT__*/ {\"theme\":\"dark\"}"), bootDark.slice(0, 80));
 		check("prefs：静态 /prefs.js 200", (await fetch(`${prefsServer.url}prefs.js`)).status === 200);
+		check("prefs：静态 /session-prefs.js 200", (await fetch(`${prefsServer.url}session-prefs.js`)).status === 200);
 		const prefsBadType = await prefsPost("{}", { "content-type": "text/plain" });
 		check("prefs：非 JSON Content-Type 403", prefsBadType.status === 403, String(prefsBadType.status));
 		const prefsUnknown = await prefsPost({ global: { nope: true } });
 		check("prefs：未知 key 400", prefsUnknown.status === 400, String(prefsUnknown.status));
 		const prefsBadTheme = await prefsPost({ global: { theme: "neon" } });
 		check("prefs：非法 theme 400", prefsBadTheme.status === 400, String(prefsBadTheme.status));
+
+		// S3 会话级 session_ui：默认、POST、GET、校验。
+		const sessionPrefsUrl = `${prefsServer.url}api/prefs/session`;
+		const sessionPrefsGet = (source = "pi", session = "prefs-session") =>
+			fetch(`${sessionPrefsUrl}?source=${encodeURIComponent(source)}&session=${encodeURIComponent(session)}`);
+		const sessionPrefsPost = (body) =>
+			fetch(sessionPrefsUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+		const sessionDefaults = await (await sessionPrefsGet()).json();
+		check(
+			"prefs/session：默认 independent/空上下文",
+			sessionDefaults.mode === "independent" && sessionDefaults.threadId === null && sessionDefaults.threadNew === false && sessionDefaults.contextIds?.length === 0,
+			JSON.stringify(sessionDefaults),
+		);
+		const sessionSavedRes = await sessionPrefsPost({
+			source: "pi",
+			session: "prefs-session",
+			threadId: "thread-x",
+			threadNew: true,
+			mode: "forward",
+			contextIds: ["u1:0", "a1:0", "u1:0"],
+		});
+		const sessionSaved = await sessionSavedRes.json();
+		check(
+			"prefs/session：POST 写 thread/mode/contextIds 去重",
+			sessionSavedRes.status === 200 &&
+				sessionSaved.threadId === "thread-x" &&
+				sessionSaved.threadNew === true &&
+				sessionSaved.mode === "forward" &&
+				sessionSaved.contextIds?.join(",") === "u1:0,a1:0",
+			JSON.stringify(sessionSaved),
+		);
+		const sessionRead = await (await sessionPrefsGet()).json();
+		check("prefs/session：GET 读回同一值", sessionRead.threadId === "thread-x" && sessionRead.mode === "forward" && sessionRead.threadNew === true);
+		check("prefs/session：非法 mode 400", (await sessionPrefsPost({ source: "pi", session: "prefs-session", mode: "bad" })).status === 400);
+		check("prefs/session：未知字段 400", (await sessionPrefsPost({ source: "pi", session: "prefs-session", nope: 1 })).status === 400);
+		check("prefs/session：缺 source 400", (await fetch(sessionPrefsUrl)).status === 400);
 		await prefsServer.close();
 
 		// 同一 agentDir 重启：SQLite 持久化应保留。
@@ -580,6 +617,8 @@ async function stopServer(child) {
 		});
 		const prefsAfterRestart = await (await fetch(`${prefsServer2.url}api/prefs`)).json();
 		check("prefs：重启后仍为 dark/revision 1", prefsAfterRestart.revision === 1 && prefsAfterRestart.global?.theme === "dark", JSON.stringify(prefsAfterRestart));
+		const sessionAfterRestart = await (await fetch(`${prefsServer2.url}api/prefs/session?source=pi&session=prefs-session`)).json();
+		check("prefs/session：重启后仍持久", sessionAfterRestart.threadId === "thread-x" && sessionAfterRestart.mode === "forward" && sessionAfterRestart.contextIds?.length === 2, JSON.stringify(sessionAfterRestart));
 		await prefsServer2.close();
 
 		// 显式关闭状态库：API 503，首帧仍可渲染 system。
@@ -1238,13 +1277,21 @@ async function stopServer(child) {
 		check("threads：POST 405", (await postJson(`${chatBase}api/chat/threads`, { source: "pi", session: "cs-4" })).status === 405);
 		const newAfterThreads = await postJson(`${chatBase}api/chat/thread`, { source: "pi", session: "cs-4" });
 		const newAfterThreadsBody = await newAfterThreads.json();
+		const newAfterUi = await (await fetch(`${chatBase}api/prefs/session?source=pi&session=cs-4`)).json();
+		check(
+			"S3 chat：新线程写 session_ui threadId/threadNew",
+			newAfterThreads.ok && newAfterUi.threadId === newAfterThreadsBody.thread?.id && newAfterUi.threadNew === true,
+			JSON.stringify({ newId: newAfterThreadsBody.thread?.id, ui: newAfterUi }).slice(0, 300),
+		);
 		const resumeRes = await postJson(`${chatBase}api/chat/resume`, { source: "pi", session: "cs-4", threadId: "thread-s4" });
 		const resumeBody = await resumeRes.json();
+		const resumeUi = await (await fetch(`${chatBase}api/prefs/session?source=pi&session=cs-4`)).json();
 		check(
 			"resume：新对话后切回旧线程 200",
 			newAfterThreads.ok && resumeRes.ok && resumeBody.thread?.id === "thread-s4" && resumeBody.thread?.messages?.some((message) => message.role === "user"),
 			JSON.stringify({ newId: newAfterThreadsBody.thread?.id, resume: resumeBody.thread?.id }).slice(0, 300),
 		);
+		check("S3 chat：resume 清 threadNew 并记住 threadId", resumeUi.threadId === "thread-s4" && resumeUi.threadNew === false, JSON.stringify(resumeUi));
 		check("resume：未知线程 404", (await postJson(`${chatBase}api/chat/resume`, { source: "pi", session: "cs-4", threadId: "no-such" })).status === 404);
 
 		// ---- T5：settings 活动 turn 409 ----

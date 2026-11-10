@@ -9,7 +9,6 @@ import {
 	computeAnchoredMenuPosition,
 	contextSummaryLabel,
 	filterPaletteItems,
-	forgetThread,
 	formatChars,
 	formatContextWindow,
 	forwardDeliveryLabel,
@@ -19,12 +18,9 @@ import {
 	modelLabel,
 	parseSseChunk,
 	parseSseData,
-	readChatMode,
-	readThreadId,
-	rememberThread,
-	writeChatMode,
 } from "./chat-lib.js";
 import { fmtTokens } from "./lib.js";
+import { getSessionPrefs, loadSessionPrefs, updateSessionPrefs } from "./session-prefs.js";
 
 const PROMPT_MAX = 32000;
 const RENDER_MIN_MS = 80;
@@ -37,9 +33,6 @@ const PROFILE_OPTIONS = Object.freeze([
 	{ id: "read-only", label: "只读", hint: "可读项目文件（read/grep/ls），不能写、不能跑命令" },
 	{ id: "full", label: "全量工具", hint: "可写文件、可跑命令；每次执行前弹审批", warn: true },
 ]);
-const CHAT_THREAD_KEY = "tw.chatThread";
-const CHAT_THREAD_NEW_KEY = "tw.chatThreadNew";
-const CHAT_MODE_KEY = "tw.chatMode";
 const SKILL_SCOPE_LABEL = { user: "全局技能", project: "项目技能", temporary: "临时技能", path: "路径技能" };
 const SKILL_SCOPE_ORDER = { user: 0, project: 1, temporary: 2, path: 3 };
 const ANCHORED_PALETTE_LAYERS = new Set(["modelRoot", "model", "thinking"]);
@@ -185,26 +178,24 @@ export function initChatPanel(deps) {
 		return sessionKeyOf(currentSession());
 	}
 
-	function readModeMap() {
-		try {
-			const parsed = JSON.parse(localStorage.getItem(CHAT_MODE_KEY) || "{}");
-			return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-		} catch {
-			return {};
-		}
+	function sessionForPrefs(key) {
+		const index = key.indexOf(":");
+		return index < 0 ? { source: key, sessionId: "" } : { source: key.slice(0, index), sessionId: key.slice(index + 1) };
+	}
+
+	function updateForPrefs(key, patch) {
+		const { source, sessionId } = sessionForPrefs(key);
+		if (source && sessionId) updateSessionPrefs(source, sessionId, patch);
 	}
 
 	function saveModeFor(key, mode) {
 		if (!key) return;
-		try {
-			localStorage.setItem(CHAT_MODE_KEY, JSON.stringify(writeChatMode(readModeMap(), key, mode)));
-		} catch {
-			/* 无痕模式等场景忽略 */
-		}
+		updateForPrefs(key, { mode });
 	}
 
 	function syncModeForSession() {
-		state.mode = readChatMode(readModeMap(), currentKey());
+		const session = currentSession();
+		state.mode = session ? getSessionPrefs(session.source, session.id).mode : "independent";
 		state.forwardDelivery = "auto";
 	}
 
@@ -244,67 +235,34 @@ export function initChatPanel(deps) {
 		input?.focus?.();
 	}
 
-	function readChatThreadMap() {
-		try {
-			const parsed = JSON.parse(localStorage.getItem(CHAT_THREAD_KEY) || "{}");
-			return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-		} catch {
-			return {};
-		}
-	}
-
-	function writeChatThreadMap(map) {
-		try {
-			localStorage.setItem(CHAT_THREAD_KEY, JSON.stringify(map));
-		} catch {
-			/* 无痕模式等场景忽略 */
-		}
-	}
-
 	function rememberedThreadFor(key) {
-		return readThreadId(readChatThreadMap(), key);
+		const { source, sessionId } = sessionForPrefs(key);
+		return source && sessionId ? getSessionPrefs(source, sessionId).threadId : null;
 	}
 
 	function rememberThreadFor(key, threadId) {
 		if (!threadId) return;
-		writeChatThreadMap(rememberThread(readChatThreadMap(), key, threadId));
+		updateForPrefs(key, { threadId });
 	}
 
 	function forgetThreadFor(key) {
-		writeChatThreadMap(forgetThread(readChatThreadMap(), key));
-	}
-
-	function readNewThreadMap() {
-		try {
-			const parsed = JSON.parse(localStorage.getItem(CHAT_THREAD_NEW_KEY) || "{}");
-			return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-		} catch {
-			return {};
-		}
-	}
-
-	function writeNewThreadMap(map) {
-		try {
-			localStorage.setItem(CHAT_THREAD_NEW_KEY, JSON.stringify(map));
-		} catch {
-			/* 无痕模式等场景忽略 */
-		}
+		updateForPrefs(key, { threadId: null, threadNew: false });
 	}
 
 	function markNewThread(key, threadId) {
 		if (!threadId) return;
-		writeNewThreadMap({ ...readNewThreadMap(), [key]: threadId });
+		updateForPrefs(key, { threadId, threadNew: true });
 	}
 
 	function clearNewThread(key) {
-		const map = readNewThreadMap();
-		if (!(key in map)) return;
-		delete map[key];
-		writeNewThreadMap(map);
+		updateForPrefs(key, { threadNew: false });
 	}
 
 	function isNewThread(key, threadId) {
-		return Boolean(threadId) && readNewThreadMap()[key] === threadId;
+		const { source, sessionId } = sessionForPrefs(key);
+		if (!source || !sessionId || !threadId) return false;
+		const prefs = getSessionPrefs(source, sessionId);
+		return prefs.threadNew === true && prefs.threadId === threadId;
 	}
 
 	/** SSE 回调只允许写当前会话、且属于当前 turn。state.turn 防止已收尾的旧流回写。 */
@@ -359,6 +317,8 @@ export function initChatPanel(deps) {
 			render();
 			return;
 		}
+		await loadSessionPrefs(session.source, session.id);
+		syncModeForSession();
 		const key = sessionKeyOf(session);
 		if (!force && state.loadedKey === key) return;
 		const seq = ++state.loadSeq;
@@ -402,6 +362,8 @@ export function initChatPanel(deps) {
 
 	async function ensureLoaded() {
 		if (!state.open) return;
+		const session = currentSession();
+		if (session) await loadSessionPrefs(session.source, session.id);
 		syncModeForSession();
 		if (state.enabled === null) await loadCapabilities();
 		if (state.enabled === false) return;

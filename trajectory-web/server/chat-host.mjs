@@ -454,6 +454,7 @@ function disabledCapabilities(chatDir, reason) {
  *   probeTimeoutMs?: number,
  *   sessionRoots?: string[],
  *   settingsPath?: string,
+ *   stateDb?: { getSessionUi: Function, setSessionUi: Function } | null,
  *   readSessions?: (source: string) => object[],
  *   resolveSession?: (sessions: object[], id: string) => object | null,
  *   getProjection?: (session: object, source: string) => { full: object },
@@ -496,6 +497,22 @@ export function createChatHost(deps = {}) {
 	let modelsCache = null;
 	// 技能列表缓存（按 source:sessionId，60s；refresh=1 绕过并重启 child）。
 	const skillsCache = new Map();
+
+	function sessionUiFor(source, sessionId) {
+		try {
+			return deps.stateDb?.getSessionUi?.(source, sessionId) ?? null;
+		} catch {
+			return null;
+		}
+	}
+
+	function writeSessionUi(source, sessionId, patch) {
+		try {
+			deps.stateDb?.setSessionUi?.(source, sessionId, patch);
+		} catch (err) {
+			log(`[chat] session_ui 写入失败：${err.message}`);
+		}
+	}
 
 	function remember(value) {
 		capCache = { at: Date.now(), value };
@@ -1525,6 +1542,13 @@ export function createChatHost(deps = {}) {
 			const resolved = await resolveSkillForSend(record, payload.skill, prompt);
 
 			// 先 promote active，再写 sidecar / 发 prompt：工具读取的是本轮快照。
+			if (record.piSessionId) {
+				writeSessionUi(target.source, target.sessionId, {
+					threadId: record.piSessionId,
+					threadNew: false,
+					contextIds,
+				});
+			}
 			writeContextNext(record.metaDir, {
 				source: target.source,
 				sessionId: target.sessionId,
@@ -1817,6 +1841,7 @@ export function createChatHost(deps = {}) {
 		let state = null;
 		if (record.piSessionId !== requestedThread) state = await switchThread(record, fileRecord);
 		const thinkingLevel = state?.data?.thinkingLevel ?? (await resolveThreadThinkingLevel(record));
+		writeSessionUi(target.source, target.sessionId, { threadId: requestedThread, threadNew: false });
 		sendJson(
 			res,
 			200,
@@ -1837,7 +1862,7 @@ export function createChatHost(deps = {}) {
 		if (!cap.enabled) throw httpError(501, cap.reason ?? "对话未启用");
 		const target = resolveTarget(url.searchParams.get("source"), url.searchParams.get("session"));
 		const dirs = chatSessionDirs(chatDir, target.source, target.sessionId);
-		const requested = url.searchParams.get("thread");
+		const requested = url.searchParams.get("thread") ?? sessionUiFor(target.source, target.sessionId)?.threadId ?? null;
 		if (requested !== null && !isSafeThreadId(requested)) throw httpError(400, "非法线程 id");
 
 		const key = `${target.source}:${target.sessionId}`;
@@ -1886,6 +1911,7 @@ export function createChatHost(deps = {}) {
 		const state = await record.child.send({ type: "get_state" }, { timeoutMs: 15_000 });
 		record.piSessionId = state.data?.sessionId ?? record.piSessionId;
 		record.sessionFile = state.data?.sessionFile ?? null;
+		if (record.piSessionId) writeSessionUi(target.source, target.sessionId, { threadId: record.piSessionId, threadNew: true });
 		touch(record);
 		sendJson(res, 200, {
 			thread: {

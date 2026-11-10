@@ -189,6 +189,7 @@ const STATIC = new Map([
 	["/chat.js", ["chat.js", "text/javascript; charset=utf-8"]],
 	["/chat-lib.js", ["chat-lib.js", "text/javascript; charset=utf-8"]],
 	["/prefs.js", ["prefs.js", "text/javascript; charset=utf-8"]],
+	["/session-prefs.js", ["session-prefs.js", "text/javascript; charset=utf-8"]],
 	["/style.css", ["style.css", "text/css; charset=utf-8"]],
 	["/tokens.css", ["tokens.css", "text/css; charset=utf-8"]],
 ]);
@@ -450,6 +451,29 @@ export function createTrajectoryServer(options) {
 		}
 	}
 
+	/** 会话 UI patch 校验；source/session 由调用方单列。 */
+	function assertSessionPatch(patch) {
+		if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new TypeError("会话偏好需为对象");
+		const allowed = new Set(["threadId", "threadNew", "mode", "contextIds"]);
+		for (const key of Object.keys(patch)) {
+			if (!allowed.has(key)) throw new TypeError(`未知的会话偏好字段：${key}`);
+		}
+		if (Object.prototype.hasOwnProperty.call(patch, "threadId")) {
+			if (patch.threadId !== null && typeof patch.threadId !== "string") throw new TypeError("threadId 需为字符串或 null");
+		}
+		if (Object.prototype.hasOwnProperty.call(patch, "threadNew") && typeof patch.threadNew !== "boolean") {
+			throw new TypeError("threadNew 需为布尔值");
+		}
+		if (Object.prototype.hasOwnProperty.call(patch, "mode") && patch.mode !== "independent" && patch.mode !== "forward") {
+			throw new TypeError("mode 非法");
+		}
+		if (Object.prototype.hasOwnProperty.call(patch, "contextIds")) {
+			if (!Array.isArray(patch.contextIds) || patch.contextIds.some((id) => typeof id !== "string" || !id)) {
+				throw new TypeError("contextIds 需为非空字符串数组");
+			}
+		}
+	}
+
 	/** 首帧主题：状态库可用时读 theme；失败一律回退 system。 */
 	function bootTheme() {
 		try {
@@ -486,6 +510,7 @@ export function createTrajectoryServer(options) {
 		? createChatHost({
 				agentDir,
 				chatDir: options.chatDir ?? join(agentDir, "pi-chat-helper", "chats"),
+				stateDb: stateDb?.capabilities?.ok ? stateDb : null,
 				pi: piBin,
 				hostEntry: options.hostEntry,
 				hostExecPath: options.hostExecPath,
@@ -526,7 +551,7 @@ export function createTrajectoryServer(options) {
 			}
 			const pathname = url.pathname;
 			const isChatPrefix = pathname.startsWith("/api/chat/");
-			const gate = requestGate(req, isChatPrefix, pathname === "/api/prefs");
+			const gate = requestGate(req, isChatPrefix, pathname === "/api/prefs" || pathname === "/api/prefs/session");
 			if (gate) {
 				sendJson(res, gate.status, { error: gate.error });
 				return;
@@ -538,6 +563,7 @@ export function createTrajectoryServer(options) {
 					pathname !== "/api/context-edit" &&
 					pathname !== "/api/crop-entry" &&
 					pathname !== "/api/prefs" &&
+					pathname !== "/api/prefs/session" &&
 					!CHAT_POSTS.has(pathname)
 				) {
 					sendJson(res, 405, { error: "method not allowed" });
@@ -545,6 +571,66 @@ export function createTrajectoryServer(options) {
 				}
 			} else if (req.method !== "GET" && req.method !== "HEAD") {
 				sendJson(res, 405, { error: "method not allowed" });
+				return;
+			}
+
+			if (pathname === "/api/prefs/session") {
+				if (!stateDb?.capabilities?.ok) {
+					sendJson(res, 503, {
+						error: "状态存储不可用",
+						reason: stateDb?.capabilities?.reason ?? "状态存储未启用",
+					});
+					return;
+				}
+				if (req.method === "GET" || req.method === "HEAD") {
+					const source = url.searchParams.get("source") ?? "";
+					const sessionId = url.searchParams.get("session") ?? "";
+					if (!source || !sessionId) {
+						sendJson(res, 400, { error: "缺少 source 或 session" });
+						return;
+					}
+					sendJson(res, 200, stateDb.getSessionUi(source, sessionId));
+					return;
+				}
+				let raw;
+				try {
+					raw = await readBody(req);
+				} catch (err) {
+					sendJson(res, err.status ?? 400, { error: err.message });
+					return;
+				}
+				let body;
+				try {
+					body = JSON.parse(raw);
+				} catch {
+					sendJson(res, 400, { error: "请求体不是 JSON" });
+					return;
+				}
+				if (!body || typeof body !== "object" || Array.isArray(body)) {
+					sendJson(res, 400, { error: "请求体必须是对象" });
+					return;
+				}
+				const allowedBody = new Set(["source", "session", "threadId", "threadNew", "mode", "contextIds"]);
+				if (Object.keys(body).some((key) => !allowedBody.has(key))) {
+					sendJson(res, 400, { error: "会话偏好包含未知字段" });
+					return;
+				}
+				const source = typeof body.source === "string" ? body.source : "";
+				const sessionId = typeof body.session === "string" ? body.session : "";
+				if (!source || !sessionId) {
+					sendJson(res, 400, { error: "缺少 source 或 session" });
+					return;
+				}
+				const patch = {};
+				for (const key of ["threadId", "threadNew", "mode", "contextIds"]) {
+					if (Object.prototype.hasOwnProperty.call(body, key)) patch[key] = body[key];
+				}
+				try {
+					assertSessionPatch(patch);
+					sendJson(res, 200, stateDb.setSessionUi(source, sessionId, patch));
+				} catch (err) {
+					sendJson(res, err instanceof TypeError ? 400 : 500, { error: err?.message ?? "会话偏好保存失败" });
+				}
 				return;
 			}
 
