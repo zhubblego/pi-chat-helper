@@ -1,6 +1,6 @@
 # SQLite 状态持久化：设计与边界（v1）
 
-> 状态：边界已确认；S1–S2 已完成并验证；S3–S5 未开始。
+> 状态：边界已确认；S1–S3 已完成并验证；S4–S5 未开始。
 > 日期：2026-11-10。
 > 关联：[implementation.md](./implementation.md)（分阶段实施清单）。
 > 上游背景：trajectory-web 的过滤、布局、对话指针等状态目前分散在浏览器 localStorage 与 JSON/JSONL 文件。
@@ -182,7 +182,7 @@ POST body 示例：
 
 所有字段都可局部更新；`mode` 只接受 `independent` / `forward`；`contextIds` 去重并限制为字符串。
 
-> S2 当前只实现全局 `GET/POST /api/prefs`；`/api/prefs/session` 与 `session_ui` 接线在 S3。
+> S2 实现全局 `GET/POST /api/prefs`；S3 已补 `GET/POST /api/prefs/session` 与 `session_ui`。
 
 ### 5.3 安全
 
@@ -275,7 +275,7 @@ POST body 示例：
 - 新增 `tests/test-state-db.cjs`：52 PASS。
 - 代码提交：`78b1783`。
 - 验证：全量 15 套 976 PASS、0 FAIL；`tsc` 0；`pi -ne -e . --print` 0。
-- S1 时尚未接线；S2 已接入全局偏好 API 与 localStorage 迁移；会话级 localStorage 在 S3 处理。
+- S1 时尚未接线；S2 已接入全局偏好 API 与 localStorage 迁移；会话级 localStorage 在 S3 已迁移。
 
 ### S2（2026-11-10）
 
@@ -287,6 +287,16 @@ POST body 示例：
 - 代码提交：`a3f687e`。
 - 验证：test-server 237、test-web-lib 235、test-state-db 52；全量 15 套 993 PASS、0 FAIL；`tsc` 0；`pi -ne -e . --print` 0。
 - 浏览器实测：旧全局键 → revision 1；刷新/两个不同端口共享主题与过滤；旧键清理；无 pageerror（chat=false 时有预期 501，favicon 404）。
-- 未做：S3 的 session prefs / chat thread/context/mode；S5 的切会话工具排除清理与「全部」当前集合语义。当前仍保留旧会话级 localStorage 和切会话重置逻辑。
+- 未做（S2 当时）：S3 的 session prefs / chat thread/context/mode；S5 的切会话工具排除清理与「全部」当前集合语义。
+
+### S3（2026-11-10）
+
+- 新增 `trajectory-web/web/session-prefs.js`：按 `source:session` 懒加载 `session_ui`、内存缓存、防抖局部 POST；旧 `tw.chatThread` / `tw.chatThreadNew` / `tw.chatMode` / `tw.chatCtx` 首次加载时迁移并清理当前 key。
+- `app.mjs` 新增 `GET/POST /api/prefs/session`：默认、局部更新、threadId/threadNew/mode/contextIds 校验；沿用 Host/Origin、JSON、1MB 门禁。
+- `app.js` 的上下文选中集改为 `session_ui.contextIds`；切会话/切源异步恢复，投影到货后 prune；不再写 `tw.chatCtx`。
+- `chat.js` 的 thread / 新线程 / 模式改为 `session_ui`；`loadThread`/`ensureLoaded` 先加载会话偏好；不再写 `tw.chatThread` / `tw.chatThreadNew` / `tw.chatMode`。
+- `chat-host` 接入 stateDb：`/api/chat/thread` 缺省 thread 可回落 `session_ui.threadId`，`send/resume/new` 写入 thread/context；前端仍显式发送 thread/context，保持旧 API 的缺省=最新/空上下文语义。
+- 验证：test-server 247、test-web-lib 239、test-state-db 52；全量 15 套 1007 PASS、0 FAIL；`tsc` 0；`pi` 0；浏览器实测旧 thread/new/mode/context 迁移到 session_ui、thread 文件加载、旧键清理、无 pageerror。
+- 未做：S4 chat settings/turns/context sidecar；S5 切会话工具排除清理与「全部」当前集合语义。
 
 实施顺序、文件清单、测试矩阵见 [implementation.md](./implementation.md)。

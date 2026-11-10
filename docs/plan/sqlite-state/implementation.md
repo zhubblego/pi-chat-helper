@@ -1,6 +1,6 @@
 # SQLite 状态持久化：实施计划（v1）
 
-> 状态：方案已确认边界；S1–S2 已完成并验证；S3–S5 未开始。
+> 状态：方案已确认边界；S1–S3 已完成并验证；S4–S5 未开始。
 > 上游：[README.md](./README.md)。本文给出逐文件改动、阶段验收、测试矩阵和迁移/回滚边界。
 > 原则：先让 SQLite 成为插件自有状态的唯一真源，再删除 localStorage/JSON 的长期写入；pi session 格式不动。
 
@@ -39,12 +39,13 @@
 | `trajectory-web/server/chat-host.mjs` | 修改 | 注入 stateDb；thread/send 读取新表；降级 reason |
 | `trajectory-web/web/index.html` | 修改 | 移除 localStorage 主题首帧；注入 `window.__TW_BOOT__` 占位；prefs 初始化钩子 |
 | `trajectory-web/web/prefs.js` | 新增 | 旧全局键迁移、规范化、清理；不碰 DOM/网络 |
+| `trajectory-web/web/session-prefs.js` | 新增 | 会话级懒加载/缓存/防抖 POST；旧会话键迁移清理 |
 | `trajectory-web/web/app.js` | 修改 | 读 prefs API、迁移 localStorage、过滤/工具/布局/翻译/主题改用服务端 |
-| `trajectory-web/web/chat.js` | 修改 | thread/threadNew/mode/context 读写改走 session prefs API；本地不再长期写 localStorage |
+| `trajectory-web/web/chat.js` | 修改 | thread/threadNew/mode 改走 session_ui；不再长期写 localStorage |
 | `package.json` | 修改 | `engines >=22.19`（如确认） |
 | `tests/test-state-db.cjs` | 新增 | schema/WAL/CRUD/事务/迁移/损坏/并发读 |
 | `tests/test-server.cjs` | 修改 | prefs API 安全、session、chat settings/turns/context、HTML boot |
-| `tests/test-web-lib.cjs` | 修改 | prefs.js 迁移纯函数、无 localStorage 长期写入守卫 |
+| `tests/test-web-lib.cjs` | 修改 | prefs.js / session-prefs.js 迁移纯函数、无 localStorage 长期写入守卫 |
 | `tests/test-chat.cjs` | 修改 | chat sidecar 读写回归、DB 失败降级 |
 | `README.md` | 修改 | 状态存储、过滤行为、Node 要求、迁移说明 |
 | `docs/plan/sqlite-state/*` | 修改 | 实施完成状态与验证回写 |
@@ -147,7 +148,7 @@ filters, tools, theme, translate, chatOpen, chatWidth, composerHeight
 threadId, threadNew, mode, contextIds
 ```
 
-> S2 只落地 global 端点与字段；session 端点/字段在 S3。
+> S2 落地 global 端点；S3 已落地 session 端点与字段。
 
 `mode` 只允许 `independent|forward`；`contextIds` 去重、字符串、总数上限沿用现有策略；`tools.excluded` 只接受字符串数组。
 
@@ -203,10 +204,13 @@ threadId, threadNew, mode, contextIds
 
 ### 6.3 S3 验收
 
+**状态：已完成（2026-11-10，代码提交 `6871078`）。**
+
 - 切会话后 thread/context/mode 恢复正确；刷新后同一结果。
 - 两个 Origin 打开同一会话看到同一 thread/context/mode。
 - 新建未落盘虚拟线程标记不丢；首条落盘后清除。
 - 旧 `tw.chatThread`/`tw.chatCtx`/`tw.chatMode` 迁移一次。
+- 验证：test-server 247、test-web-lib 239、test-state-db 52；全量 15 套 1007 PASS、0 FAIL；`tsc` 0；`pi` 0；浏览器旧键迁移/线程加载/旧键清理通过。
 - 聊天流式/审批/线程历史不回归。
 
 ## 7. S4：Chat sidecar 迁入 SQLite
