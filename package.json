@@ -21,7 +21,7 @@
 		"tui"
 	],
 	"engines": {
-		"node": ">=18"
+		"node": ">=22.19"
 	},
 	"files": [
 		"index.ts",
