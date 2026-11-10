@@ -1,12 +1,14 @@
 # pi-chat-helper
 
+**中文** ｜ [English](README.en.md)
+
 [pi coding agent](https://github.com/earendil-works/pi-coding-agent) 的扩展包：**在浏览器里完整回看会话轨迹**（trajectory-web），**在 TUI 里快速跳转历史提问**（question-panel）。轨迹观察不只支持 pi——`npm run dev` 起来后左侧有 **Agent 选择栏**，宿主机上有哪个 agent 的会话就亮哪个按钮（当前支持 pi 与 Codex）。
 
-![浅色主题](https://raw.githubusercontent.com/zhubblego/pi-chat-helper/feat/trajectory-web/docs/screenshots/light.png)
+![浅色主题](screenshots/light.png)
 
 *浅色主题：会话栏 ＋ 问题栏 ＋ 按提问分段的轨迹，工具调用与结果成对展示*
 
-![深色主题](https://raw.githubusercontent.com/zhubblego/pi-chat-helper/feat/trajectory-web/docs/screenshots/dark.png)
+![深色主题](screenshots/dark.png)
 
 *深色主题：跟随系统，也可手动指定*
 
@@ -59,6 +61,14 @@ pi -e git:github.com/zhubblego/pi-chat-helper
 npm run dev        # 默认 http://127.0.0.1:7788
 # 等价：node trajectory-web/server/main.mjs --scope all --port 7788
 ```
+
+## 近期新增（0.6.0 之后，待随下一版发布）
+
+- **Markdown 渲染升级 markdown-it**：详情抽屉与对话消息支持 GFM 表格、删除线与任务列表（checkbox）；转义语义与 `md-code` 代码块样式不变，单换行仍成 `<br>`。
+- **mermaid 图表**：```mermaid``` 代码块自动渲染为 SVG 图表（流程图/时序图等）；懒加载（首次遇到图块才拉取 mermaid.js），渲染结果进程内缓存，失败时保留源码并红边提示。
+- **详情面板行锚定**：展开/收起条目详情时被点击的行锚定在原视口位置，不再上下跳动。
+- **对话输入栏重排**：`+` 命令菜单移到最左；独立/转发双按钮合并为单钮（显示当前模式，点击反转），位于控制台状态条之前，无可用控制台时禁用。
+- **vendor 自包含**：markdown-it 14.3.3（126KB）与 mermaid v11（3.6MB）单文件入库（`web/vendor/`），完全离线可用，无 CDN 依赖。
 
 ## trajectory-web：轨迹观察 web 服务
 
