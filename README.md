@@ -18,7 +18,7 @@ pi install git:github.com/zhubblego/pi-chat-helper
 
 新开会话生效。`pi list` 查看已装扩展包，`pi remove git:github.com/zhubblego/pi-chat-helper` 移除。
 
-运行环境要求 **Node >= 22.19**；SQLite 状态库使用 `node:sqlite`；S2 已接入全局 UI 偏好与首帧主题。
+运行环境要求 **Node >= 22.19**；SQLite 状态库使用 `node:sqlite`；S2–S4 已接入全局偏好、会话 UI 与 chat sidecar。
 
 想先试用一次、不写入配置：
 
@@ -137,7 +137,7 @@ npm run dev        # 默认 http://127.0.0.1:7788
 
 ### 对话存储
 
-对话线程是独立的 pi session，落在 `<chatDir>/<source>/<safeSessionId>/sessions`；`chatDir` 默认 `<agentDir>/pi-chat-helper/chats`，删除它不影响轨迹历史。`meta/turns.jsonl` 每行带 `threadId`，以 `(threadId, ordinal)` 为键，`ordinal` 按该线程的 user 消息顺序递增；同轨迹会话的多个 pi thread 互不覆盖。浏览器用服务端 `session_ui` 按 `source:session` 记住当前线程；新建但尚未落盘的虚拟线程另用 `threadNew` 标记，刷新后仍保留；旧 `tw.chatThread` / `tw.chatThreadNew` / `tw.chatMode` / `tw.chatCtx` 首次加载时迁移。
+对话线程是独立的 pi session，落在 `<chatDir>/<source>/<safeSessionId>/sessions`；`chatDir` 默认 `<agentDir>/pi-chat-helper/chats`，删除它不影响轨迹历史。轮次元数据、上下文快照和项目设置存 SQLite（`chat_turn` / `chat_context` / `chat_project`），以 `(source, sessionId, threadId, ordinal)` 等键隔离；同轨迹会话的多个 pi thread 互不覆盖。旧 `turns.jsonl` / `context.*.json` / `settings.json` 首次打开时迁移，之后以 SQLite 为真源。浏览器用服务端 `session_ui` 按 `source:session` 记住当前线程；旧 `tw.chatThread` / `tw.chatThreadNew` / `tw.chatMode` / `tw.chatCtx` 首次加载时迁移。
 
 ### 界面风格
 

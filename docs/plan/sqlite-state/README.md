@@ -1,6 +1,6 @@
 # SQLite 状态持久化：设计与边界（v1）
 
-> 状态：边界已确认；S1–S3 已完成并验证；S4–S5 未开始。
+> 状态：边界已确认；S1–S4 已完成并验证；S5 未开始。
 > 日期：2026-11-10。
 > 关联：[implementation.md](./implementation.md)（分阶段实施清单）。
 > 上游背景：trajectory-web 的过滤、布局、对话指针等状态目前分散在浏览器 localStorage 与 JSON/JSONL 文件。
@@ -297,6 +297,15 @@ POST body 示例：
 - `chat.js` 的 thread / 新线程 / 模式改为 `session_ui`；`loadThread`/`ensureLoaded` 先加载会话偏好；不再写 `tw.chatThread` / `tw.chatThreadNew` / `tw.chatMode`。
 - `chat-host` 接入 stateDb：`/api/chat/thread` 缺省 thread 可回落 `session_ui.threadId`，`send/resume/new` 写入 thread/context；前端仍显式发送 thread/context，保持旧 API 的缺省=最新/空上下文语义。
 - 验证：test-server 247、test-web-lib 239、test-state-db 52；全量 15 套 1007 PASS、0 FAIL；`tsc` 0；`pi` 0；浏览器实测旧 thread/new/mode/context 迁移到 session_ui、thread 文件加载、旧键清理、无 pageerror。
-- 未做：S4 chat settings/turns/context sidecar；S5 切会话工具排除清理与「全部」当前集合语义。
+- 未做（S3 当时）：S4 chat settings/turns/context sidecar；S5 切会话工具排除清理与「全部」当前集合语义。
+
+### S4（2026-11-10）
+
+- `chat-host` 在 stateDb 可用时改走 `chat_project` / `chat_turn` / `chat_context`：项目设置、轮次元数据、active/next 上下文不再写旧 `settings.json` / `turns.jsonl` / `context.*.json`；无 stateDb 的嵌入/测试路径保留旧文件回退。
+- `read_trajectory` 子进程新增 `PI_CHAT_STATE_DB`，优先读 `chat_context.active`；旧 `PI_CHAT_CONTEXT_FILE` 仅作无 DB 回退。
+- 修正旧 turns 迁移的 sessionId：无 context 快照时使用 chat 目录名（trajectory session id），不再误用 pi thread header。
+- 旧 settings/turns/context 文件保留备份；SQLite 为唯一读写真源。
+- 验证：test-server 247、test-web-lib 239、test-state-db 53、test-extension 92；全量 15 套 1009 PASS、0 FAIL；`tsc` 0；`pi` 0；read_trajectory 的 DB active 测试通过。
+- 未做：S5 切会话工具排除清理与「全部」当前集合语义。
 
 实施顺序、文件清单、测试矩阵见 [implementation.md](./implementation.md)。

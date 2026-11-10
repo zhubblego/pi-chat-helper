@@ -1,6 +1,6 @@
 # SQLite 状态持久化：实施计划（v1）
 
-> 状态：方案已确认边界；S1–S3 已完成并验证；S4–S5 未开始。
+> 状态：方案已确认边界；S1–S4 已完成并验证；S5 未开始。
 > 上游：[README.md](./README.md)。本文给出逐文件改动、阶段验收、测试矩阵和迁移/回滚边界。
 > 原则：先让 SQLite 成为插件自有状态的唯一真源，再删除 localStorage/JSON 的长期写入；pi session 格式不动。
 
@@ -34,9 +34,10 @@
 | `trajectory-web/server/app.mjs` | 修改 | 打开 DB、注入 stateDb、挂 `/api/prefs*`、POST 白名单、HTML 主题 boot 注入 |
 | `trajectory-web/server/main.mjs` | 修改 | `--state-db`（可选）/agentDir 派生；把 DB 传给 server |
 | `trajectory-web/index.ts` | 修改 | 模式 A 打开/复用 DB；传入 server；关闭时释放 |
-| `trajectory-web/server/chat-settings.mjs` | 修改 | settings.json 读写改走 `chat_project`；路径/默认值保持 |
-| `trajectory-web/server/chat-session.mjs` | 修改 | turns/context 读写改走 `chat_turn`/`chat_context`；旧函数保留兼容层 |
-| `trajectory-web/server/chat-host.mjs` | 修改 | 注入 stateDb；thread/send 读取新表；降级 reason |
+| `trajectory-web/server/chat-settings.mjs` | 保留 | 旧文件读写保留为无 stateDb 的兼容回退；生产走 `chat_project` |
+| `trajectory-web/server/chat-session.mjs` | 保留 | 旧 turns/context 文件函数保留为兼容/迁移；生产走 `chat_turn`/`chat_context` |
+| `trajectory-web/server/chat-host.mjs` | 修改 | 注入 stateDb；settings/turns/context 优先走 DB；无 DB 时旧文件回退 |
+| `trajectory-web/chat-trajectory-tool.ts` | 修改 | `PI_CHAT_STATE_DB` 优先读 `chat_context.active`；旧 context 文件回退 |
 | `trajectory-web/web/index.html` | 修改 | 移除 localStorage 主题首帧；注入 `window.__TW_BOOT__` 占位；prefs 初始化钩子 |
 | `trajectory-web/web/prefs.js` | 新增 | 旧全局键迁移、规范化、清理；不碰 DOM/网络 |
 | `trajectory-web/web/session-prefs.js` | 新增 | 会话级懒加载/缓存/防抖 POST；旧会话键迁移清理 |
@@ -224,10 +225,13 @@ threadId, threadNew, mode, contextIds
 
 ### S4 验收
 
+**状态：已完成（2026-11-10，代码提交 `e02c13c`）。**
+
 - 旧 turns/context/settings 迁移后，`GET /api/chat/thread` 显示内容不变。
 - 发送/审批/新线程/切换线程写 DB，不再写旧文件。
 - DB 损坏/不可用时 chat 降级，轨迹页仍可用。
 - 兼容旧测试中的临时 chatDir 迁移。
+- 验证：test-server 247、test-web-lib 239、test-state-db 53、test-extension 92；全量 15 套 1009 PASS、0 FAIL；`tsc` 0；`pi` 0；read_trajectory 的 DB active 测试通过。
 
 ## 8. S5：过滤行为、清理与端到端
 
