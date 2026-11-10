@@ -1,6 +1,6 @@
 # 控制台转发：交互与状态（v1）
 
-> 状态：方案已确认，未实施。
+> 状态：设计已确认；T4 侧边双模式未实施。
 > 上游：[README.md](./README.md)。接口：[api.md](./api.md)。落地计划：[implementation.md](./implementation.md)。
 
 ## 1. 目标交互

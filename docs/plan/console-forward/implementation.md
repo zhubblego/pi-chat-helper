@@ -1,6 +1,6 @@
 # 控制台转发：实施计划（v1）
 
-> 状态：方案已确认，代码未实施。
+> 状态：T1 已完成并验证；T2–T5 未实施。
 > 上游：[README.md](./README.md)。接口：[api.md](./api.md)。交互：[ui.md](./ui.md)。
 > 本文是逐阶段落地计划；完成一个阶段后再进入下一阶段，每阶段独立验证、独立 commit。
 
@@ -333,7 +333,7 @@ pi -ne -e . --print
 
 验收：文档落盘、交叉链接有效、方案边界与最终讨论一致。
 
-### T1 控制台桥核心
+### T1 控制台桥核心（已完成）
 
 - 新增 `console-bridge.mjs` / `.d.mts`。
 - 注册表写入、token、HTTP、心跳、状态、`/forward`、清理。
@@ -346,6 +346,13 @@ pi -ne -e . --print
 - TUI 启动产生注册文件；RPC/headless 不产生；
 - 状态变化正确；shutdown 删除；
 - 其他 pi 功能不回归。
+
+验证：
+
+- `tests/test-console.cjs` 38 PASS：注册/心跳/状态/token/forward/清理/非 TUI/写入失败回滚。
+- `tests/test-extension.cjs` 91 PASS：TUI `session_start` 自动注册、agent 事件、换会话注销。
+- 全量 13 套 892 PASS；`tsc` 0；`pi -ne -e . --print` 0。
+- T1 测试只写临时 agentDir；真实 `~/.pi/agent/pi-chat-helper/consoles` 未产生。
 
 ### T2 发现与状态
 

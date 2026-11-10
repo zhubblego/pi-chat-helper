@@ -1,6 +1,6 @@
 # 控制台转发 API 与注册表契约（v1）
 
-> 状态：方案已确认，未实施。
+> 状态：T1 桥核心已实施；T2/T3 的 viewer 接口未实施。
 > 上游：[README.md](./README.md)。交互：[ui.md](./ui.md)。落地计划：[implementation.md](./implementation.md)。
 > 本文定义 viewer ↔ 浏览器的公开接口、viewer ↔ console bridge 的内部接口，以及注册表文件格式。
 
