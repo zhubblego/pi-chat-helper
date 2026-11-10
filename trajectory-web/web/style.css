@@ -2918,3 +2918,46 @@ details summary {
 .md a {
 	color: var(--dsw-alias-link);
 }
+
+/* GFM 表格（markdown-it）：窄容器内横向滚动，细边框 + 表头底色 */
+.md table {
+	display: block;
+	margin: 8px 0;
+	border-collapse: collapse;
+	max-width: 100%;
+	overflow-x: auto;
+}
+
+.md th,
+.md td {
+	border: 1px solid var(--dsw-alias-border-l1);
+	padding: 4px 10px;
+	text-align: left;
+	vertical-align: top;
+}
+
+.md thead th {
+	background: var(--dsw-alias-bg-layer-2);
+}
+
+/* 任务列表 checkbox 对齐 */
+.md li input[type="checkbox"] {
+	margin: 0 4px 0 -18px;
+	vertical-align: middle;
+}
+
+/* mermaid：默认占位显示源码；渲染成功替换为 SVG（居中可横向滚动），失败描红边保留源码 */
+.md-mermaid {
+	margin: 8px 0;
+}
+
+.md-mermaid svg {
+	display: block;
+	margin: 0 auto;
+	max-width: 100%;
+}
+
+.md-mermaid.is-failed {
+	border-left: 3px solid var(--dsw-alias-state-error-primary);
+	padding-left: 10px;
+}

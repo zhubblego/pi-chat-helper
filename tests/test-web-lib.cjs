@@ -1,6 +1,7 @@
 // 前端纯函数层：过滤映射 / 预设 / 格式化 / Markdown 转义与渲染
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 const { pathToFileURL } = require("node:url");
 
 let failed = 0;
@@ -10,6 +11,14 @@ const check = (label, cond, extra = "") => {
 };
 
 (async () => {
+	// lib.js 的 renderMarkdown 走 markdown-it（浏览器由 /vendor defer 提供）；Node 里用 vm 跑 UMD
+	// 的浏览器分支（CJS require 分支导出空 namespace，拿不到工厂）注入同款 window.markdownit
+	const vendorDir = path.join(__dirname, "..", "trajectory-web", "web", "vendor");
+	const browserCtx = { console };
+	browserCtx.globalThis = browserCtx;
+	vm.createContext(browserCtx);
+	vm.runInContext(fs.readFileSync(path.join(vendorDir, "markdown-it.min.js"), "utf8"), browserCtx);
+	globalThis.window = { markdownit: browserCtx.markdownit, addEventListener: () => {} };
 	const lib = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "lib.js")).href);
 	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, buildAgentTree, deriveInfo, deriveTargets, deriveTaskName, DERIVE_TOOL, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments, hitSnippet, allToolsIncluded, toggleAllTools } = lib;
 
@@ -568,23 +577,36 @@ const check = (label, cond, extra = "") => {
 	index.update([{ ...questions[0], events: [questions[0].events[0]] }]);
 	check("增量同步移除消失的事件", index.search("先看配置").size === 0);
 
-	// ---- Markdown：转义与注入 ----
+	// ---- Markdown：转义与注入（markdown-it html:false）----
 	const xss = renderMarkdown("<script>alert(1)</script>\n\n<img src=x onerror=alert(2)>");
 	check("HTML 被转义", !xss.includes("<script>") && !xss.includes("<img") && xss.includes("&lt;script&gt;"), xss);
 	const badLink = renderMarkdown("[点我](javascript:alert(1))");
-	check("javascript: 链接被降级", !badLink.includes("javascript:") && badLink.includes('href="#"'), badLink);
+	check("javascript: 链接不渲染成链接", !badLink.includes('href="javascript') && !badLink.includes("<a "), badLink);
 	const okLink = renderMarkdown("[文档](https://example.com/a)");
-	check("http 链接保留", okLink.includes('href="https://example.com/a"'));
+	check("http 链接保留且新窗口打开", okLink.includes('href="https://example.com/a"') && okLink.includes('target="_blank"') && okLink.includes('rel="noreferrer"'), okLink);
 
-	// ---- Markdown：结构 ----
+	// ---- Markdown：结构（markdown-it，breaks:true）----
 	const md = renderMarkdown("# 标题\n\n**粗体** 与 `code`\n\n```ts\nconst a = 1;\n```\n\n- 一\n- 二\n\n> 引用");
 	check("标题", md.includes("<h1>标题</h1>"));
 	check("粗体与行内代码", md.includes("<strong>粗体</strong>") && md.includes("<code>code</code>"));
 	check("代码块", md.includes('<pre class="md-code"><code class="language-ts">') && md.includes("const a = 1;"));
-	check("列表", md.includes("<ul><li>一</li><li>二</li></ul>"));
+	check("列表", md.includes("<ul>") && md.includes("<li>一</li>") && md.includes("<li>二</li>"));
 	check("引用", md.includes("<blockquote>") && md.includes("引用"));
 	const codeOnly = renderMarkdown("```\n<b>raw</b>\n```");
 	check("代码块内容也转义", !codeOnly.includes("<b>raw</b>") && codeOnly.includes("&lt;b&gt;raw&lt;/b&gt;"));
+	check("单换行成 <br>（沿用自研视觉）", renderMarkdown("第一行\n第二行").includes("<br>"));
+
+	// ---- Markdown：GFM 表格/任务列表/删除线（markdown-it 内置）----
+	const table = renderMarkdown("| 列a | 列b |\n| --- | --- |\n| 1 | 2 |");
+	check("GFM 表格", table.includes("<table>") && table.includes("<thead>") && table.includes("<th>列a</th>") && table.includes("<td>1</td>"), table);
+	const task = renderMarkdown("- [x] 完成\n- [ ] 待办\n- [X] 大写");
+	check("任务列表 checkbox（后处理）", task.includes('type="checkbox"') && task.includes("checked") && task.includes("待办"), task);
+	check("删除线（markdown-it 输出 <s>）", renderMarkdown("~~过时~~").includes("<s>过时</s>"));
+
+	// ---- Markdown：mermaid 占位（水合在浏览器侧）----
+	const mermaidSrc = renderMarkdown("```mermaid\ngraph TD; A-->B;\n```");
+	check("mermaid 块输出占位（data-src + 源码回退）", mermaidSrc.includes('class="md-mermaid"') && mermaidSrc.includes("data-src=") && mermaidSrc.includes('class="md-code"') && mermaidSrc.includes("graph TD; A--&gt;B;"), mermaidSrc);
+	check("非 mermaid 代码块不产生占位", !renderMarkdown("```js\nlet a;\n```").includes("md-mermaid"));
 
 	// ---- 回归守卫：抽屉的 Markdown 桥接 ----
 	// document.importNode 只做克隆，不把节点从源文档摘除；在 while (doc.body.firstChild)
@@ -593,6 +615,24 @@ const check = (label, cond, extra = "") => {
 	const prefsSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "web", "prefs.js"), "utf8");
 	check("app.js 不再使用 importNode（克隆不移除源节点，会死循环）", !appSource.includes("importNode("));
 	check("mdNode 直接移入节点保证循环收敛", /wrapper\.appendChild\(\s*doc\.body\.firstChild\s*\)/.test(appSource));
+
+	// ---- 回归守卫：markdown-it/mermaid 接线 ----
+	const libSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "web", "lib.js"), "utf8");
+	const appMSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "server", "app.mjs"), "utf8");
+	const indexSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "web", "index.html"), "utf8");
+	check(
+		"markdown-it：html:false + breaks:true + 链接新窗口",
+		libSource.includes("html: false, breaks: true") && libSource.includes('attrSet("target", "_blank")') && libSource.includes('attrSet("rel", "noreferrer")') && !libSource.includes("html: true"),
+	);
+	check(
+		"mermaid：strict + startOnLoad:false + 懒加载 vendor",
+		libSource.includes('securityLevel: "strict"') && libSource.includes("startOnLoad: false") && libSource.includes('"/vendor/mermaid.min.js"') && libSource.includes("mermaidSvgCache"),
+	);
+	check("mdNode 挂载后 rAF 水合 mermaid", appSource.includes("requestAnimationFrame(() => hydrateMermaid(wrapper))"));
+	check(
+		"vendor 静态路由与页面引入",
+		appMSource.includes('["/vendor/markdown-it.min.js"') && appMSource.includes('["/vendor/mermaid.min.js"') && indexSource.includes('src="/vendor/markdown-it.min.js" defer'),
+	);
 	check("派生行内联化：不再有独立派生视图", !appSource.includes("deriveView") && !appSource.includes("renderDeriveList"));
 	check("派生行渲染走 deriveTargets 映射", appSource.includes("state.deriveTargets.get(ev.id)") && appSource.includes("openEventRow"));
 
@@ -634,7 +674,6 @@ const check = (label, cond, extra = "") => {
 	check("收起面板同样锚定行（closePanel 内 rowAnchor）", appSource.includes("const anchor = rowAnchor(state.openId);") && appSource.indexOf("const anchor = rowAnchor(state.openId);") > appSource.indexOf("function closePanel"));
 
 	// ---- 回归守卫：会话表头的分组总开关 ----
-	const indexSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "web", "index.html"), "utf8");
 	check("主题首帧由服务端 __TW_BOOT__ 注入，不再读 tw.theme", indexSource.includes("__TW_BOOT__") && !indexSource.includes('localStorage.getItem("tw.theme")'));
 	check("会话表头有分组总开关按钮", indexSource.includes('id="groups-toggle"'));
 	check("分组总开关的同步态与点击都接上了", appSource.includes("function updateGroupsToggle") && appSource.includes('el("groups-toggle").addEventListener("click"'));

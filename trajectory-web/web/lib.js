@@ -551,99 +551,123 @@ export class TrajectorySearchIndex {
 }
 
 // ---------------------------------------------------------------------------
-// 极简 Markdown：标题/代码块/行内代码/粗斜/删除线/链接/引用/列表/分隔线/段落
+// Markdown：markdown-it（/vendor 常驻，window.markdownit）＋ mermaid 懒加载水合
+//   - html:false：模型输出按纯文本转义，禁止 HTML 直写（沿用自研语义）
+//   - breaks:true：单换行成 <br>（沿用自研视觉）
+//   - GFM 表格/删除线由 markdown-it 内置；任务列表由 render 后处理补充；代码块沿用 md-code class
 // ---------------------------------------------------------------------------
 
-function inline(src) {
-	// src 传入前已转义；行内代码先摘出，避免被后续规则改写
-	const codes = [];
-	let s = src.replace(/`([^`\n]+)`/g, (_, code) => {
-		codes.push(code);
-		return `\u0000${codes.length - 1}\u0000`;
-	});
-	s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, text, href) => {
-		const safe = /^(https?:|mailto:)/i.test(href) ? href : "#";
-		return `<a href="${safe}" target="_blank" rel="noreferrer">${text}</a>`;
-	});
-	s = s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
-	s = s.replace(/__([^_\n]+)__/g, "<strong>$1</strong>");
-	s = s.replace(/(^|[\s(（])\*([^*\n]+)\*/g, "$1<em>$2</em>");
-	s = s.replace(/~~([^~\n]+)~~/g, "<del>$1</del>");
-	s = s.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[Number(i)]}</code>`);
-	return s;
+/** markdown-it 实例（window.markdownit 由 /vendor/markdown-it.min.js defer 提供）。 */
+let mdInstance = null;
+
+function mdIt() {
+	if (mdInstance) return mdInstance;
+	const factory = globalThis.window?.markdownit;
+	if (!factory) {
+		// vendor 脚本缺失时退回纯文本段落，保持页面可用
+		mdInstance = { render: (src) => `<p>${src.split("\n").map((l) => esc(l)).join("<br>")}</p>` };
+		return mdInstance;
+	}
+	mdInstance = factory({ html: false, breaks: true, linkify: false, typographer: false });
+	// fence：md-code class 沿用；mermaid 块输出占位（水合时替换为 SVG，失败保留源码）
+	mdInstance.renderer.rules.fence = (tokens, idx) => {
+		const token = tokens[idx];
+		const lang = String(token.info ?? "").trim().split(/\s+/)[0] || "";
+		const code = String(token.content ?? "");
+		if (lang === "mermaid") {
+			return `<div class="md-mermaid" data-src="${esc(code)}"><pre class="md-code"><code>${esc(code)}</code></pre></div>`;
+		}
+		return `<pre class="md-code"><code${lang ? ` class="language-${esc(lang)}"` : ""}>${esc(code)}</code></pre>`;
+	};
+	// 链接新窗口打开（沿用自研行为；javascript: 等危险协议由 markdown-it 默认拦截）
+	const defaultLinkOpen =
+		mdInstance.renderer.rules.link_open || ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
+	mdInstance.renderer.rules.link_open = (tokens, idx, options, env, self) => {
+		tokens[idx].attrSet("target", "_blank");
+		tokens[idx].attrSet("rel", "noreferrer");
+		return defaultLinkOpen(tokens, idx, options, env, self);
+	};
+	return mdInstance;
 }
 
 export function renderMarkdown(src) {
-	const lines = String(src ?? "").replace(/\r\n?/g, "\n").split("\n");
-	const out = [];
-	const para = [];
-	let i = 0;
-	const flushPara = () => {
-		if (para.length) {
-			out.push(`<p>${para.map((l) => inline(esc(l))).join("<br>")}</p>`);
-			para.length = 0;
-		}
-	};
-	while (i < lines.length) {
-		const line = lines[i];
-		const fence = /^```\s*([\w+#.-]*)\s*$/.exec(line);
-		if (fence) {
-			flushPara();
-			const lang = fence[1];
-			const buf = [];
-			i++;
-			while (i < lines.length && !/^```\s*$/.test(lines[i])) {
-				buf.push(lines[i]);
-				i++;
-			}
-			i++;
-			out.push(`<pre class="md-code"><code${lang ? ` class="language-${esc(lang)}"` : ""}>${esc(buf.join("\n"))}</code></pre>`);
-			continue;
-		}
-		if (/^\s*$/.test(line)) {
-			flushPara();
-			i++;
-			continue;
-		}
-		const heading = /^(#{1,6})\s+(.*)$/.exec(line);
-		if (heading) {
-			flushPara();
-			const level = heading[1].length;
-			out.push(`<h${level}>${inline(esc(heading[2]))}</h${level}>`);
-			i++;
-			continue;
-		}
-		if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
-			flushPara();
-			out.push("<hr>");
-			i++;
-			continue;
-		}
-		if (/^\s*>/.test(line)) {
-			flushPara();
-			const buf = [];
-			while (i < lines.length && /^\s*>/.test(lines[i])) {
-				buf.push(lines[i].replace(/^\s*>\s?/, ""));
-				i++;
-			}
-			out.push(`<blockquote>${renderMarkdown(buf.join("\n"))}</blockquote>`);
-			continue;
-		}
-		if (/^\s*([-*+]|\d+\.)\s+/.test(line)) {
-			flushPara();
-			const ordered = /^\s*\d+\./.test(line);
-			const items = [];
-			while (i < lines.length && /^\s*([-*+]|\d+\.)\s+/.test(lines[i])) {
-				items.push(lines[i].replace(/^\s*([-*+]|\d+\.)\s+/, ""));
-				i++;
-			}
-			const tag = ordered ? "ol" : "ul";
-			out.push(`<${tag}>${items.map((it) => `<li>${inline(esc(it))}</li>`).join("")}</${tag}>`);
-			continue;
-		}
-		para.push(line);
-		i++;
+	const html = mdIt().render(String(src ?? ""));
+	// GFM 任务列表不在 markdown-it 内置范围：对生成的 <li> 前缀做后处理（pre 内已转义不会误伤）
+	return html.replace(/<li>\[( |x|X)\] /g, (_, mark) => `<li><input type="checkbox" disabled${mark.trim() ? " checked" : ""}> `);
+}
+
+// ---------------------------------------------------------------------------
+// mermaid 懒加载：出现 .md-mermaid 占位才加载库（3.6MB）；SVG 进程内缓存，
+// 消息流每帧整列重建时同步回填避免闪烁
+// ---------------------------------------------------------------------------
+
+let mermaidLoader = null;
+const mermaidSvgCache = new Map();
+
+function ensureMermaid() {
+	if (!mermaidLoader) {
+		mermaidLoader = new Promise((resolve, reject) => {
+			const loaded = globalThis.window?.mermaid;
+			if (loaded) return resolve(loaded);
+			const script = document.createElement("script");
+			script.src = "/vendor/mermaid.min.js";
+			script.onload = () => {
+				const mermaid = globalThis.window?.mermaid;
+				if (!mermaid) {
+					mermaidLoader = null;
+					reject(new Error("mermaid 全局未就绪"));
+					return;
+				}
+				mermaid.initialize({ securityLevel: "strict", startOnLoad: false });
+				resolve(mermaid);
+			};
+			script.onerror = () => {
+				mermaidLoader = null;
+				reject(new Error("mermaid 脚本加载失败"));
+			};
+			document.head.appendChild(script);
+		});
 	}
-	flushPara();
-	return out.join("\n");
+	return mermaidLoader;
+}
+
+/** mermaid SVG 字符串 → DOMParser 惰性解析（不执行脚本）→ 跨文档收养替换占位内容（同 mdNode 模式）。 */
+function svgInto(node, svg) {
+	const doc = new DOMParser().parseFromString(svg, "text/html");
+	node.replaceChildren();
+	while (doc.body.firstChild) node.appendChild(doc.body.firstChild);
+}
+
+/** 挂载后水合容器内 .md-mermaid 占位：缓存命中同步回填，否则渲染后回填；失败保留源码。 */
+export function hydrateMermaid(root) {
+	const nodes = root ? [...root.querySelectorAll(".md-mermaid[data-src]")] : [];
+	if (!nodes.length) return;
+	const pending = [];
+	for (const node of nodes) {
+		const cached = mermaidSvgCache.get(node.dataset.src);
+		if (cached !== undefined) {
+			node.classList.add("is-rendered");
+			svgInto(node, cached);
+		} else pending.push(node);
+	}
+	if (!pending.length) return;
+	ensureMermaid()
+		.then(async (mermaid) => {
+			for (const node of pending) {
+				if (!node.isConnected) continue;
+				try {
+					const { svg } = await mermaid.render(`md-mermaid-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, node.dataset.src);
+					if (mermaidSvgCache.size > 200) mermaidSvgCache.clear();
+					mermaidSvgCache.set(node.dataset.src, svg);
+					if (!node.isConnected) continue;
+					node.classList.add("is-rendered");
+					svgInto(node, svg);
+				} catch {
+					node.classList.add("is-failed");
+				}
+			}
+		})
+		.catch(() => {
+			for (const node of pending) node.classList.add("is-failed");
+		});
 }

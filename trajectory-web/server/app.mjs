@@ -192,6 +192,8 @@ const STATIC = new Map([
 	["/session-prefs.js", ["session-prefs.js", "text/javascript; charset=utf-8"]],
 	["/style.css", ["style.css", "text/css; charset=utf-8"]],
 	["/tokens.css", ["tokens.css", "text/css; charset=utf-8"]],
+	["/vendor/markdown-it.min.js", ["vendor/markdown-it.min.js", "text/javascript; charset=utf-8"]],
+	["/vendor/mermaid.min.js", ["vendor/mermaid.min.js", "text/javascript; charset=utf-8"]],
 ]);
 
 const MAX_CACHED_PROJECTIONS = 4;

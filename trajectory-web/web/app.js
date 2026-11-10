@@ -35,6 +35,7 @@ import {
 	groupToolNames,
 	highlightSegments,
 	hitSnippet,
+	hydrateMermaid,
 	kindGroup,
 	mcpLabel,
 	presetFilters,
@@ -216,6 +217,8 @@ function mdNode(text) {
 	const doc = new DOMParser().parseFromString(renderMarkdown(text), "text/html");
 	// appendChild 会自动收养节点并从 doc.body 摘除，循环必然收敛
 	while (doc.body.firstChild) wrapper.appendChild(doc.body.firstChild);
+	// mermaid 占位在挂载后水合：rAF 一拍等调用方同步挂载完成（未挂载/被移除则跳过）
+	requestAnimationFrame(() => hydrateMermaid(wrapper));
 	return wrapper;
 }
 
