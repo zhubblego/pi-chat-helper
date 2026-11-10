@@ -27,6 +27,7 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@e
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createConsoleBridge } from "./server/console-bridge.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = join(HERE, "web");
@@ -440,6 +441,13 @@ async function runStop(notify: Notice): Promise<void> {
 }
 
 export default function (pi: ExtensionAPI) {
+	const consoleBridge = createConsoleBridge({
+		pi,
+		getCtx: () => slot().runtime?.ctx,
+		agentDir: AGENT_DIR,
+		log: (message) => process.stderr.write(`${message}\n`),
+	});
+
 	pi.registerCommand(COMMAND_NAME, {
 		description: `轨迹观察服务（绑定本 pi 实例）：start [端口] [--codex] [--all] 启动（默认 ${DEFAULT_PORT}），stop 停止`,
 		getArgumentCompletions: (prefix) => {
@@ -473,8 +481,12 @@ export default function (pi: ExtensionAPI) {
 	// 会话切换（new/resume/fork）会重建扩展 runtime 但不该停服务；
 	// 退出与 reload 时关闭，避免端口/句柄泄漏（reload 后新代码重新 start）。
 	pi.on("session_shutdown", async (event) => {
+		await consoleBridge.close();
 		if (event.reason === "quit" || event.reason === "reload") await closeSlot();
 	});
+
+	pi.on("agent_start", () => consoleBridge.setState("working"));
+	pi.on("agent_settled", () => consoleBridge.setState("idle"));
 
 	// 每个新 runtime 都刷新槽位里的当前引用（server 回调经它拿最新 ctx，跨会话不失效），
 	// 并从 custom 条目恢复裁剪状态（pi 落盘过，重启/换会话后仍生效）。
@@ -486,6 +498,7 @@ export default function (pi: ExtensionAPI) {
 		s.hiddenUserIds = new Set(hiddenIdsFromEntries(entries));
 		s.croppedEntryIds = new Set(croppedIdsFromEntries(entries));
 		syncFingerprints(s, ctx);
+		await consoleBridge.start();
 	});
 
 	// 模型上下文的裁剪点：每次 LLM 调用前，先按整轮裁剪剔轮，再按单条裁剪剔内容。

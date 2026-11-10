@@ -16,6 +16,8 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tw-ext-"));
 // 把 HOME 指向临时目录：codex 源根目录（~/.codex/sessions）落在可控的 fixture 里，
 // 不依赖、也不污染宿主机真实 codex 历史。必须在加载扩展（app.mjs 算 DEFAULT_CODEX_ROOT）前设置。
 process.env.HOME = tmp;
+// 显式把 agentDir 指向临时目录，确保 TUI 控制台桥注册也只写临时目录。
+process.env.PI_CODING_AGENT_DIR = path.join(tmp, ".pi", "agent");
 const codexDay = path.join(tmp, ".codex", "sessions", "2026", "01", "01");
 fs.mkdirSync(codexDay, { recursive: true });
 fs.writeFileSync(
@@ -121,6 +123,11 @@ function freePort() {
 		check("子命令补全含 start / --codex / --all / stop", trail.getArgumentCompletions("")?.map((c) => c.value).join(",") === "start,start --codex,start --all,stop");
 		check("补全按前缀过滤", trail.getArgumentCompletions("start --")?.map((c) => c.value).join(",") === "start --codex,start --all");
 		check("注册了 session_shutdown 处理", shutdownHandlers.length > 0);
+		check(
+			"注册 agent_start / agent_settled 处理",
+			(handlers.agent_start?.length ?? 0) > 0 && (handlers.agent_settled?.length ?? 0) > 0,
+			JSON.stringify(Object.keys(handlers)),
+		);
 
 		// ---- 仓库根聚合入口（pi -e . 依赖） ----
 		const aggregateCommands = {};
@@ -135,9 +142,12 @@ function freePort() {
 		const notices = [];
 		const ctx = {
 			hasUI: true,
+			mode: "tui",
+			isIdle: () => true,
 			ui: { notify: (message, type) => notices.push({ message, type }) },
 			sessionManager: {
 				getSessionFile: () => sessionFile,
+				getSessionId: () => "ext-1",
 				getCwd: () => tmp,
 				getEntries: () => fakeEntries,
 				getBranch: () => fakeEntries,
@@ -410,6 +420,21 @@ function freePort() {
 
 		// ---- 模型上下文隐藏（模式 A）：端点 → custom 持久化 → context 过滤 ----
 		for (const h of handlers.session_start ?? []) await h({}, ctx);
+		const consoleDir = path.join(tmp, ".pi", "agent", "pi-chat-helper", "consoles");
+		const consoleFiles = fs.existsSync(consoleDir) ? fs.readdirSync(consoleDir).filter((name) => name.endsWith(".json")) : [];
+		const consoleRegPath = consoleFiles.length === 1 ? path.join(consoleDir, consoleFiles[0]) : null;
+		const consoleReg = consoleRegPath ? JSON.parse(fs.readFileSync(consoleRegPath, "utf8")) : null;
+		check(
+			"T1：TUI session_start 自动注册控制台桥",
+			consoleFiles.length === 1 &&
+				consoleReg?.interactive === true &&
+				consoleReg?.state === "idle" &&
+				consoleReg?.sessionId === "ext-1" &&
+				consoleReg?.sessionFile === fs.realpathSync(sessionFile) &&
+				typeof consoleReg?.port === "number" &&
+				typeof consoleReg?.token === "string",
+			JSON.stringify({ files: consoleFiles, reg: consoleReg }),
+		);
 		const cePost = (body) => fetch(`${url}api/context-edit`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 		check("context-edit 隐藏第 0 轮成功", (await (await cePost({ qIndex: 0, hidden: true })).json()).ok === true);
 		check("隐藏状态持久化为 custom 条目", appendedEntries.at(-1)?.customType === "pi-chat-helper.trajectory-hidden" && appendedEntries.at(-1).data.hidden.includes("u1"));
@@ -472,6 +497,7 @@ function freePort() {
 
 		// ---- 换会话（new/resume/fork）不停服务；quit 停 ----
 		for (const handler of shutdownHandlers) await handler({ type: "session_shutdown", reason: "new" });
+		check("T1：换会话后控制台桥注册已注销", !consoleRegPath || !fs.existsSync(consoleRegPath));
 		check("换会话（new）后服务仍在", (await (await fetch(`${url2}api/health`)).json()).ok === true);
 
 		// ---- 非法端口 ----
