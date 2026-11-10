@@ -18,6 +18,8 @@ pi install git:github.com/zhubblego/pi-chat-helper
 
 新开会话生效。`pi list` 查看已装扩展包，`pi remove git:github.com/zhubblego/pi-chat-helper` 移除。
 
+运行环境要求 **Node >= 22.19**；SQLite 状态库（S1 核心）使用 `node:sqlite`，S2 起接入 viewer。
+
 想先试用一次、不写入配置：
 
 ```bash
@@ -171,6 +173,7 @@ node tests/test-server.cjs       # HTTP：多会话列表/指定会话/增量/�
 node tests/test-web-lib.cjs      # 前端纯函数：过滤映射/Markdown 转义/会话列表助手/搜索结果高亮切分
 node tests/test-codex.cjs        # Codex 轨迹源：rollout 扫描/翻译映射（消息/思维/工具配对/redacted/子 agent 派发任务）/投影复用
 node tests/test-tool-origins.cjs # 工具归属静态扫描：分组/保护规则/相似度竞争
+node tests/test-state-db.cjs     # SQLite 状态库：schema/WAL/CRUD/旧 JSON 迁移/权限/降级
 
 # trajectory-web 扩展命令（需要 PI_HOME 提供 jiti）
 PI_HOME=<pi 安装目录> node tests/test-extension.cjs

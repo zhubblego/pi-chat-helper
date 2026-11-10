@@ -1,6 +1,6 @@
 # SQLite 状态持久化：设计与边界（v1）
 
-> 状态：边界已确认，方案已落盘；S1–S5 未实施。
+> 状态：边界已确认；S1 已完成并验证（state-db 核心 + 旧 JSON/JSONL 迁移）；S2–S5 未开始。
 > 日期：2026-11-10。
 > 关联：[implementation.md](./implementation.md)（分阶段实施清单）。
 > 上游背景：trajectory-web 的过滤、布局、对话指针等状态目前分散在浏览器 localStorage 与 JSON/JSONL 文件。
@@ -258,10 +258,21 @@ POST body 示例：
 7. 模式 A / B 共用库；并发写不损坏数据。
 8. 全量测试、`tsc`、`pi --print` 通过。
 
-## 10. 待确认
+## 10. 已确认 / 待确认
 
-- SQLite 实现：默认建议 `node:sqlite`，将 `package.json engines` 提升到 `>=22.19`；若必须兼容 Node 18/20，再改用 `better-sqlite3` 或 JSON fallback。
-- 旧 JSON/JSONL 迁移后是否保留备份（建议保留，不删除）。
+- SQLite 实现：已确认 `node:sqlite` + `package.json engines >=22.19`。
+- 旧 JSON/JSONL 迁移后是否保留备份：当前保留，不删除。
 - 多 Origin 旧状态冲突是否需要页面显式“覆盖”按钮（建议需要时再加）。
+
+## 11. 实施记录
+
+### S1（2026-11-10）
+
+- 新增 `trajectory-web/server/state-db.mjs` + `.d.mts`：schema v1、WAL、`busy_timeout`、0600/0700、prefs/session/project/turns/context CRUD。
+- 首次打开从 `settings.json`、`meta/turns.jsonl`、`meta/context.*.json` 迁移；`legacy_imported` 幂等；旧文件保留。
+- 新增 `tests/test-state-db.cjs`：52 PASS。
+- 代码提交：`78b1783`。
+- 验证：全量 15 套 976 PASS、0 FAIL；`tsc` 0；`pi -ne -e . --print` 0。
+- 尚未接线 viewer / API / localStorage 迁移（S2–S5）；当前页面仍用旧 localStorage 状态。
 
 实施顺序、文件清单、测试矩阵见 [implementation.md](./implementation.md)。

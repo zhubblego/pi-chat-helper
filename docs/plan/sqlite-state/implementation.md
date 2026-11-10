@@ -1,6 +1,6 @@
 # SQLite 状态持久化：实施计划（v1）
 
-> 状态：方案已确认边界，S1–S5 未实施。
+> 状态：方案已确认边界；S1 已完成并验证；S2–S5 未开始。
 > 上游：[README.md](./README.md)。本文给出逐文件改动、阶段验收、测试矩阵和迁移/回滚边界。
 > 原则：先让 SQLite 成为插件自有状态的唯一真源，再删除 localStorage/JSON 的长期写入；pi session 格式不动。
 
@@ -18,7 +18,7 @@
 
 ## 2. 依赖与运行环境
 
-默认使用 `node:sqlite`：
+使用 `node:sqlite`（已确认）：
 
 - `package.json engines` 从 `>=18` 提升到 `>=22.19`（与 pi 1.5 的 Node 要求一致）。
 - `DatabaseSync` 打开 DB；WAL、`busy_timeout`、事务。
@@ -111,16 +111,19 @@ export function openStateDb({ agentDir, stateDbPath, now, log } = {})
   - `kind=active|next`；坏 JSON 跳过；
   - `context.next` 保留后续 promote 语义。
 - 旧文件不删除；若 DB 已有 `legacy_imported=1`，不重复扫描。
-- 每次迁移记录 `{imported, skipped, errors}` 到日志（不包含正文）。
+- 迁移返回 `{skipped, projects, turns, contexts, errors, skippedItems}` 统计；错误写日志，不包含正文。
 
 ### 4.4 S1 验收
 
-- 临时 agentDir 打开 DB，schema 正确，文件 `0600`。
-- 两个进程/两次打开同一 DB，不损坏；WAL 可读。
+**状态：已完成（2026-11-10，代码提交 `78b1783`）。**
+
+- 临时 agentDir 打开 DB，schema 正确，文件 `0600`；目录 `0700`。
+- 两个连接/跨进程写同一 DB，不损坏；WAL 可读。
 - CRUD 幂等；坏 JSON 不阻塞；重复迁移不重复插入。
 - pi session 文件未被写入。
 - 现有测试不依赖真实 `~/.pi/agent`。
 - 旧 `settings.json`/`turns.jsonl`/`context.*` 可完整导入。
+- 验证：`tests/test-state-db.cjs` 52 PASS；全量 15 套 976 PASS、0 FAIL；`tsc` 0；`pi -ne -e . --print` 0。
 
 ## 5. S2：全局偏好 API 与首帧主题
 
