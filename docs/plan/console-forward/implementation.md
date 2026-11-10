@@ -1,6 +1,6 @@
 # 控制台转发：实施计划（v1）
 
-> 状态：T1 已完成并验证；T2–T5 未实施。
+> 状态：T1–T2 已完成并验证；T3–T5 未实施。
 > 上游：[README.md](./README.md)。接口：[api.md](./api.md)。交互：[ui.md](./ui.md)。
 > 本文是逐阶段落地计划；完成一个阶段后再进入下一阶段，每阶段独立验证、独立 commit。
 
@@ -354,19 +354,26 @@ pi -ne -e . --print
 - 全量 13 套 892 PASS；`tsc` 0；`pi -ne -e . --print` 0。
 - T1 测试只写临时 agentDir；真实 `~/.pi/agent/pi-chat-helper/consoles` 未产生。
 
-### T2 发现与状态
+### T2 发现与状态（已完成）
 
 - 新增 `console-registry.mjs`。
-- `app.mjs` / `main.mjs` 注入 agentDir/consolesDir；`GET /api/chat/consoles`。
-- `app.js` 拉取并渲染 console badge；`chat.js` 状态条占位（暂不转发）。
+- `app.mjs` 派生 `consolesDir`；`main.mjs` 继续传 `agentDir`；`GET /api/chat/consoles`。
+- `app.js` 轮询并渲染 console badge；`chat.js` 状态条占位（暂不转发）。
 - 测试：注册表、API、安全、无 token。
-- 浏览器：有/无控制台、working/idle/offline 展示。
+- 浏览器：working/idle badge 与侧边状态；无控制台时隐藏。
 
 退出标准：
 
 - 页面不把 `live` 当控制台；
 - 后启动 viewer 能发现已注册控制台；
 - 老控制台显示不可用。
+
+验证：
+
+- `tests/test-console.cjs` 43 PASS（含 T2 registry）：TTL、public 投影、canonical 匹配、歧义/空。
+- `tests/test-server.cjs` 213 PASS（新增 6 条）与 `tests/test-web-lib.cjs` 225 PASS（新增 2 条）。
+- headless Chromium：会话 badge working/idle、对话状态条 working/idle、无 JS error。
+- 全量 13 套 905 PASS，0 FAIL；`tsc` 0；`pi -ne -e . --print` 0。
 
 ### T3 转发链路
 
