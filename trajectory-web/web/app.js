@@ -1391,6 +1391,7 @@ function openPanel(id) {
 		closePanel();
 		return;
 	}
+	const anchor = rowAnchor(id);
 	state.openId = id;
 	state.openFull = null;
 	const light = findEvent(id);
@@ -1398,8 +1399,14 @@ function openPanel(id) {
 	renderPanel();
 	// 行不可见（被过滤/折叠）时 attachOpenPanel 已收尾，不再拉全文/写 hash
 	if (!attachOpenPanel()) return;
-	// behavior 必须显式 instant：#main 的 scroll-behavior 是 smooth（同 revealEvent）
-	panel.scrollIntoView({ block: "nearest", behavior: "instant" });
+	if (anchor) {
+		// 锚定行：面板插在行下方会把行推出原位，补偿滚动让它停在点击时的视口位置，
+		// 展开/收起都不跳动；行不在视口（chat 引用跳转等）时走 scrollIntoView 定位
+		restoreAnchor(anchor);
+	} else {
+		// behavior 必须显式 instant：#main 的 scroll-behavior 是 smooth（同 revealEvent）
+		panel.scrollIntoView({ block: "nearest", behavior: "instant" });
+	}
 	if (light?.truncated) loadFull(id);
 	writeViewHash();
 }
@@ -1440,7 +1447,26 @@ function refreshOpen() {
 	if (light.truncated) loadFull(light.id);
 }
 
+/** 详情面板插拔时的行锚点：行在视口内才需要稳定（行在视口外的跳转定位交给 scrollIntoView）。 */
+function rowAnchor(id) {
+	const row = id ? mainInner.querySelector(`.ev[data-eid="${id}"]`) : null;
+	if (!row) return null;
+	const rowRect = row.getBoundingClientRect();
+	const mainRect = main.getBoundingClientRect();
+	if (rowRect.bottom <= mainRect.top || rowRect.top >= mainRect.bottom) return null;
+	return { row, top: rowRect.top };
+}
+
+/** 把锚定的行滚回快照时的视口位置：面板插拔改变了行上方内容高度时补偿滚动。
+ *  scrollTo 显式 instant：#main 的 scroll-behavior 是 smooth，scrollTop 赋值也会被平滑化。 */
+function restoreAnchor(anchor) {
+	const delta = anchor.row.getBoundingClientRect().top - anchor.top;
+	if (delta) main.scrollTo({ top: main.scrollTop + delta, behavior: "instant" });
+}
+
 function closePanel() {
+	// 收起同样锚定行：面板摘除后内容塌缩会把行带走，补偿滚动让它停在原位
+	const anchor = rowAnchor(state.openId);
 	state.openId = null;
 	state.openFull = null;
 	state.openLightJson = "";
@@ -1449,6 +1475,7 @@ function closePanel() {
 	transSeq++;
 	setSettingsOpen(false);
 	setCopyMenuOpen(false);
+	restoreAnchor(anchor);
 	writeViewHash();
 }
 

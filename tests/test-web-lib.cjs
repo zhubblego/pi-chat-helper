@@ -621,6 +621,18 @@ const check = (label, cond, extra = "") => {
 	);
 	check("全局 localStorage 键不再由 app.js 长期写入", ["tw.filters", "tw.tools", "tw.theme", "tw.translate", "tw.chat", "tw.chatWidth", "tw.composerHeight"].every((key) => !appSource.includes(`localStorage.setItem("${key}"`)));
 
+	// ---- 回归守卫：详情面板展开/收起的行锚定 ----
+	// panel.scrollIntoView(nearest) 的滚动量随面板高度/行位置漂移，行会一阵被推到上面一阵留在原地；
+	// 展开/收起改为锚定被点击行的视口位置，行不再跳（2026-11-10）。
+	check(
+		"展开面板锚定行：rowAnchor 快照 + restoreAnchor 补偿，行不在视口时才退回 scrollIntoView",
+		appSource.includes("const anchor = rowAnchor(id)") &&
+			appSource.includes("restoreAnchor(anchor)") &&
+			appSource.includes('panel.scrollIntoView({ block: "nearest", behavior: "instant" })'),
+	);
+	check("行锚定补偿用 instant 滚动（smooth 会被 #main 的 scroll-behavior 平滑化）", appSource.includes('main.scrollTo({ top: main.scrollTop + delta, behavior: "instant" })'));
+	check("收起面板同样锚定行（closePanel 内 rowAnchor）", appSource.includes("const anchor = rowAnchor(state.openId);") && appSource.indexOf("const anchor = rowAnchor(state.openId);") > appSource.indexOf("function closePanel"));
+
 	// ---- 回归守卫：会话表头的分组总开关 ----
 	const indexSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "web", "index.html"), "utf8");
 	check("主题首帧由服务端 __TW_BOOT__ 注入，不再读 tw.theme", indexSource.includes("__TW_BOOT__") && !indexSource.includes('localStorage.getItem("tw.theme")'));
