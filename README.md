@@ -111,7 +111,18 @@ npm run dev        # 默认 http://127.0.0.1:7788
 - **安全**：仅监听回环地址；所有 POST 校验 Host/Origin，chat POST 要求 `application/json`，失败 403；请求体 >1MB 413，线程/轨迹文件 >32MB 400；不新增 CORS，OPTIONS 405。非回环监听时 chat 自动禁用，轨迹 viewer 不受影响。
 - **存储**：对话线程是独立 pi session，落在 `<chatDir>/<source>/<safeSessionId>/sessions`；`chatDir` 默认 `<agentDir>/pi-chat-helper/chats`，只写这里，删除不影响轨迹历史；`/api/sessions` 与 pi `/resume` 看不到。
 
-已知限制：对话页的浏览器交互尚未做 CDP 实测；Codex 的 `read_trajectory` 工具已支持，但 Codex send 上下文链路未做 e2e；`/resume` 只提供线程选择，不支持重命名/删除；不支持图片/语音/多模态输入。旧 pi stderr 错误仅截断、未全量脱敏；进程池内非 turn 读取没有租约，极端情况下可能被容量 LRU 关闭；pi 自身 `/resume` 看不到 chatDir（chatDir 路径隔离与列表排除已测）。
+#### 控制台转发（独立 / 转发双模式）
+
+侧边对话可以切到「转发」，把问题直接交给当前轨迹会话对应的、已加载 pi-chat-helper 的 pi TUI 控制台；回答和工具审批在控制台完成。
+
+- **模式**：`独立` 使用自己的 RPC 子进程；`转发` 不 spawn child，只把问题作为用户消息送进控制台。模式按 `source:sessionId` 记忆。
+- **注册**：插件在交互式 TUI 的 `session_start` 自动注册（不是等 `/deepseek-trail start`）；注册表在 `<agentDir>/pi-chat-helper/consoles/`，bridge 只监听 `127.0.0.1`。`PI_CHAT_HELPER_CONSOLE_BRIDGE=0` 可关闭。
+- **状态**：会话列表和侧边分别显示控制台 `working` / `idle` / `offline` / `未检测`；与 session 文件的 `live` 分开。
+- **转发**：按精确 `sessionFile` 路由；无控制台/离线/多控制台/会话不匹配拒绝。控制台空闲立即发送；忙碌默认 `followUp` 排队；选择「插话」需自定义确认。侧边只显示转发记录，不镜像控制台回答。
+- **安全**：bridge 使用 Bearer token、`0600` 注册文件、仅回环；viewer 的 `/api/chat/forward` 沿用 Host/Origin/JSON、1MB 与 32k prompt 限制；token/port/sessionFile 不返回浏览器。
+- **限制**：只支持启动时已加载 pi-chat-helper 的 pi TUI；更早启动的控制台不 retrofit，页面不做终端注入。转发模式不携带侧边上下文、模型、技能、profile，不远程停止/审批；转发记录和草稿只在当前页面内存，不落盘。多个控制台只拒绝转发，不提供选择器。
+
+已知限制：对话页交互已用 headless Chromium 验证，但尚未做真实 Chrome/人工视觉验收；控制台转发只支持已加载插件的 pi TUI，且转发模式不镜像回答/不携带侧边上下文；Codex 的 `read_trajectory` 工具已支持，但 Codex send 上下文链路未做 e2e；`/resume` 只提供线程选择，不支持重命名/删除；不支持图片/语音/多模态输入。旧 pi stderr 错误仅截断、未全量脱敏；进程池内非 turn 读取没有租约，极端情况下可能被容量 LRU 关闭；pi 自身 `/resume` 看不到 chatDir（chatDir 路径隔离与列表排除已测）。
 
 ### 轨迹源
 
@@ -155,7 +166,8 @@ pi -ne -e .        # 只加载本仓库开发版，不叠加其它已装扩展
 node tests/test-projection.cjs   # 投影：分组/工具配对/统计/分支重建/light 截断
 node tests/test-sessions.cjs     # 会话扫描：列表字段/项目范围/尾部会话名/live/排序
 node tests/test-chat.cjs         # 对话 host：RPC/线程/SSE/上下文/审批/进程池/安全纯函数
-node tests/test-server.cjs       # HTTP：多会话列表/指定会话/增量/详情/双范围/热更新/对话/安全/退出
+node tests/test-console.cjs      # 控制台桥：注册/心跳/状态/token/forward/转发 client 超时
+node tests/test-server.cjs       # HTTP：多会话列表/指定会话/增量/详情/双范围/热更新/对话/控制台/安全/退出
 node tests/test-web-lib.cjs      # 前端纯函数：过滤映射/Markdown 转义/会话列表助手/搜索结果高亮切分
 node tests/test-codex.cjs        # Codex 轨迹源：rollout 扫描/翻译映射（消息/思维/工具配对/redacted/子 agent 派发任务）/投影复用
 node tests/test-tool-origins.cjs # 工具归属静态扫描：分组/保护规则/相似度竞争

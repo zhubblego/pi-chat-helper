@@ -1,7 +1,8 @@
 # 对话页面接 pi agent：方案总览
 
 > 状态：方案已确认（v2：pi 子进程 + RPC + context-as-tool），实施中。实施完成后同步更新 `ROADMAP.md`。
-> 关联文档：[api.md](api.md)（接口与存储契约）、[ui.md](ui.md)（交互与视觉）、[implementation.md](implementation.md)（逐文件落地清单）。
+> 关联文档：[api.md](./api.md)（接口与存储契约）、[ui.md](./ui.md)（交互与视觉）、[implementation.md](./implementation.md)（逐文件落地清单）。
+> 后续「独立 / 转发」控制台转发见 [../console-forward/](../console-forward/)。
 
 ## 1. 现状
 
@@ -245,6 +246,6 @@ sequenceDiagram
 
 ## 9. 文档索引
 
-- [api.md](api.md)：HTTP/SSE 契约、RPC 映射、存储结构、context-as-tool 细节、校验与安全。
-- [ui.md](ui.md)：布局、输入卡状态、斜杠面板、模型/技能/上下文交互、/resume 线程历史、工具卡片、审批弹层、键盘与可访问性。
-- [implementation.md](implementation.md)：逐文件改动、chat host、两个子进程扩展、前端依赖注入、测试清单、提交拆分与回滚。
+- [api.md](./api.md)：HTTP/SSE 契约、RPC 映射、存储结构、context-as-tool 细节、校验与安全。
+- [ui.md](./ui.md)：布局、输入卡状态、斜杠面板、模型/技能/上下文交互、/resume 线程历史、工具卡片、审批弹层、键盘与可访问性。
+- [implementation.md](./implementation.md)：逐文件改动、chat host、两个子进程扩展、前端依赖注入、测试清单、提交拆分与回滚。

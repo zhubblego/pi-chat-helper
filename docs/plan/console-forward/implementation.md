@@ -1,6 +1,6 @@
 # 控制台转发：实施计划（v1）
 
-> 状态：T1–T4 已完成并验证；T5 未实施。
+> 状态：T1–T5 已完成并验证。
 > 上游：[README.md](./README.md)。接口：[api.md](./api.md)。交互：[ui.md](./ui.md)。
 > 本文是逐阶段落地计划；完成一个阶段后再进入下一阶段，每阶段独立验证、独立 commit。
 
@@ -416,27 +416,29 @@ pi -ne -e . --print
 - headless Chromium：模式切换、隐藏独立控件、auto→followUp、steer 自定义确认、独立恢复、控制台消失离线/恢复、无 JS error。
 - 全量 13 套 920 PASS，0 FAIL；`tsc` 0；`pi -ne -e . --print` 0。
 
-### T5 安全、文档与验收
+### T5 安全、文档与验收（已完成）
 
-- 完整安全复核：loopback、Host/Origin、JSON、1MB、32k、token、0600、无日志泄漏。
-- 真实 TUI + viewer 端到端（本文件 6.3）。
-- 更新 README / `docs/plan/aichat` 交叉引用（如需）/ ROADMAP 已完成。
-- 全量测试 + tsc + pi 冒烟 + 浏览器。
-- 明确残留风险；不自动发版、不改版本号。
+- 完整安全复核：loopback、Host/Origin、JSON、1MB、32k、token、0600、无 token 泄漏；bridge 新增 1MB 请求体测试。
+- 真实 TUI + viewer 端到端（本文件 6.3）：临时 HOME/agentDir 下用 `script` PTY 启动 `pi -ne -e .`，bridge 自动注册；模式 B viewer `/api/chat/consoles` 200，`/api/chat/forward` 200，真实 session 文件创建并包含无 seed 转发正文；无 token 泄漏。
+- 新空 TUI 首条消息前 session 文件未落盘：viewer 按 registry `sessionId` 唯一回落到 `sessionFile`；test-server 225 覆盖。
+- 更新 README 对话页能力、控制台转发边界与测试清单；更新本目录状态；ROADMAP 已登记。
+- 全量 13 套 922 PASS，0 FAIL；`tsc` 0；`pi -ne -e . --print` 0；headless Chromium T4 交互通过。
+- 真实 TUI 的模型调用因临时 agentDir 无鉴权返回 401；本轮验证的是桥注册、viewer 转发、session 落盘与用户消息注入，不代表模型回答内容。
+- 不自动发版、不改版本号。
 
 ## 8. 验收清单
 
-- [ ] TUI 加载插件后自动注册；viewer 后启动可发现。
-- [ ] chat child、RPC、headless 不注册。
-- [ ] `live` 与 console `working`/`idle`/`offline` 分离。
-- [ ] `agent_start` / `agent_settled` / 心跳 / shutdown 状态正确。
-- [ ] 精确 `sessionFile`；无控制台/离线/多控制台/会话不匹配均拒绝。
-- [ ] 空闲立即；忙碌默认 followUp；steer 二次确认。
-- [ ] 转发不执行 `/command`，不带侧边上下文，不显示侧边审批。
-- [ ] 老控制台无假连接；只给重启/`/reload` 说明。
-- [ ] 独立模式消息/模型/技能/profile/上下文/审批/线程历史不回归。
-- [ ] 模式 A / B 均可用；token 不出现在 API/浏览器/日志。
-- [ ] 测试不写真实 `agentDir`；全量测试、tsc、pi 冒烟、浏览器通过。
+- [x] TUI 加载插件后自动注册；viewer 后启动可发现。
+- [x] chat child、RPC、headless 不注册。
+- [x] `live` 与 console `working`/`idle`/`offline` 分离。
+- [x] `agent_start` / `agent_settled` / 心跳 / shutdown 状态正确。
+- [x] 精确 `sessionFile`；无控制台/离线/多控制台/会话不匹配均拒绝。
+- [x] 空闲立即；忙碌默认 followUp；steer 二次确认。
+- [x] 转发不执行 `/command`，不带侧边上下文，不显示侧边审批。
+- [x] 老控制台无假连接；只给重启/`/reload` 说明。
+- [x] 独立模式消息/模型/技能/profile/上下文/审批/线程历史不回归。
+- [x] 模式 A / B 均可用；token 不出现在 API/浏览器/日志。
+- [x] 测试不写真实 `agentDir`；全量测试、tsc、pi 冒烟、浏览器通过。
 
 ## 9. 风险与已知限制
 

@@ -1,6 +1,6 @@
 # 控制台转发 API 与注册表契约（v1）
 
-> 状态：T1 桥核心、T2 控制台发现/状态、T3 viewer 转发代理、T4 UI 已实施；T5 未实施。
+> 状态：T1 桥核心、T2 控制台发现/状态、T3 viewer 转发代理、T4 UI、T5 验收已完成。
 > 上游：[README.md](./README.md)。交互：[ui.md](./ui.md)。落地计划：[implementation.md](./implementation.md)。
 > 本文定义 viewer ↔ 浏览器的公开接口、viewer ↔ console bridge 的内部接口，以及注册表文件格式。
 
@@ -149,6 +149,8 @@ Content-Type: application/json
 
 1. 校验 chat 启用、安全 gate、JSON、请求体大小。
 2. 解析 `source + session` → 真实 `sessionFile`；不存在 404。
+   - 新 TUI 首条消息前 session 文件可能尚未落盘：若 `/api/sessions` 没有该 id、但 registry 里恰好有一条同 `sessionId` 记录，用该记录的 `sessionFile`；无则 404，多条则 409 `ambiguous_console`。
+   - 不要用 `/api/sessions.current` 作转发目标；模式 A 的 current 可能仍是服务启动时的会话。
 3. 读注册表；过滤 stale / 非交互条目。
 4. 没有条目 → 409 `no_console`；多项 → 409 `ambiguous_console`。
 5. 通过注册表里的 `port + token` 调 bridge `POST /forward`，超时 5 秒。
