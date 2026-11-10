@@ -242,6 +242,145 @@ async function stopServer(child) {
 		});
 		check("consoles：错误 Origin 403", consolesBadOrigin.status === 403, String(consolesBadOrigin.status));
 
+		// ---- T3：POST /api/chat/forward（fake bridge） ----
+		let bridgeMode = "success";
+		let bridgeLast = null;
+		const bridgeServer = http.createServer((req, res) => {
+			const chunks = [];
+			req.on("data", (chunk) => chunks.push(chunk));
+			req.on("end", () => {
+				let body = null;
+				try {
+					body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+				} catch {
+					/* 非法 body 交给断言 */
+				}
+				bridgeLast = { method: req.method, path: req.url, headers: req.headers, body };
+				let status = 200;
+				let payload = { ok: true, delivery: "followUp", state: "working" };
+				if (bridgeMode === "mismatch") {
+					status = 409;
+					payload = { error: "控制台已切换到其他会话", code: "session_mismatch" };
+				} else if (bridgeMode === "error") {
+					status = 500;
+					payload = { error: "fake bridge failed", code: "bridge_error" };
+				}
+				res.writeHead(status, { "content-type": "application/json" });
+				res.end(JSON.stringify(payload));
+			});
+		});
+		await new Promise((resolve, reject) => {
+			bridgeServer.once("error", reject);
+			bridgeServer.listen(0, "127.0.0.1", resolve);
+		});
+		const bridgePort = bridgeServer.address().port;
+		const writeWorking = (port) =>
+			writeConsole("console-a1.json", {
+				pid: 4200,
+				sessionId: "srv-a1",
+				sessionFile: a1,
+				cwd: "/tmp/projA",
+				port,
+				token: "forward-token",
+				state: "working",
+				startedAt: new Date().toISOString(),
+				heartbeatAt: new Date().toISOString(),
+			});
+		writeWorking(bridgePort);
+		const fwdPost = async (body, headers = {}) => {
+			const res = await fetch(`${base}/api/chat/forward`, {
+				method: "POST",
+				headers: { "content-type": "application/json", ...headers },
+				body: typeof body === "string" ? body : JSON.stringify(body),
+			});
+			const text = await res.text();
+			let json = null;
+			try {
+				json = JSON.parse(text);
+			} catch {
+				/* 非 JSON 保留 text */
+			}
+			return { status: res.status, json, text };
+		};
+
+		bridgeMode = "success";
+		bridgeLast = null;
+		const fwdOk = await fwdPost({ source: "pi", session: "srv-a1", prompt: "  请排队  ", delivery: "auto" });
+		check(
+			"forward：成功 200 + followUp + console",
+			fwdOk.status === 200 &&
+				fwdOk.json?.ok === true &&
+				fwdOk.json.delivery === "followUp" &&
+				fwdOk.json.console?.sessionId === "srv-a1" &&
+				fwdOk.json.console?.state === "working",
+			fwdOk.text,
+		);
+		check(
+			"forward：bridge 收到规范化 body / token",
+			bridgeLast?.method === "POST" &&
+				bridgeLast.path === "/forward" &&
+				bridgeLast.headers.authorization === "Bearer forward-token" &&
+				bridgeLast.body?.sessionFile === fs.realpathSync(a1) &&
+				bridgeLast.body?.prompt === "请排队" &&
+				bridgeLast.body?.delivery === "auto",
+			JSON.stringify(bridgeLast),
+		);
+		check("forward：响应不泄漏 token", !fwdOk.text.includes("forward-token"), fwdOk.text);
+
+		bridgeMode = "mismatch";
+		const fwdMismatch = await fwdPost({ source: "pi", session: "srv-a1", prompt: "x" });
+		check("forward：bridge session_mismatch 映射 409", fwdMismatch.status === 409 && fwdMismatch.json?.code === "session_mismatch", fwdMismatch.text);
+
+		bridgeMode = "error";
+		const fwdError = await fwdPost({ source: "pi", session: "srv-a1", prompt: "x" });
+		check("forward：bridge 错误映射 502", fwdError.status === 502 && fwdError.json?.code === "bridge_error", fwdError.text);
+
+		const dead = http.createServer();
+		await new Promise((resolve) => dead.listen(0, "127.0.0.1", resolve));
+		const deadPort = dead.address().port;
+		await new Promise((resolve) => dead.close(resolve));
+		writeWorking(deadPort);
+		const fwdOffline = await fwdPost({ source: "pi", session: "srv-a1", prompt: "x" });
+		check("forward：连接失败映射 console_offline", fwdOffline.status === 409 && fwdOffline.json?.code === "console_offline", fwdOffline.text);
+
+		writeWorking(bridgePort);
+		writeConsole("console-a1-dup.json", {
+			pid: 4201,
+			sessionId: "srv-a1",
+			sessionFile: a1,
+			cwd: "/tmp/projA",
+			port: bridgePort,
+			token: "dup-token",
+			state: "idle",
+			startedAt: new Date().toISOString(),
+			heartbeatAt: new Date().toISOString(),
+		});
+		const fwdAmbiguous = await fwdPost({ source: "pi", session: "srv-a1", prompt: "x" });
+		check("forward：多控制台 409 ambiguous_console", fwdAmbiguous.status === 409 && fwdAmbiguous.json?.code === "ambiguous_console", fwdAmbiguous.text);
+		fs.unlinkSync(path.join(consolesDir, "console-a1-dup.json"));
+
+		const fwdNone = await fwdPost({ source: "pi", session: "srv-a2", prompt: "x" });
+		check("forward：无控制台 409 no_console", fwdNone.status === 409 && fwdNone.json?.code === "no_console", fwdNone.text);
+		check(
+			"forward：参数校验（空/超长/bad delivery/未知会话/未知源）",
+			(await fwdPost({ source: "pi", session: "srv-a1", prompt: "   " })).json?.code === "prompt_empty" &&
+				(await fwdPost({ source: "pi", session: "srv-a1", prompt: "x".repeat(32_001) })).json?.code === "prompt_too_large" &&
+				(await fwdPost({ source: "pi", session: "srv-a1", prompt: "x", delivery: "later" })).json?.code === "bad_delivery" &&
+				(await fwdPost({ source: "pi", session: "nope", prompt: "x" })).status === 404 &&
+				(await fwdPost({ source: "codex", session: "srv-a1", prompt: "x" })).status === 400 &&
+				(await fwdPost({ session: "srv-a1", prompt: "x" })).status === 400,
+		);
+		const fwdBadJson = await fwdPost("{");
+		check("forward：坏 JSON 400", fwdBadJson.status === 400, fwdBadJson.text);
+		const fwdBadOrigin = await rawRequest(base, {
+			method: "POST",
+			pathname: "/api/chat/forward",
+			headers: { "content-type": "application/json", origin: "http://evil.example" },
+			body: JSON.stringify({ source: "pi", session: "srv-a1", prompt: "x" }),
+		});
+		check("forward：错误 Origin 403", fwdBadOrigin.status === 403, String(fwdBadOrigin.status));
+		await new Promise((resolve) => bridgeServer.close(resolve));
+
 		const listing = await (await fetch(`${base}/api/sessions`)).json();
 		check("列表包含全部项目会话", listing.sessions.length === 3, String(listing.sessions.length));
 		check("列表按最近活跃倒序", listing.sessions[0].id === "srv-a1", listing.sessions.map((s) => s.id).join(","));

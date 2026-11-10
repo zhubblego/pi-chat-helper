@@ -1,6 +1,7 @@
 // 控制台桥核心（T1）：注册、心跳、状态、token、/forward、清理。
 // 只使用临时 agentDir，不写真实 ~/.pi/agent。
 const fs = require("node:fs");
+const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -27,6 +28,9 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 		);
 		const registry = await import(
 			pathToFileURL(path.join(__dirname, "..", "trajectory-web", "server", "console-registry.mjs")).href
+		);
+		const forwardMod = await import(
+			pathToFileURL(path.join(__dirname, "..", "trajectory-web", "server", "console-forward.mjs")).href
 		);
 		const {
 			createConsoleBridge,
@@ -298,6 +302,19 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 			JSON.stringify({ a: matchedA, b: matchedB }),
 		);
 		check("registry：无控制台/多控制台错误", missing.error === "no_console" && duplicate.error === "ambiguous_console", JSON.stringify({ missing, duplicate }));
+
+		// forward client 超时：服务端接受连接但永不响应。
+		const slow = http.createServer(() => {});
+		await new Promise((resolve) => slow.listen(0, "127.0.0.1", resolve));
+		const slowPort = slow.address().port;
+		const timed = await forwardMod.forwardToConsole({
+			record: { port: slowPort, token: "t".repeat(64), sessionFile: sessionA },
+			prompt: "超时",
+			timeoutMs: 60,
+		});
+		check("forward client：超时 -> bridge_timeout", timed.ok === false && timed.kind === "timeout" && timed.code === "bridge_timeout", JSON.stringify(timed));
+		slow.closeAllConnections?.();
+		await new Promise((resolve) => slow.close(resolve));
 
 		// 直接导出 helper 的边界。
 		check("canonicalSessionFile 解析真实路径", canonicalSessionFile(sessionB) === fs.realpathSync(sessionB));

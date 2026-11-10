@@ -27,7 +27,9 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { buildProjection, buildProjectionFrom, toLight, findEvent } from "./session.mjs";
 import { createChatHost, resolveAgentDir } from "./chat-host.mjs";
-import { consolesDirFor, publicConsoles, readConsoles } from "./console-registry.mjs";
+import { CONSOLE_PROMPT_MAX_CHARS } from "./console-bridge.mjs";
+import { consolesDirFor, matchConsole, publicConsoles, readConsoles } from "./console-registry.mjs";
+import { forwardToConsole } from "./console-forward.mjs";
 import { listSessions, DEFAULT_SESSIONS_ROOT, LIVE_WINDOW_MS } from "./sessions.mjs";
 import { listCodexSessions, readCodexSession, readGuardianApproval, DEFAULT_CODEX_ROOT } from "./codex.mjs";
 import { scanToolOrigins } from "./tool-origins.mjs";
@@ -423,6 +425,7 @@ export function createTrajectoryServer(options) {
 		"/api/chat/stop",
 		"/api/chat/approval",
 		"/api/chat/resume",
+		"/api/chat/forward",
 	]);
 
 	const server = createServer(async (req, res) => {
@@ -470,6 +473,99 @@ export function createTrajectoryServer(options) {
 						source: src.id,
 						refreshedAt: new Date().toISOString(),
 						consoles: publicConsoles(filtered),
+					});
+					return;
+				}
+				if (pathname === "/api/chat/forward") {
+					if (!chatEnabled) {
+						sendJson(res, 501, { error: chatDisabledReason });
+						return;
+					}
+					let raw;
+					try {
+						raw = await readBody(req);
+					} catch (err) {
+						sendJson(res, err.status ?? 400, { error: err.message });
+						return;
+					}
+					let body;
+					try {
+						body = JSON.parse(raw);
+					} catch {
+						sendJson(res, 400, { error: "请求体不是 JSON", code: "bad_request" });
+						return;
+					}
+					if (!body || typeof body !== "object" || Array.isArray(body)) {
+						sendJson(res, 400, { error: "请求体必须是对象", code: "bad_request" });
+						return;
+					}
+					const source = typeof body.source === "string" ? body.source : "";
+					if (!source) {
+						sendJson(res, 400, { error: "缺少 source", code: "bad_request" });
+						return;
+					}
+					if (!availableSources().some((item) => item.id === source)) {
+						sendJson(res, 400, { error: `不支持的轨迹源：${source}`, code: "unsupported_source" });
+						return;
+					}
+					if (source !== "pi") {
+						sendJson(res, 400, { error: "控制台转发只支持 pi", code: "unsupported_source" });
+						return;
+					}
+					const sessionId = typeof body.session === "string" ? body.session : "";
+					if (!sessionId) {
+						sendJson(res, 400, { error: "缺少 session", code: "bad_request" });
+						return;
+					}
+					const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+					if (!prompt) {
+						sendJson(res, 400, { error: "prompt 不能为空", code: "prompt_empty" });
+						return;
+					}
+					if (prompt.length > CONSOLE_PROMPT_MAX_CHARS) {
+						sendJson(res, 400, { error: `prompt 超过 ${CONSOLE_PROMPT_MAX_CHARS} 字符`, code: "prompt_too_large" });
+						return;
+					}
+					const delivery = body.delivery ?? "auto";
+					if (delivery !== "auto" && delivery !== "followUp" && delivery !== "steer") {
+						sendJson(res, 400, { error: "delivery 非法", code: "bad_delivery" });
+						return;
+					}
+					const session = resolveSession(readSessions("pi"), sessionId);
+					if (!session) {
+						sendJson(res, 404, { error: "会话不存在（可能已被删除或列表已刷新）", code: "session_not_found" });
+						return;
+					}
+					const matched = matchConsole(readConsoles({ consolesDir }), session.file);
+					if (matched.error) {
+						sendJson(res, 409, {
+							error: matched.error === "ambiguous_console" ? "检测到多个控制台" : "未检测到可转发控制台",
+							code: matched.error,
+						});
+						return;
+					}
+					const result = await forwardToConsole({ record: matched.record, prompt, delivery });
+					if (!result.ok) {
+						if (result.kind === "offline") {
+							sendJson(res, 409, { error: "控制台已离线", code: "console_offline" });
+							return;
+						}
+						if (result.kind === "timeout") {
+							sendJson(res, 504, { error: "控制台响应超时", code: "bridge_timeout" });
+							return;
+						}
+						if (result.kind === "mismatch") {
+							sendJson(res, 409, { error: "控制台已切换到其他会话", code: "session_mismatch" });
+							return;
+						}
+						sendJson(res, 502, { error: result.error || "控制台发送失败", code: "bridge_error" });
+						return;
+					}
+					sendJson(res, 200, {
+						ok: true,
+						console: { sessionId: matched.record.sessionId, pid: matched.record.pid, state: result.state },
+						delivery: result.delivery,
+						acceptedAt: new Date().toISOString(),
 					});
 					return;
 				}
