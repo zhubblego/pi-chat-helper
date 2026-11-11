@@ -1398,6 +1398,7 @@ function openPanel(id) {
 	state.openFull = null;
 	const light = findEvent(id);
 	state.openLightJson = JSON.stringify(light ?? null);
+	resetPanelOffset();
 	renderPanel();
 	// 行不可见（被过滤/折叠）时 attachOpenPanel 已收尾，不再拉全文/写 hash
 	if (!attachOpenPanel()) return;
@@ -1443,6 +1444,7 @@ function closePanel() {
 	state.openId = null;
 	state.openFull = null;
 	state.openLightJson = "";
+	resetPanelOffset();
 	panelOverlay.hidden = true;
 	for (const open of mainInner.querySelectorAll(".ev.is-open")) open.classList.remove("is-open");
 	transSeq++;
@@ -2480,6 +2482,37 @@ el("dv-settings-menu").addEventListener("click", (e) => {
 	if (item.dataset.service) applyTranslateSetting({ service: item.dataset.service });
 	else if (item.dataset.lang) applyTranslateSetting({ lang: item.dataset.lang });
 	else if (item.dataset.mode) applyTranslateSetting({ mode: item.dataset.mode });
+});
+// 详情弹窗可拖动：头部空白/把手处按住拖动，transform 偏移；打开新事件/关闭时复位居中
+const panelOffset = { x: 0, y: 0 };
+function applyPanelOffset() {
+	panel.style.transform = panelOffset.x || panelOffset.y ? `translate(${panelOffset.x}px, ${panelOffset.y}px)` : "";
+}
+function resetPanelOffset() {
+	panelOffset.x = 0;
+	panelOffset.y = 0;
+	applyPanelOffset();
+}
+panel.addEventListener("pointerdown", (e) => {
+	const head = e.target.closest(".ev-panel-head");
+	if (!head || e.target.closest("button, .menu, input, textarea, a")) return;
+	if (e.button !== 0) return;
+	e.preventDefault();
+	const start = { x: e.clientX, y: e.clientY, dx: panelOffset.x, dy: panelOffset.y };
+	const onMove = (ev) => {
+		// 中心点不出视口（留 40px 余量），面板始终可拖回
+		panelOffset.x = Math.max(-(innerWidth / 2 - 40), Math.min(innerWidth / 2 - 40, start.dx + ev.clientX - start.x));
+		panelOffset.y = Math.max(-(innerHeight / 2 - 40), Math.min(innerHeight / 2 - 40, start.dy + ev.clientY - start.y));
+		applyPanelOffset();
+	};
+	const onEnd = () => {
+		window.removeEventListener("pointermove", onMove);
+		window.removeEventListener("pointerup", onEnd);
+		window.removeEventListener("pointercancel", onEnd);
+	};
+	window.addEventListener("pointermove", onMove);
+	window.addEventListener("pointerup", onEnd);
+	window.addEventListener("pointercancel", onEnd);
 });
 // 详情面板是滚动边界：鼠标在面板内时滚轮只滚 .dv-body，到顶/到底也不把滚动链交给 #main。
 panel.addEventListener(

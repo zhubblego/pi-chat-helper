@@ -1147,13 +1147,29 @@ mark.ev-hit {
 	overscroll-behavior: contain;
 }
 
-/* 头部：类型徽章 + 工具条（译/⧉/⚙），二者靠左排列；行本身已有预览文字，不重复标题 */
+/* 头部：拖动把手 + 工具条（译/⧉/⚙）；头部空白处可按住拖动弹窗 */
+/* 头部：拖动把手 + 工具条（译/⧉/⚙）；头部空白处可按住拖动弹窗（行本身已有预览文字，不重复标题） */
 .ev-panel-head {
 	display: flex;
 	align-items: center;
 	gap: 8px;
 	padding: 5px 8px 5px 12px;
 	border-bottom: 1px solid var(--dsw-alias-border-l1);
+	cursor: move;
+	touch-action: none;
+}
+
+.ev-panel-grip {
+	flex: none;
+	color: var(--dsw-alias-label-tertiary);
+	font-size: 12px;
+	line-height: 1;
+	user-select: none;
+}
+
+.ev-panel-head button,
+.ev-panel-head .menu {
+	cursor: pointer;
 }
 
 .ev-panel-tools {
