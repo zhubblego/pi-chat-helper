@@ -627,7 +627,8 @@ svg.tb-icon {
 	position: fixed;
 	z-index: 300;
 	box-sizing: border-box;
-	min-width: 156px;
+	/* 按内容收缩：首态只有一行菜单项不冒空白；确认态长文案由 max-width 封顶换行 */
+	width: max-content;
 	max-width: 340px;
 	padding: 4px;
 	display: flex;
