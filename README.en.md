@@ -37,8 +37,15 @@ Ask pi directly in the browser about any trajectory session — answers come fro
 
 - Check trajectory entries as context; the model fetches full texts on demand via a read-only tool
 - `/model` to switch models, `/skill` for skills, three tool profiles (chat-only / read-only / full, approval per turn)
-- "Forward" mode sends your question into a pi TUI console — answers and approvals happen there
 - Chat threads are stored separately; deleting them never affects trajectory history, and the service listens on loopback only
+
+**Console forwarding** — stay on the web page and drive your agent: questions go straight into a running pi TUI console; the agent works there, answers and tool approvals happen in the console, and you never switch back and forth between the page and the terminal.
+
+![Forward target menu](screenshots/forward-menu.png)
+
+- Target menu: with multiple consoles open, every candidate is listed (PID, run state, opened at) — pick one to forward directly; "Auto" routes straight when there is exactly one console
+- Delivery menu: choose "queue" or "interrupt" when the console is busy
+- A single toggle flips "independent / forward", and the mode is remembered per session
 
 ### TUI question panel · question-panel
 
