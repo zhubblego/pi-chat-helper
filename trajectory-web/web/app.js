@@ -2353,8 +2353,12 @@ function sessionMenuTitle(session) {
 	return session.name || session.firstMessage || "(空会话)";
 }
 
+// 打开坐标：确认态比首态高，重渲染后要按同一坐标重新贴边，避免底部溢出视口（被任务栏遮住）
+let sessionMenuAt = { x: 0, y: 0 };
+
 function positionSessionMenu(x, y) {
 	if (!sessionMenu) return;
+	sessionMenuAt = { x, y };
 	const rect = sessionMenu.getBoundingClientRect();
 	const left = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8));
 	const top = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8));
@@ -2405,6 +2409,8 @@ function renderSessionMenuConfirm(session) {
 		),
 	);
 	sessionMenu.querySelector(".session-menu-confirm-cancel")?.focus?.();
+	// 确认态更高：按打开坐标重新 clamp，防止底部溢出视口
+	positionSessionMenu(sessionMenuAt.x, sessionMenuAt.y);
 }
 
 async function deleteSession(session) {
