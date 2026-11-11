@@ -1768,6 +1768,48 @@ mark.ev-hit {
 	color: var(--dsw-alias-label-secondary);
 }
 
+/* 同一会话被多个控制台持有时，候选选择面板（结构同 confirm，按钮可多个） */
+.chat-forward-choice {
+	align-self: stretch;
+	padding: 10px 12px;
+	border: 1px solid var(--dsw-alias-border-l2);
+	border-radius: var(--dsw-radius-md);
+	background: var(--dsw-alias-bg-layer-2);
+}
+
+.chat-forward-choice-text {
+	color: var(--dsw-alias-label-secondary);
+	font: var(--dsw-font-xs-13);
+	line-height: 20px;
+}
+
+.chat-forward-choice-actions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 8px;
+}
+
+.chat-forward-choice-console,
+.chat-forward-choice-cancel {
+	border: 0;
+	border-radius: var(--dsw-radius-sm);
+	padding: 4px 10px;
+	font: var(--dsw-font-xs-13);
+	cursor: pointer;
+}
+
+.chat-forward-choice-console {
+	background: var(--dsw-alias-button-primary-fill);
+	color: var(--dsw-alias-label-primary-inverted);
+}
+
+.chat-forward-choice-cancel {
+	background: transparent;
+	color: var(--dsw-alias-label-secondary);
+}
+
 /* 只给屏幕阅读器的播报区：流式结束后只读最后一条，不重读整张消息表 */
 .chat-sr-only {
 	position: absolute;

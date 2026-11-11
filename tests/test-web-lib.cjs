@@ -30,6 +30,7 @@ const check = (label, cond, extra = "") => {
 		isCurrentTurn,
 		modelLabel,
 		consoleStatusLabel,
+		consoleChoiceLabel,
 		readChatMode,
 		writeChatMode,
 		forwardStatusLabel,
@@ -201,6 +202,15 @@ const check = (label, cond, extra = "") => {
 			consoleStatusLabel("idle") === "控制台在线空闲" &&
 			consoleStatusLabel("offline") === "" &&
 			consoleStatusLabel(null) === "",
+	);
+	const choiceStartedAt = new Date(2026, 10, 10, 9, 41, 0).toISOString();
+	const choiceBase = { pid: 4201, state: "idle", startedAt: choiceStartedAt, heartbeatAt: choiceStartedAt };
+	check(
+		"consoleChoiceLabel：pid/状态/打开时间；缺字段降级",
+		consoleChoiceLabel(choiceBase) === "pid 4201 · 空闲 · 09:41 打开" &&
+			consoleChoiceLabel({ ...choiceBase, state: "working" }) === "pid 4201 · 运行中 · 09:41 打开" &&
+			consoleChoiceLabel({ pid: 4202, state: "unknown" }) === "pid 4202 · 状态未知" &&
+			consoleChoiceLabel({}) === "pid ? · 状态未知",
 	);
 	const modeMap = { "pi:a": "forward", "codex:b": "forward" };
 	const modeWritten = writeChatMode(modeMap, "pi:c", "forward");

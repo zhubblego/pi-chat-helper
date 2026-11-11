@@ -751,6 +751,11 @@ export function createTrajectoryServer(options) {
 						sendJson(res, 400, { error: "delivery 非法", code: "bad_delivery" });
 						return;
 					}
+					const pid = body.pid ?? null;
+					if (pid !== null && !(Number.isInteger(pid) && pid > 0)) {
+						sendJson(res, 400, { error: "pid 必须是正整数", code: "bad_pid" });
+						return;
+					}
 					const sessions = readSessions("pi");
 					const session = resolveSession(sessions, sessionId);
 					const records = readConsoles({ consolesDir });
@@ -762,17 +767,23 @@ export function createTrajectoryServer(options) {
 							sendJson(res, 404, { error: "会话不存在（可能已被删除或列表已刷新）", code: "session_not_found" });
 							return;
 						}
-						if (byId.length > 1) {
-							sendJson(res, 409, { error: "检测到多个控制台", code: "ambiguous_console" });
+						let pool = byId;
+						if (Number.isInteger(pid) && pid > 0) {
+							const byPid = byId.filter((record) => record.pid === pid);
+							if (byPid.length === 1) pool = byPid;
+						}
+						if (pool.length > 1) {
+							sendJson(res, 409, { error: "检测到多个控制台", code: "ambiguous_console", consoles: publicConsoles(byId) });
 							return;
 						}
-						sessionFile = byId[0].sessionFile;
+						sessionFile = pool[0].sessionFile;
 					}
-					const matched = matchConsole(records, sessionFile);
+					const matched = matchConsole(records, sessionFile, pid);
 					if (matched.error) {
 						sendJson(res, 409, {
 							error: matched.error === "ambiguous_console" ? "检测到多个控制台" : "未检测到可转发控制台",
 							code: matched.error,
+							consoles: matched.candidates ? publicConsoles(matched.candidates) : undefined,
 						});
 						return;
 					}

@@ -8,6 +8,7 @@
 import {
 	computeAnchoredMenuPosition,
 	contextSummaryLabel,
+	consoleChoiceLabel,
 	filterPaletteItems,
 	formatChars,
 	formatContextWindow,
@@ -146,6 +147,7 @@ export function initChatPanel(deps) {
 		forwardBusy: false,
 		forwardSeq: 0,
 		forwardConfirm: null,
+		forwardChoice: null,
 		approvals: [],
 		approvalChecked: false,
 		approvalBusy: false,
@@ -222,6 +224,7 @@ export function initChatPanel(deps) {
 		state.forwardBusy = false;
 		state.forwardSeq++;
 		state.forwardConfirm = null;
+		state.forwardChoice = null;
 		saveModeFor(sessionKeyOf(session), mode);
 		if (input) {
 			input.value = state.drafts[mode] ?? "";
@@ -666,6 +669,41 @@ export function initChatPanel(deps) {
 								},
 							},
 						),
+					),
+				),
+						);
+		}
+		const choice = state.forwardChoice;
+		if (choice && choice.key === currentKey()) {
+			nodes.push(
+				h(
+					"div",
+					{ class: "chat-forward-choice" },
+					h("div", { class: "chat-forward-choice-text", text: `当前会话被 ${choice.consoles.length} 个控制台同时持有，选择转发目标：` }),
+					h(
+						"div",
+						{ class: "chat-forward-choice-actions" },
+						...choice.consoles.map((item) =>
+							h("button", {
+								class: "chat-forward-choice-console",
+								type: "button",
+								text: consoleChoiceLabel(item),
+								onClick: () => {
+									const replay = { text: choice.text, delivery: choice.delivery, pid: item.pid };
+									state.forwardChoice = null;
+									void sendForward(replay);
+								},
+							}),
+						),
+						h("button", {
+							class: "chat-forward-choice-cancel",
+							type: "button",
+							text: "取消",
+							onClick: () => {
+								state.forwardChoice = null;
+								render();
+							},
+						}),
 					),
 				),
 			);
@@ -2645,7 +2683,7 @@ export function initChatPanel(deps) {
 		}
 	}
 
-	async function sendForward() {
+	async function sendForward(replay = null) {
 		if (state.mode !== "forward" || state.forwardBusy || !input) return;
 		const session = currentSession();
 		const info = currentConsoleInfo();
@@ -2660,16 +2698,17 @@ export function initChatPanel(deps) {
 			flushRender();
 			return;
 		}
-		const text = input.value.trim();
+		const text = replay?.text ?? input.value.trim();
 		if (!text) return;
 		if (text.length > PROMPT_MAX) {
 			pushNotice(`消息超过 ${PROMPT_MAX} 字符`, "error");
 			flushRender();
 			return;
 		}
-		let delivery = forwardDeliveryEl?.value === "steer" ? "steer" : "auto";
+		const delivery = replay?.delivery ?? (forwardDeliveryEl?.value === "steer" ? "steer" : "auto");
 		const key = sessionKeyOf(session);
 		if (
+			replay === null &&
 			delivery === "steer" &&
 			!(state.forwardConfirm && state.forwardConfirm.key === key && state.forwardConfirm.text === text)
 		) {
@@ -2689,7 +2728,7 @@ export function initChatPanel(deps) {
 			const res = await fetch("/api/chat/forward", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ source: session.source, session: session.id, prompt: text, delivery }),
+				body: JSON.stringify({ source: session.source, session: session.id, prompt: text, delivery, pid: replay?.pid }),
 				signal: controller.signal,
 			});
 			let data = null;
@@ -2704,7 +2743,13 @@ export function initChatPanel(deps) {
 			}
 			if (!res.ok || data?.ok !== true) {
 				const code = typeof data?.code === "string" ? data.code : `http_${res.status}`;
-				if (["no_console", "console_offline", "ambiguous_console", "session_mismatch"].includes(code)) state.consoleLost.add(key);
+				if (code === "ambiguous_console" && Array.isArray(data?.consoles) && data.consoles.length > 0) {
+					state.forwardChoice = { key, text, delivery, consoles: data.consoles };
+					state.forwardBusy = false;
+					render();
+					return;
+				}
+				if (["no_console", "console_offline", "session_mismatch"].includes(code)) state.consoleLost.add(key);
 				appendForwardLog({ kind: "status", tone: "error", text: forwardFailureText(code) });
 				state.forwardBusy = false;
 				render();
@@ -2712,6 +2757,7 @@ export function initChatPanel(deps) {
 			}
 			const actual = typeof data.delivery === "string" ? data.delivery : "auto";
 			state.consoleLost.delete(key);
+			state.forwardChoice = null;
 			const local = state.consoles.get(key);
 			if (local) state.consoles.set(key, { ...local, state: "working" });
 			appendForwardLog({ kind: "user", text });
@@ -2807,6 +2853,7 @@ export function initChatPanel(deps) {
 		forwardDeliveryEl.addEventListener("change", () => {
 			state.forwardDelivery = forwardDeliveryEl.value === "steer" ? "steer" : "auto";
 			state.forwardConfirm = null;
+			state.forwardChoice = null;
 		});
 	}
 	if (addBtn) {
@@ -3035,6 +3082,7 @@ export function initChatPanel(deps) {
 			state.forwardBusy = false;
 			state.forwardSeq++;
 			state.forwardConfirm = null;
+			state.forwardChoice = null;
 			syncModeForSession();
 			renderConsoleStatus();
 			renderModeControls();

@@ -100,14 +100,17 @@ export function publicConsoles(records) {
 }
 
 /**
- * 按 sessionFile 精确匹配一座在线桥。
+ * 按 sessionFile 精确匹配一座在线桥；同一会话多条注册时可用 pid 收敛。
  * @param {Array<object>} records readConsoles 的结果
  * @param {string | null | undefined} sessionFile
- * @returns {{record: object, error?: never} | {record?: never, error: "no_console"|"ambiguous_console"}}
+ * @param {number | null} [pid] 可选；收敛不到唯一一条时回退按 sessionFile 整组判歧义
+ * @returns {{record: object, error?: never} | {record?: never, error: "no_console"|"ambiguous_console", candidates?: Array<object>}}
  */
-export function matchConsole(records, sessionFile) {
+export function matchConsole(records, sessionFile, pid = null) {
 	const matched = (Array.isArray(records) ? records : []).filter((record) => sameSessionFile(record.sessionFile, sessionFile));
 	if (matched.length === 0) return { error: "no_console" };
-	if (matched.length > 1) return { error: "ambiguous_console" };
-	return { record: matched[0] };
+	const narrowed = Number.isInteger(pid) && pid > 0 ? matched.filter((record) => record.pid === pid) : [];
+	const pool = narrowed.length === 1 ? narrowed : matched;
+	if (pool.length === 1) return { record: pool[0] };
+	return { error: "ambiguous_console", candidates: matched };
 }

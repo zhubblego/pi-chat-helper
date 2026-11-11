@@ -288,6 +288,19 @@ export function consoleStatusLabel(state) {
 	return "";
 }
 
+/** 多控制台候选按钮文案：pid + 状态 + 打开时间。 */
+export function consoleChoiceLabel(record) {
+	const pid = Number.isInteger(record?.pid) && record.pid > 0 ? record.pid : "?";
+	let state = "状态未知";
+	if (record?.state === "working") state = "运行中";
+	else if (record?.state === "idle") state = "空闲";
+	const date = record?.startedAt ? new Date(record.startedAt) : null;
+	const clock = date && !Number.isNaN(date.getTime())
+		? `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`
+		: "";
+	return clock ? `pid ${pid} · ${state} · ${clock} 打开` : `pid ${pid} · ${state}`;
+}
+
 /** 对话模式：只认 forward，其余一律 independent。 */
 export function readChatMode(map, key) {
 	const value = map && typeof map === "object" && !Array.isArray(map) ? map[key] : null;

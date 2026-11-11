@@ -356,7 +356,32 @@ async function stopServer(child) {
 			heartbeatAt: new Date().toISOString(),
 		});
 		const fwdAmbiguous = await fwdPost({ source: "pi", session: "srv-a1", prompt: "x" });
-		check("forward：多控制台 409 ambiguous_console", fwdAmbiguous.status === 409 && fwdAmbiguous.json?.code === "ambiguous_console", fwdAmbiguous.text);
+		check(
+			"forward：多控制台 409 ambiguous_console 带候选",
+			fwdAmbiguous.status === 409 &&
+				fwdAmbiguous.json?.code === "ambiguous_console" &&
+				Array.isArray(fwdAmbiguous.json?.consoles) &&
+				fwdAmbiguous.json.consoles.length === 2 &&
+				fwdAmbiguous.json.consoles.some((item) => item.pid === 4200) &&
+				fwdAmbiguous.json.consoles.some((item) => item.pid === 4201) &&
+				fwdAmbiguous.json.consoles.every((item) => !("token" in item) && !("port" in item) && !("sessionFile" in item) && !("cwd" in item)),
+			fwdAmbiguous.text,
+		);
+		bridgeMode = "success";
+		const fwdByPid = await fwdPost({ source: "pi", session: "srv-a1", prompt: "x", pid: 4201 });
+		check("forward：带 pid 收敛成功 200", fwdByPid.status === 200 && fwdByPid.json?.console?.pid === 4201, fwdByPid.text);
+		const fwdByStalePid = await fwdPost({ source: "pi", session: "srv-a1", prompt: "x", pid: 4242 });
+		check(
+			"forward：pid 不存在回退歧义 409",
+			fwdByStalePid.status === 409 && fwdByStalePid.json?.code === "ambiguous_console" && fwdByStalePid.json?.consoles?.length === 2,
+			fwdByStalePid.text,
+		);
+		check(
+			"forward：非法 pid 400 bad_pid",
+			(await fwdPost({ source: "pi", session: "srv-a1", prompt: "x", pid: "abc" })).json?.code === "bad_pid" &&
+				(await fwdPost({ source: "pi", session: "srv-a1", prompt: "x", pid: 0 })).json?.code === "bad_pid" &&
+				(await fwdPost({ source: "pi", session: "srv-a1", prompt: "x", pid: -1 })).json?.code === "bad_pid",
+		);
 		fs.unlinkSync(path.join(consolesDir, "console-a1-dup.json"));
 
 		const fwdNone = await fwdPost({ source: "pi", session: "srv-a2", prompt: "x" });

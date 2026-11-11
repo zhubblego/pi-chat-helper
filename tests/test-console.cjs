@@ -304,6 +304,18 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 			JSON.stringify({ a: matchedA, b: matchedB }),
 		);
 		check("registry：无控制台/多控制台错误", missing.error === "no_console" && duplicate.error === "ambiguous_console", JSON.stringify({ missing, duplicate }));
+		const dupRecords = [records[0], { ...records[0], pid: 9999 }];
+		const pidHit = registry.matchConsole(dupRecords, sessionA, 9999);
+		const pidMiss = registry.matchConsole(dupRecords, sessionA, 4242);
+		const pidUnique = registry.matchConsole(records, sessionA, records[0].pid);
+		check(
+			"registry：pid 收敛唯一命中 / 不命中回退歧义 / 单注册不受 pid 影响",
+			pidHit.record?.pid === 9999 &&
+			pidMiss.error === "ambiguous_console" &&
+			pidMiss.candidates?.length === 2 &&
+			pidUnique.record?.sessionId === "sess-a",
+			JSON.stringify({ pidHit, pidMiss, pidUnique }),
+		);
 
 		// forward client 超时：服务端接受连接但永不响应。
 		const slow = http.createServer(() => {});
