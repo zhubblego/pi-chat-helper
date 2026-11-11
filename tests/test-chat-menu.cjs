@@ -200,6 +200,19 @@ async function main() {
 	check("成功后按钮目标更新为 PID 1728", targetLabel.textContent === "PID 1728", targetLabel.textContent);
 	check("转发记录出现用户消息", document.getElementById("chat-list").textContent.includes("你好控制台"), "");
 
+	// 点菜单范围外关闭
+	targetBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => setTimeout(resolve, 20));
+	check("外点前菜单打开", !targetMenu.hidden, "");
+	document.getElementById("chat-list").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => setTimeout(resolve, 20));
+	check("点击菜单范围外关闭目标菜单", targetMenu.hidden, "");
+	deliveryBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => setTimeout(resolve, 20));
+	document.getElementById("chat-input").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => setTimeout(resolve, 20));
+	check("点击菜单范围外关闭方式菜单", deliveryMenu.hidden, "");
+
 	// Esc 关菜单
 	targetBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 	await new Promise((resolve) => setTimeout(resolve, 20));

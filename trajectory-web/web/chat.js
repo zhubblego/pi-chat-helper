@@ -3169,6 +3169,15 @@ export function initChatPanel(deps) {
 		if (inside(profileMenuEl) || inside(el("chat-profile"))) return;
 		closeProfileMenu();
 	});
+	// 点击转发目标/方式菜单外关闭
+	document.addEventListener("click", (e) => {
+		if (!state.forwardTargetMenu && !state.forwardDeliveryMenu) return;
+		const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+		const inside = (node) => node && (path.includes(node) || (typeof node.contains === "function" && node.contains(e.target)));
+		if (inside(forwardTargetMenuEl) || inside(forwardTargetBtn) || inside(forwardDeliveryMenuEl) || inside(forwardDeliveryBtn)) return;
+		closeForwardTargetMenu();
+		closeForwardDeliveryMenu();
+	});
 	// 点击上下文弹层外关闭（不改 textarea 草稿，焦点回摘要按钮）
 	document.addEventListener("click", (e) => {
 		if (!state.contextMenuOpen) return;
