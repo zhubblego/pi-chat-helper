@@ -3,7 +3,7 @@
    记录表样式的事件行、Markdown 语义色。 */
 
 :root {
-	--tw-sidebar-width: 300px;
+	--tw-sidebar-width: 230px;
 	--tw-topbar-height: 48px;
 	--tw-toolbar-height: 28px;
 	color-scheme: light dark;
@@ -89,11 +89,18 @@ body {
 }
 
 .scope-badge {
-	padding: 1px 8px;
-	border-radius: var(--dsw-radius-xs);
-	background: var(--dsw-alias-state-business-tertiary);
-	color: var(--dsw-alias-state-business-primary);
-	font: var(--dsw-font-xxxs-strong-11);
+	/* 照原型 .pill：圆角 20px 灰底小字；暗色在下方覆盖 */
+	padding: 4px 9px;
+	border-radius: 20px;
+	background: #f0f3f9;
+	color: #647389;
+	font-size: 11px;
+	white-space: nowrap;
+}
+
+body[data-ds-dark-theme] .scope-badge {
+	background: #2a3145;
+	color: #9aa7c9;
 }
 
 .sync {
@@ -134,104 +141,93 @@ body {
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
-	padding: 6px var(--dsh-sidebar-inline-padding, 12px);
-	background: var(--dsw-specific-sidebar-fill);
-	border-right: 1px solid var(--dsw-alias-border-l1);
+	/* 照知识中心原型：白底、右发丝线、26px 15px 大留白；暗色主题在下方覆盖 */
+	padding: 26px 15px;
+	background: #fff;
+	border-right: 1px solid #e4e9f1;
 }
 
-/* 品牌区：照知识中心原型的 .brand（✦ + 标题 + 副题），尺寸融入现有紧凑体系 */
+/* 品牌区：照原型 .brand（19px/750，✦ 同色，副题 11px 灰） */
 .sidebar-brand {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	padding: 8px 4px 12px;
+	font-size: 19px;
+	font-weight: 700;
+	color: var(--dsw-alias-label-primary);
+	padding: 5px 13px 28px;
 	white-space: nowrap;
 }
 
-.sidebar-brand-mark {
-	flex: none;
-	color: var(--dsw-alias-state-business-primary);
-	font-size: 15px;
-	line-height: 1;
-}
-
-.sidebar-brand-name {
-	display: flex;
-	flex-direction: column;
-	font: var(--dsw-font-m-18);
-	color: var(--dsw-alias-label-primary);
-}
-
-.sidebar-brand-name small {
-	margin-top: 1px;
+.sidebar-brand small {
+	display: block;
+	margin-top: 6px;
+	font-size: 11px;
+	font-weight: 400;
 	color: var(--dsw-alias-label-tertiary);
-	font: var(--dsw-font-xxxs-11);
 }
 
-/* 页面导航：照原型的 .nav 列表（轨迹当前页；知识／蒸馏任务占位，下一步实现） */
+/* 页面导航：照原型 .nav 大按钮（13px 14px、圆角 11px、6px 间距）；
+   active = 原型蓝底蓝字加粗；占位项沿用原型全局 disabled（opacity .5） */
 .sidebar-nav {
 	display: flex;
 	flex-direction: column;
-	gap: 2px;
-	padding-bottom: 8px;
-	margin-bottom: 6px;
-	border-bottom: 1px solid var(--dsw-alias-border-l1);
+	gap: 6px;
+	margin-bottom: 14px;
 }
 
 .nav-item {
-	display: flex;
-	align-items: center;
-	gap: 7px;
+	display: block;
 	width: 100%;
-	padding: 7px 10px;
-	border: none;
-	border-radius: var(--dsw-radius-sm);
-	background: transparent;
+	padding: 13px 14px;
+	border: 0;
+	border-radius: 11px;
+	background: none;
 	color: var(--dsw-alias-label-secondary);
-	font: var(--dsw-font-xs-13);
+	font-size: 15px;
 	text-align: left;
+	white-space: nowrap;
 	cursor: pointer;
 }
 
-.nav-item > span {
-	flex: none;
-	width: 14px;
-	color: var(--dsw-alias-label-tertiary);
-	text-align: center;
-}
-
 .nav-item:hover:not(:disabled):not(.active) {
-	background: var(--dsw-specific-sidebar-nav-item-hover);
 	color: var(--dsw-alias-label-primary);
 }
 
 .nav-item.active {
-	background: var(--dsw-specific-sidebar-nav-item-active);
-	color: var(--dsw-alias-label-primary);
-	font-weight: 500;
-}
-
-.nav-item.active > span {
-	color: var(--dsw-alias-state-business-primary);
+	background: #eaf0ff;
+	color: #3e59c8;
+	font-weight: 700;
 }
 
 .nav-item:disabled {
-	color: var(--dsw-alias-label-tertiary);
-	cursor: default;
+	opacity: 0.5;
+	cursor: not-allowed;
 }
 
-/* 页面头：照原型的 .head（h1 页面标题 + pill），pill 沿用 scope-badge */
+/* 页面头：照原型 .head（h1 26px，pill 靠右 space-between） */
 .page-head {
 	display: flex;
+	justify-content: space-between;
 	align-items: center;
-	gap: 10px;
-	padding: 14px 10px 6px;
+	gap: 12px;
+	/* 原型 main 顶 padding 30px、head 下留 24px；这里下接 sticky 工具栏，视觉等效 */
+	padding: 24px 16px 10px;
 }
 
 .page-title {
 	margin: 0;
-	font: var(--dsw-font-m-18);
+	font-size: 26px;
+	font-weight: 700;
 	color: var(--dsw-alias-label-primary);
+}
+
+/* 暗色主题：结构与尺寸不变，仅把原型亮色值映射为等效暗色（原型只定义了亮色） */
+body[data-ds-dark-theme] #sidebar {
+	background: var(--dsw-specific-sidebar-fill);
+	border-right-color: var(--dsw-alias-border-l1);
+}
+
+body[data-ds-dark-theme] .nav-item.active {
+	background: #263350;
+	color: #9db1f2;
 }
 
 #main {
