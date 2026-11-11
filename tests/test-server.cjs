@@ -451,6 +451,27 @@ async function stopServer(child) {
 		check("事件详情（full）", detail.event.tool.name === "read" && detail.event.tool.result === "结果");
 		check("未知会话 404", (await fetch(`${base}/api/session?id=nope`)).status === 404);
 
+		// 真删除端点：仅 pi 源；live / 控制台绑定的拒绝；成功后文件消失且列表不再列出
+		const delPost = (body) => fetch(`${base}/api/session/delete`, { method: "POST", headers: { "content-type": "application/json" }, body: typeof body === "string" ? body : JSON.stringify(body) });
+		const delB1Console = await delPost({ id: "srv-b1" });
+		const delB1Body = await delB1Console.json();
+		check("delete：控制台绑定 409", delB1Console.status === 409 && delB1Body.error.includes("控制台"), `${delB1Console.status} ${delB1Body.error}`);
+		fs.rmSync(path.join(consolesDir, "console-b1.json"));
+		const delLive = await delPost({ id: "srv-a1" });
+		check("delete：live 会话 409", delLive.status === 409 && (await delLive.json()).error.includes("仍在写入"), String(delLive.status));
+		check("delete：未知会话 404", (await delPost({ id: "nope" })).status === 404);
+		check("delete：缺 id 400", (await delPost({})).status === 400);
+		check("delete：codex 源 400", (await delPost({ source: "codex", id: "srv-a1" })).status === 400);
+		check("delete：坏 JSON 400", (await delPost("{")).status === 400);
+		check("delete：非对象体 400", (await delPost('"x"')).status === 400);
+		const delNoJson = await rawRequest(base, { method: "POST", pathname: "/api/session/delete", headers: { "content-type": "text/plain", origin: `${base}` }, body: JSON.stringify({ id: "srv-b1" }) });
+		check("delete：非 JSON Content-Type 403", delNoJson.status === 403, String(delNoJson.status));
+		const delOk = await delPost({ id: "srv-b1" });
+		check("delete：真删除 200", delOk.status === 200 && (await delOk.json()).ok === true, String(delOk.status));
+		check("delete：磁盘文件已移除", !fs.existsSync(b1File), b1File);
+		const afterDel = await (await fetch(`${base}/api/sessions`)).json();
+		check("delete：列表不再列出", !afterDel.sessions.some((s) => s.id === "srv-b1"), afterDel.sessions.map((s) => s.id).join(","));
+
 		// 翻译转发接口：只验参数校验（真实外呼靠手动冒烟，避免测试依赖网络）
 		const trPost = (body) => fetch(`${base}/api/translate`, { method: "POST", headers: { "content-type": "application/json" }, body });
 		check("translate 非法 JSON 400", (await trPost("{")).status === 400);

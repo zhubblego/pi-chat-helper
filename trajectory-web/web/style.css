@@ -621,6 +621,83 @@ svg.tb-icon {
 	color: var(--dsw-alias-label-primary);
 }
 
+/* 会话右键菜单：复用 .menu / .menu-item 规格，改为光标定位（fixed）
+   + 危险态与两步确认（点「删除会话…」后正文换成确认行） */
+.session-menu {
+	position: fixed;
+	z-index: 300;
+	box-sizing: border-box;
+	min-width: 156px;
+	max-width: 340px;
+	padding: 4px;
+	display: flex;
+	flex-direction: column;
+	border-radius: var(--dsw-radius-md);
+	background: var(--dsw-alias-bg-layer-2);
+	box-shadow: var(--dsw-elevation-prominent);
+	--dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
+}
+
+.session-menu .menu-item:disabled {
+	color: var(--dsw-alias-label-tertiary);
+	cursor: default;
+}
+
+.session-menu .menu-item:disabled:hover,
+.session-menu .menu-item:disabled:focus-visible {
+	background: transparent;
+}
+
+.session-menu-delete:not(:disabled) {
+	color: var(--dsw-alias-state-error-primary);
+}
+
+.session-menu-confirm-text {
+	padding: 6px 8px 4px;
+	color: var(--dsw-alias-label-primary);
+	font: var(--dsw-font-xxxs-11);
+	line-height: 1.5;
+	word-break: break-all;
+}
+
+.session-menu-confirm-row {
+	display: flex;
+	justify-content: flex-end;
+	gap: 6px;
+	padding: 4px 4px 2px;
+}
+
+.session-menu-confirm-row button {
+	min-height: 24px;
+	padding: 2px 10px;
+	border: none;
+	border-radius: var(--dsw-radius-sm);
+	font: var(--dsw-font-xxxs-11);
+	cursor: pointer;
+}
+
+.session-menu-confirm-cancel {
+	background: transparent;
+	color: var(--dsw-alias-label-secondary);
+}
+
+.session-menu-confirm-cancel:hover,
+.session-menu-confirm-cancel:focus-visible {
+	background: var(--dsw-alias-interactive-bg-hover);
+	outline: none;
+}
+
+.session-menu-confirm-ok {
+	background: var(--dsw-alias-state-error-primary);
+	color: var(--dsw-alias-bg-layer-2);
+}
+
+.session-menu-confirm-ok:hover,
+.session-menu-confirm-ok:focus-visible {
+	opacity: 0.88;
+	outline: none;
+}
+
 /* 工具名子菜单（右侧卡片 + 10px 命中桥；deepseek 的 bottom 锚定会让长列表向上长到视口外，
    工具名多时必须改顶部锚定 + 内层滚动） */
 .menu-item-wrap {

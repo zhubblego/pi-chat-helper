@@ -185,3 +185,8 @@ export function findSession(sessions, id) {
 export function clearSessionCache() {
 	headCache.clear();
 }
+
+/** 从缓存里摘除单个会话文件（删除会话后调用，避免残留已删文件的信息）。 */
+export function dropSessionCache(file) {
+	headCache.delete(file);
+}

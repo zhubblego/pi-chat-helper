@@ -2337,6 +2337,121 @@ sessionList.addEventListener("click", (e) => {
 	selectSession(item.dataset.id);
 });
 
+// ---------------------------------------------------------------------------
+// 会话右键菜单（仅 pi 源）：真删除会话文件，两步确认防误触
+// ---------------------------------------------------------------------------
+
+let sessionMenu = null;
+
+function closeSessionMenu() {
+	if (!sessionMenu) return;
+	sessionMenu.remove();
+	sessionMenu = null;
+}
+
+function sessionMenuTitle(session) {
+	return session.name || session.firstMessage || "(空会话)";
+}
+
+function positionSessionMenu(x, y) {
+	if (!sessionMenu) return;
+	const rect = sessionMenu.getBoundingClientRect();
+	const left = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8));
+	const top = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8));
+	sessionMenu.style.left = `${left}px`;
+	sessionMenu.style.top = `${top}px`;
+}
+
+function openSessionMenu(x, y, session) {
+	closeSessionMenu();
+	// codex 源不支持删除：不弹菜单（右键保持浏览器默认菜单）
+	if (state.source !== "pi") return;
+	sessionMenu = h(
+		"div",
+		{ class: "session-menu", role: "menu", "aria-label": "会话操作" },
+		h("button", {
+			class: "menu-item session-menu-delete",
+			type: "button",
+			role: "menuitem",
+			disabled: session.live ? "disabled" : null,
+			title: session.live ? "会话仍在写入（30 秒内有活动），稍后再删" : "从磁盘删除会话文件（不可恢复）",
+			text: "删除会话…",
+			onClick: () => renderSessionMenuConfirm(session),
+		}),
+	);
+	document.body.append(sessionMenu);
+	positionSessionMenu(x, y);
+	sessionMenu.querySelector("button")?.focus?.();
+}
+
+/** 第二步确认：正文 + 取消/删除；默认焦点在取消（防回车误删）。 */
+function renderSessionMenuConfirm(session) {
+	if (!sessionMenu) return;
+	sessionMenu.replaceChildren(
+		h("div", {
+			class: "session-menu-confirm-text",
+			text: `真删除「${sessionMenuTitle(session)}」？会话文件将从磁盘移除，不可恢复。`,
+		}),
+		h(
+			"div",
+			{ class: "session-menu-confirm-row" },
+			h("button", { class: "session-menu-confirm-cancel", type: "button", text: "取消", onClick: closeSessionMenu }),
+			h("button", {
+				class: "session-menu-confirm-ok",
+				type: "button",
+				text: "删除",
+				onClick: () => void deleteSession(session),
+			}),
+		),
+	);
+	sessionMenu.querySelector(".session-menu-confirm-cancel")?.focus?.();
+}
+
+async function deleteSession(session) {
+	try {
+		const res = await fetch("/api/session/delete", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ source: state.source, id: session.id }),
+		});
+		if (!res.ok) {
+			const data = await res.json().catch(() => null);
+			throw new Error(data?.error ?? `HTTP ${res.status}`);
+		}
+	} catch (err) {
+		setSync(`删除失败：${err.message}`, "warn");
+		return;
+	}
+	closeSessionMenu();
+	setSync(`已删除会话 #${String(session.id).slice(0, 8)}`, "ok");
+	// 删的是当前会话：借 pollSession 的 404 分支清理选中并回落默认；否则只刷新列表
+	if (session.id === state.selectedId) pollSession(true);
+	else pollSessions(true);
+}
+
+sessionList.addEventListener("contextmenu", (e) => {
+	const item = e.target.closest(".session-item");
+	if (!item) return;
+	const session = state.sessions.find((s) => s.id === item.dataset.id);
+	if (!session) return;
+	e.preventDefault();
+	openSessionMenu(e.clientX, e.clientY, session);
+});
+
+// 菜单外点击关闭（捕阶段：不受内层 stopPropagation 影响）
+document.addEventListener(
+	"click",
+	(e) => {
+		if (!sessionMenu) return;
+		if (e.target instanceof Element && e.target.closest(".session-menu")) return;
+		closeSessionMenu();
+	},
+	true,
+);
+
+// 列表滚动后菜单锚点失效，直接收起
+sessionList.addEventListener("scroll", closeSessionMenu, { capture: true, passive: true });
+
 /** 切换选中会话（列表点击 / 派生行跳转共用）：重置临时态并拉新数据。from 记录从哪条派生行跳来。 */
 function selectSession(id, from = null) {
 	if (!id || id === state.selectedId) return;
@@ -2574,6 +2689,11 @@ el("back-main").addEventListener("click", () => {
 // 遮罩点击不关闭：详情弹窗仅由关闭按钮（dv-close）或行被过滤/折叠时自动收起
 document.addEventListener("keydown", (e) => {
 	if (e.key === "Escape") {
+		// 会话右键菜单最上层收起
+		if (sessionMenu) {
+			closeSessionMenu();
+			return;
+		}
 		// 对话栏优先：流式中 Esc = 停止生成，否则交给原有抽屉/面板链
 		if (chat.handleEscape()) return;
 		if (state.copyOpen) {

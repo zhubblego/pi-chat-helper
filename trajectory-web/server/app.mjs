@@ -16,23 +16,24 @@
  *   GET /api/sessions           会话列表（按最近活跃倒序，live = 30s 内有写入；?source=）
  *   GET /api/session?id=&v=     指定会话的 light 投影；etag 未变时 {changed:false}
  *   GET /api/event?session=&id= 单个事件的 full 载荷
+ *   POST /api/session/delete  真删除会话（仅 pi 源；live/运行中的会话拒绝，rmSync 删文件）
  *   GET /api/prefs             全局 UI 偏好（SQLite）
  *   POST /api/prefs            局部更新全局 UI 偏好
  *   POST /api/translate        抽屉正文翻译转发（Google 免费通道；https_proxy 环境变量出代理）
  *   POST /api/context-edit   隐藏/解除一轮的模型上下文（需扩展注入 onContextEdit；独立模式 501）
  *
- * 只读：不写入会话文件；仅监听回环地址。
+ * 除删除会话外只读：不写入会话文件；仅监听回环地址。
  */
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { buildProjection, buildProjectionFrom, toLight, findEvent } from "./session.mjs";
 import { createChatHost, resolveAgentDir } from "./chat-host.mjs";
 import { CONSOLE_PROMPT_MAX_CHARS } from "./console-bridge.mjs";
 import { consolesDirFor, matchConsole, publicConsoles, readConsoles } from "./console-registry.mjs";
 import { forwardToConsole } from "./console-forward.mjs";
-import { listSessions, DEFAULT_SESSIONS_ROOT, LIVE_WINDOW_MS } from "./sessions.mjs";
+import { listSessions, findSession, dropSessionCache, DEFAULT_SESSIONS_ROOT, LIVE_WINDOW_MS } from "./sessions.mjs";
 import { listCodexSessions, readCodexSession, readGuardianApproval, DEFAULT_CODEX_ROOT } from "./codex.mjs";
 import { scanToolOrigins } from "./tool-origins.mjs";
 import { openStateDb } from "./state-db.mjs";
@@ -553,17 +554,22 @@ export function createTrajectoryServer(options) {
 			}
 			const pathname = url.pathname;
 			const isChatPrefix = pathname.startsWith("/api/chat/");
-			const gate = requestGate(req, isChatPrefix, pathname === "/api/prefs" || pathname === "/api/prefs/session");
+			const gate = requestGate(
+				req,
+				isChatPrefix,
+				pathname === "/api/prefs" || pathname === "/api/prefs/session" || pathname === "/api/session/delete",
+			);
 			if (gate) {
 				sendJson(res, gate.status, { error: gate.error });
 				return;
 			}
 			if (req.method === "POST") {
-				// 只开放翻译、裁剪、偏好与对话；其余 POST 一律 405
+				// 只开放翻译、裁剪、删除、偏好与对话；其余 POST 一律 405
 				if (
 					pathname !== "/api/translate" &&
 					pathname !== "/api/context-edit" &&
 					pathname !== "/api/crop-entry" &&
+					pathname !== "/api/session/delete" &&
 					pathname !== "/api/prefs" &&
 					pathname !== "/api/prefs/session" &&
 					!CHAT_POSTS.has(pathname)
@@ -985,6 +991,72 @@ export function createTrajectoryServer(options) {
 					return;
 				}
 				sendJson(res, 200, { etag: entry.etag, sessionId: session.id, event });
+				return;
+			}
+
+			if (pathname === "/api/session/delete") {
+				// 真删除：把会话 jsonl 从磁盘移除（仅 pi 源）。路径只取自扫描结果，
+				// 不信客户端；live / 当前会话 / 控制台绑定 / 对话子进程占用的都拒绝。
+				let raw;
+				try {
+					raw = await readBody(req);
+				} catch (err) {
+					sendJson(res, err.status ?? 400, { error: err.message });
+					return;
+				}
+				let body;
+				try {
+					body = JSON.parse(raw);
+				} catch {
+					sendJson(res, 400, { error: "请求体不是 JSON" });
+					return;
+				}
+				if (!body || typeof body !== "object" || Array.isArray(body)) {
+					sendJson(res, 400, { error: "请求体必须是对象" });
+					return;
+				}
+				const id = typeof body.id === "string" ? body.id : "";
+				if (!id) {
+					sendJson(res, 400, { error: "缺少 id" });
+					return;
+				}
+				if (String(body.source ?? "pi") !== "pi") {
+					sendJson(res, 400, { error: "仅 pi 源支持删除会话" });
+					return;
+				}
+				const session = findSession(readSessions("pi"), id);
+				if (!session) {
+					sendJson(res, 404, { error: "会话不存在（可能已被删除或列表已刷新）" });
+					return;
+				}
+				if (sessionFile && session.file === sessionFile) {
+					sendJson(res, 409, { error: "这是当前运行中的会话，不能删除" });
+					return;
+				}
+				if (session.live) {
+					sendJson(res, 409, { error: "会话仍在写入（30 秒内有活动），稍后再删" });
+					return;
+				}
+				const matchedConsole = matchConsole(readConsoles({ consolesDir }), session.file);
+				if (matchedConsole.record) {
+					sendJson(res, 409, { error: "有控制台进程绑定该会话，先退出该控制台再删" });
+					return;
+				}
+				const chatHolding =
+					chat && [...chat.children.values()].some((record) => record.sessionFile === session.file);
+				if (chatHolding) {
+					sendJson(res, 409, { error: "对话子进程正在使用该会话，先关闭对应对话再删" });
+					return;
+				}
+				try {
+					rmSync(session.file);
+				} catch (err) {
+					sendJson(res, 500, { error: `删除失败：${err.code ?? err.message}` });
+					return;
+				}
+				projections.delete(session.file);
+				dropSessionCache(session.file);
+				sendJson(res, 200, { ok: true, id: session.id, file: session.file });
 				return;
 			}
 
