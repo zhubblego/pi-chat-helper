@@ -196,13 +196,6 @@ const check = (label, cond, extra = "") => {
 			modelLabel({ name: "abcdefghij", id: "x" }, 6) === "abcde…" &&
 			modelLabel(null) === "",
 	);
-	check(
-		"consoleStatusLabel：working/idle 文案，离线空串",
-		consoleStatusLabel("working") === "控制台运行中" &&
-			consoleStatusLabel("idle") === "控制台在线空闲" &&
-			consoleStatusLabel("offline") === "" &&
-			consoleStatusLabel(null) === "",
-	);
 	const choiceStartedAt = new Date(2026, 10, 10, 9, 41, 0).toISOString();
 	const choiceBase = { pid: 4201, state: "idle", startedAt: choiceStartedAt, heartbeatAt: choiceStartedAt };
 	check(
@@ -226,11 +219,8 @@ const check = (label, cond, extra = "") => {
 			modeCleared["pi:a"] === "forward",
 	);
 	check(
-		"forward：状态/ delivery / 错误码文案",
-		forwardStatusLabel("independent", { state: "working" }) === "控制台运行中" &&
-			forwardStatusLabel("forward", null, false) === "未检测到可转发控制台" &&
-			forwardStatusLabel("forward", null, true) === "控制台已离线" &&
-			forwardDeliveryLabel("now").includes("开始") &&
+		"forward：delivery / 错误码文案",
+		forwardDeliveryLabel("now").includes("开始") &&
 			forwardDeliveryLabel("followUp").includes("排队") &&
 			forwardDeliveryLabel("steer").includes("插话") &&
 			forwardFailureText("session_mismatch").includes("其他会话") &&
@@ -762,14 +752,15 @@ const check = (label, cond, extra = "") => {
 	check("对话页两段结构：消息流(role=log) + 输入卡", indexSource.includes('id="chat-list"') && indexSource.includes('role="log"') && indexSource.includes('id="chat-input"') && indexSource.includes('id="chat-send"'));
 	const chatSource = fs.readFileSync(path.join(__dirname, "..", "trajectory-web", "web", "chat.js"), "utf8");
 	check(
-		"控制台状态：API / 会话 badge / 侧边状态条接线",
+		"控制台状态：API / 会话 badge / 转发目标按钮接线（侧边状态条已删）",
 		appSource.includes("/api/chat/consoles?") &&
 			appSource.includes("console-badge") &&
 			chatSource.includes("onConsolesChanged") &&
-			chatSource.includes("renderConsoleStatus") &&
-			indexSource.includes('id="chat-console-status"') &&
+			chatSource.includes("renderForwardControls") &&
+			indexSource.includes('id="chat-forward-target"') &&
+			!indexSource.includes('id="chat-console-status"') &&
 			styleSource.includes(".console-badge") &&
-			styleSource.includes(".chat-console-status"),
+			styleSource.includes(".console-status-dot"),
 	);
 	check(
 		"T4 双模式：单钮反转/发送/转发记录/禁用接线",
@@ -849,12 +840,11 @@ const check = (label, cond, extra = "") => {
 	);
 	const chatAddTag = /<button id="chat-add"[^>]*>/.exec(indexSource)?.[0] ?? "";
 	check(
-		"输入卡 dsh 结构：+ 最左 / 模式钮在控制台状态条前 / 权限 / 模型 / 发送",
+		"输入卡 dsh 结构：+ 最左 / 模式钮在 accessory 行 / 权限 / 模型 / 发送（状态条已删）",
 		chatAddTag.includes('aria-haspopup="listbox"') &&
 			chatAddTag.includes('aria-expanded="false"') &&
 			indexSource.indexOf('class="chat-accessory"') < indexSource.indexOf('id="chat-mode-toggle"') &&
-			indexSource.indexOf('id="chat-mode-toggle"') < indexSource.indexOf('id="chat-console-status"') &&
-			indexSource.indexOf('id="chat-console-status"') < indexSource.indexOf('class="chat-scroll"') &&
+			indexSource.indexOf('id="chat-mode-toggle"') < indexSource.indexOf('class="chat-scroll"') &&
 			indexSource.indexOf('class="chat-tools"') < indexSource.indexOf('id="chat-add"') &&
 			indexSource.indexOf('id="chat-add"') < indexSource.indexOf('class="chat-modes"') &&
 			indexSource.indexOf('id="chat-profile"') < indexSource.indexOf('class="chat-trailing"') &&

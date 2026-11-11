@@ -1995,26 +1995,7 @@ mark.ev-hit {
 	display: none;
 }
 
-/* 控制台桥状态条：T2 只展示，不提供转发 */
-.chat-console-status {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	height: 24px;
-	min-width: 0;
-	max-width: 100%;
-	padding: 0 8px;
-	border-radius: var(--dsw-radius-sm);
-	background: var(--dsw-specific-sidebar-nav-item-hover);
-	color: var(--dsw-alias-label-secondary);
-	font-size: 12px;
-	line-height: 18px;
-}
-
-.chat-console-status[hidden] {
-	display: none;
-}
-
+/* 控制台状态点：转发目标按钮内使用（实心=运行中/空心=空闲/灰=离线/虚线=不可用） */
 .console-status-dot {
 	width: 6px;
 	height: 6px;
@@ -2023,40 +2004,18 @@ mark.ev-hit {
 	border-radius: 2px;
 }
 
-.chat-console-status.is-working .console-status-dot,
 .chat-forward-target.is-working .console-status-dot {
 	border-color: transparent;
 	background: var(--dsw-alias-state-success-primary);
 }
 
-.chat-console-status.is-offline,
-.chat-console-status.is-unavailable {
-	color: var(--dsw-alias-label-tertiary);
-}
-
-.chat-console-status.is-offline .console-status-dot,
-.chat-console-status.is-unavailable .console-status-dot,
 .chat-forward-target.is-offline .console-status-dot,
 .chat-forward-target.is-unavailable .console-status-dot {
 	border-color: var(--dsw-alias-label-tertiary);
 }
 
-.chat-console-status.is-unavailable .console-status-dot,
 .chat-forward-target.is-unavailable .console-status-dot {
 	border-style: dashed;
-}
-
-.console-status-label {
-	white-space: nowrap;
-}
-
-.console-status-pid {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	color: var(--dsw-alias-label-tertiary);
-	font-size: 11px;
 }
 
 .chat-context {

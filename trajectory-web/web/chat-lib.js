@@ -281,13 +281,6 @@ function truncateDisplay(text, maxWidth) {
 	return `${out}…`;
 }
 
-/** 控制台状态文案；未知/离线返回空串。 */
-export function consoleStatusLabel(state) {
-	if (state === "working") return "控制台运行中";
-	if (state === "idle") return "控制台在线空闲";
-	return "";
-}
-
 /** 多控制台候选菜单项 hint：状态 + 打开时间。 */
 export function consoleChoiceHint(record) {
 	let state = "状态未知";
@@ -313,13 +306,6 @@ export function writeChatMode(map, key, mode) {
 	if (mode === "forward") next[key] = "forward";
 	else delete next[key];
 	return next;
-}
-
-/** 转发状态条文案：转发生效后无控制台也要给出明确不可用态。 */
-export function forwardStatusLabel(mode, info, lost = false) {
-	if (mode !== "forward") return consoleStatusLabel(info?.state);
-	if (info) return consoleStatusLabel(info.state);
-	return lost ? "控制台已离线" : "未检测到可转发控制台";
 }
 
 /** 桥实际接受的 delivery → 转发记录文案。 */

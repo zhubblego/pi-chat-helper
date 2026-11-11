@@ -151,11 +151,12 @@ async function main() {
 	panel.setOpen(true);
 	panel.onConsolesChanged(consoles);
 	await new Promise((resolve) => setTimeout(resolve, 20));
-	check("转发前隐藏：目标/方式按钮 hidden，状态条显示", targetBtn.hidden && deliveryBtn.hidden && !statusEl.hidden, "");
+	check("状态条已删：元素不存在，转发前后均无侧边状态条", statusEl === null, String(statusEl));
+	check("转发前隐藏：目标/方式按钮 hidden", targetBtn.hidden && deliveryBtn.hidden, "");
 
 	targetBtn.closest(".chat-row") && document.getElementById("chat-mode-toggle").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 	await new Promise((resolve) => setTimeout(resolve, 20));
-	check("转发模式：左下角两按钮显示，状态条隐藏", !targetBtn.hidden && !deliveryBtn.hidden && statusEl.hidden, "");
+	check("转发模式：左下角两按钮显示", !targetBtn.hidden && !deliveryBtn.hidden, "");
 	check("初始文案：目标「自动」，方式「排队」", targetLabel.textContent === "自动" && deliveryLabel.textContent === "排队", `${targetLabel.textContent}/${deliveryLabel.textContent}`);
 
 	targetBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));

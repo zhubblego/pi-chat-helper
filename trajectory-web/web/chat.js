@@ -14,7 +14,6 @@ import {
 	formatContextWindow,
 	forwardDeliveryLabel,
 	forwardFailureText,
-	forwardStatusLabel,
 	isCurrentTurn,
 	modelLabel,
 	parseSseChunk,
@@ -104,7 +103,6 @@ export function initChatPanel(deps) {
 	const profileMenuEl = el("chat-profile-menu");
 	const contextBtn = el("chat-context");
 	const contextMenuEl = el("chat-context-menu");
-	const consoleStatusEl = el("chat-console-status");
 	const overlayAnchorEl = paletteEl?.closest?.(".chat-overlay-anchor") ?? profileMenuEl?.closest?.(".chat-overlay-anchor") ?? null;
 	const approvalEl = el("chat-approval");
 	const sendIcon = sendBtn?.firstElementChild?.cloneNode(true) ?? null;
@@ -905,7 +903,6 @@ export function initChatPanel(deps) {
 		renderModeControls();
 		renderSkillChip();
 		renderContext();
-		renderConsoleStatus();
 		renderProfileMenu();
 		renderApproval();
 		updateSendButton();
@@ -1136,41 +1133,6 @@ export function initChatPanel(deps) {
 			return;
 		}
 		positionAnchoredMenu(forwardDeliveryMenuEl, forwardDeliveryBtn, FORWARD_DELIVERY_MENU_ANCHOR);
-	}
-
-	/** 控制台状态条：转发模式信息并入左下角目标按钮；独立模式只在有桥时显示。 */
-	function renderConsoleStatus() {
-		if (!consoleStatusEl) return;
-		if (state.mode === "forward") {
-			consoleStatusEl.hidden = true;
-			consoleStatusEl.replaceChildren();
-			consoleStatusEl.removeAttribute("title");
-			return;
-		}
-		const session = currentSession();
-		const info = session ? currentConsoleInfo() : null;
-		const key = session ? sessionKeyOf(session) : "";
-		const lost = key ? state.consoleLost.has(key) : false;
-		const label = forwardStatusLabel(state.mode, info, lost);
-		if (!state.open || !session || !label) {
-			consoleStatusEl.hidden = true;
-			consoleStatusEl.replaceChildren();
-			consoleStatusEl.removeAttribute("title");
-			return;
-		}
-		const tone = info ? info.state : lost ? "offline" : "unavailable";
-		consoleStatusEl.hidden = false;
-		consoleStatusEl.className = `chat-console-status is-${tone}`;
-		consoleStatusEl.title = info
-			? `${label}${info.pid ? `（PID ${info.pid}）` : ""}；回答和工具审批在控制台完成`
-			: state.mode === "forward"
-				? "转发模式下需要当前会话有已注册控制台"
-				: label;
-		consoleStatusEl.replaceChildren(
-			h("span", { class: "console-status-dot", "aria-hidden": "true" }),
-			h("span", { class: "console-status-label", text: label }),
-			info?.pid ? h("span", { class: "console-status-pid", text: `PID ${info.pid}` }) : null,
-		);
 	}
 
 	function contextIds() {
@@ -3230,7 +3192,6 @@ export function initChatPanel(deps) {
 			}
 			if (state.open) void ensureLoaded();
 			renderContext();
-			renderConsoleStatus();
 			renderModeControls();
 		},
 		handleEscape() {
@@ -3306,7 +3267,6 @@ export function initChatPanel(deps) {
 			state.forwardConfirm = null;
 			state.forwardChoice = null;
 			syncModeForSession();
-			renderConsoleStatus();
 			renderModeControls();
 			if (state.open) void ensureLoaded();
 			else render();
