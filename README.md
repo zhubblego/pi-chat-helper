@@ -49,7 +49,11 @@
 
 ### TUI 提问面板 · question-panel
 
-`/questions` 打开浮动面板（停靠右上角）：单击条目，transcript 直接跳回那一问；双击 / `d` 进入回合分析视图（思考→工具→输出节点树）；↑↓ 选择、回车跳转、q / Esc 关闭。`/questions 50`（列数）或 `/questions 60%`（百分比）调宽度。
+`/questions` 打开浮动面板（停靠右上角）：单击条目，transcript 直接跳回那一问；双击 / `d` 进入回合分析视图（思考→工具→输出节点树）；↑↓ 选择、回车跳转、q / Esc 关闭，`/questions 60%` 调宽度。
+
+![TUI 提问面板](screenshots/question-panel.png)
+
+> 注意：对话经历过上下文压缩（compaction）后，早期提问的跳转可能失效——条目仍列在面板里，但 transcript 中已无对应位置。
 
 ## 安装
 

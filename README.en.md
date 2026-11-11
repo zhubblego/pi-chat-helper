@@ -49,7 +49,11 @@ Ask pi directly in the browser about any trajectory session — answers come fro
 
 ### TUI question panel · question-panel
 
-`/questions` opens a floating panel (docked to the top-right): single-click an entry to jump the transcript back to that question; double-click / `d` to enter the turn analysis view (thinking → tools → output node tree); ↑↓ to select, Enter to jump, q / Esc to close. `/questions 50` (columns) or `/questions 60%` (percent) adjusts the width.
+`/questions` opens a floating panel (docked to the top-right): single-click an entry to jump the transcript back to that question; double-click / `d` to enter the turn analysis view (thinking → tools → output node tree); ↑↓ to select, Enter to jump, q / Esc to close, `/questions 60%` adjusts the width.
+
+![TUI question panel](screenshots/question-panel.png)
+
+> Note: if the conversation has been compacted, jumps to earlier questions may no longer work — the entries still appear in the panel, but their positions are gone from the transcript.
 
 ## Install
 
