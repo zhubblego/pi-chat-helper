@@ -62,6 +62,7 @@ const state = {
 	scope: null,
 	sessions: [],
 	sessionListKey: "",
+	sessionQuery: "",
 	selectedId: null,
 	data: null,
 	etag: null,
@@ -432,19 +433,17 @@ function setSync(text, kind) {
 }
 
 function renderTopbar() {
-	let scopeText = "";
-	if (state.scope === "all") scopeText = "全部项目";
-	else if (state.scope === "project") scopeText = "本项目";
-	const label = state.sources.find((s) => s.id === state.source)?.label ?? state.source;
-	el("scope-badge").textContent = scopeText ? `${label} · ${scopeText}` : label;
+	// 会话头部信息（原 topbar session-meta）：标题 + cwd，完整统计留在 title 悬停
 	const meta = state.data?.meta;
+	const title = el("trace-intro-title");
+	const sub = el("trace-intro-sub");
 	if (!meta) {
-		el("session-meta").textContent = "选择一个会话查看轨迹";
-		el("session-meta").title = "";
+		title.textContent = "选择一个会话查看轨迹";
+		title.title = "";
+		sub.textContent = "";
 		return;
 	}
 	const bits = [
-		meta.name || meta.cwd || meta.file,
 		`${meta.questionCount} 问`,
 		`${meta.entryCount} 条目`,
 		meta.totals?.tools ? `${meta.totals.tools} 工具` : "",
@@ -452,8 +451,11 @@ function renderTopbar() {
 		meta.totals?.durationMs ? formatDurationMillis(meta.totals.durationMs) : "",
 		meta.updatedAt ? `最后更新 ${fmtTime(Date.parse(meta.updatedAt))}` : "",
 	];
-	el("session-meta").textContent = bits.filter(Boolean).join(" · ");
-	el("session-meta").title = meta.file ?? "";
+	title.textContent = meta.name || meta.cwd || meta.file;
+	title.title = bits.filter(Boolean).join(" · ");
+	// 有名字时 sub 放 cwd；无名字时标题已用 cwd，避免重复
+	sub.textContent = meta.name ? meta.cwd ?? "" : "";
+	sub.title = meta.file ?? "";
 }
 
 // ---------------------------------------------------------------------------
@@ -494,10 +496,18 @@ function sessionItem(session) {
 	);
 }
 
-/** 会话列表可见集：codex 源隐藏子 agent 会话与 Guardian 审批线程（固定主线）。 */
+/** 会话列表可见集：codex 源隐藏子 agent 会话与 Guardian 审批线程（固定主线）；
+ * 侧栏搜索按名称／首问／项目路径／id 前端过滤。 */
 function visibleSessions() {
-	if (state.source !== "codex") return state.sessions;
-	return state.sessions.filter((s) => s.threadSource !== "subagent" && s.threadSource !== "guardian_review");
+	let list = state.sessions;
+	if (state.source === "codex") list = list.filter((s) => s.threadSource !== "subagent" && s.threadSource !== "guardian_review");
+	const q = state.sessionQuery.trim().toLowerCase();
+	if (q) {
+		list = list.filter((s) =>
+			[s.name, s.firstMessage, s.projectPath, s.id].some((v) => typeof v === "string" && v.toLowerCase().includes(q)),
+		);
+	}
+	return list;
 }
 
 /** 当前可见的分组 key（只有 all 范围按项目分组；本项目范围是平铺列表）。 */
@@ -523,6 +533,7 @@ function updateGroupsToggle() {
 
 function renderSessions() {
 	const sessions = visibleSessions();
+	el("source-session-count").textContent = String(sessions.length);
 	const nodes = [];
 	if (state.scope === "all") {
 		for (const group of groupSessions(sessions)) {
@@ -1742,19 +1753,33 @@ async function pollSources() {
 }
 
 function renderRail() {
+	// 未来源占位：后端未接入前以下拉禁用项展示（原型：Claude Code / OpenCode 后续支持）
+	const future = [
+		{ id: "claude-code", label: "Claude Code" },
+		{ id: "opencode", label: "OpenCode" },
+	].filter((f) => !state.sources.some((s) => s.id === f.id));
+	const options = [
+		...state.sources.map((s) => h("option", { value: s.id, text: `${s.label} · ${s.sessions} 会话` })),
+		...future.map((f) => h("option", { value: f.id, text: `${f.label} · 后续支持`, disabled: "disabled" })),
+	];
+	const select = h("select", { id: "trace-source-select" }, ...options);
+	select.value = state.source;
+	const label = state.sources.find((s) => s.id === state.source)?.label ?? state.source;
+	el("source-select-icon").textContent = SOURCE_BADGE[state.source] ?? label.slice(0, 1);
+	el("source-picker-hint").textContent = `${label} · 当前显示此来源的会话记录`;
 	el("agent-rail").replaceChildren(
-		...state.sources.map((s) =>
+		h(
+			"div",
+			{ class: "source-picker" },
+			h("label", { class: "source-picker-label", for: "trace-source-select", text: "对话来源" }),
 			h(
-				"button",
-				{
-					class: `rail-btn${s.id === state.source ? " active" : ""}`,
-					type: "button",
-					title: `${s.label}（${s.sessions} 会话）`,
-					dataset: { source: s.id },
-					"aria-pressed": String(s.id === state.source),
-					},
-				h("span", { class: `rail-badge${(SOURCE_BADGE[s.id] ?? s.label.slice(0, 1)).length > 2 ? " small" : ""}`, "aria-hidden": "true", text: SOURCE_BADGE[s.id] ?? s.label.slice(0, 1) }),
+				"div",
+				{ class: "source-select-wrap" },
+				el("source-select-icon"),
+				select,
+				h("span", { class: "source-select-chevron", "aria-hidden": "true", text: "⌄" }),
 			),
+			el("source-picker-hint"),
 		),
 	);
 }
@@ -1782,7 +1807,9 @@ function switchSource(id) {
 	state.canCropEntry = false;
 	state.hiddenUserIds = new Set();
 	state.query = "";
+	state.sessionQuery = "";
 	el("search").value = "";
+	el("session-search").value = "";
 	state.toolNames = [];
 	state.searchIndex = new TrajectorySearchIndex();
 	closePanel();
@@ -2083,12 +2110,19 @@ async function pollConsoles() {
 async function pollSessions(force = false) {
 	if (state.pollingSessions) return;
 	state.pollingSessions = true;
+	const requestedSource = state.source;
+	let stale = false;
 	try {
-		const qs = new URLSearchParams({ source: state.source });
+		const qs = new URLSearchParams({ source: requestedSource });
 		if (force) qs.set("t", String(Date.now()));
 		const res = await fetch(`/api/sessions?${qs}`);
 		if (!res.ok) throw new Error(`HTTP ${res.status}`);
 		const j = await res.json();
+		// 切源竞态：请求飞行中源已变，丢弃旧源响应并补拉一次新源
+		if (requestedSource !== state.source) {
+			stale = true;
+			return;
+		}
 		state.scope = j.scope;
 		const key = JSON.stringify(j.sessions);
 		if (key !== state.sessionListKey) {
@@ -2111,17 +2145,26 @@ async function pollSessions(force = false) {
 	} finally {
 		state.pollingSessions = false;
 	}
+	if (stale) pollSessions(true);
 }
 
 async function pollSession(force = false) {
 	if (state.pollingSession) return;
 	state.pollingSession = true;
+	const requestedSource = state.source;
+	const requestedId = state.selectedId;
+	let stale = false;
 	try {
 		const params = new URLSearchParams();
-		params.set("source", state.source);
-		if (state.selectedId) params.set("id", state.selectedId);
+		params.set("source", requestedSource);
+		if (requestedId) params.set("id", requestedId);
 		if (!force && state.etag) params.set("v", state.etag);
 		const res = await fetch(`/api/session?${params}`);
+		// 切源/切会话竞态：响应回来时目标已变则丢弃，避免旧源投影写入新源状态
+		if (requestedSource !== state.source || requestedId !== state.selectedId) {
+			stale = true;
+			return;
+		}
 		if (res.status === 404) {
 			state.selectedId = null;
 			state.data = null;
@@ -2189,6 +2232,7 @@ async function pollSession(force = false) {
 	} finally {
 		state.pollingSession = false;
 	}
+	if (stale) pollSession(true);
 }
 
 // ---------------------------------------------------------------------------
@@ -2568,9 +2612,12 @@ mainInner.addEventListener("keydown", (e) => {
 	openEventRow(row);
 });
 
-el("agent-rail").addEventListener("click", (e) => {
-	const btn = e.target.closest(".rail-btn");
-	if (btn) switchSource(btn.dataset.source);
+el("agent-rail").addEventListener("change", (e) => {
+	if (e.target.id === "trace-source-select") switchSource(e.target.value);
+});
+el("session-search").addEventListener("input", (e) => {
+	state.sessionQuery = e.target.value;
+	renderSessions();
 });
 el("chat-btn").addEventListener("click", () => setChatOpen(!state.chatOpen));
 el("crop-btn").addEventListener("click", () => setCropMode(!state.cropMode));

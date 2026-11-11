@@ -36,19 +36,63 @@ body {
 #topbar {
 	display: flex;
 	align-items: center;
-	gap: 12px;
+	gap: 16px;
 	height: var(--tw-topbar-height);
 	padding: 0 14px;
 	background: var(--dsw-alias-bg-base);
 	border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
-.brand {
+/* 工作区标签（照 v8 原型）：轨迹／知识／任务，小圆点 + active 底色 */
+.workspace-tabs {
 	display: flex;
 	align-items: center;
-	gap: 8px;
-	font: var(--dsw-font-s-strong-14);
+	gap: 5px;
+	flex: none;
+}
+
+.workspace-tab {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	height: 30px;
+	min-width: 58px;
+	padding: 0 13px;
+	border: 0;
+	border-radius: var(--dsw-radius-sm);
+	background: transparent;
+	color: var(--dsw-alias-label-secondary);
+	cursor: pointer;
+	font: var(--dsw-font-xs-13);
 	white-space: nowrap;
+}
+
+.workspace-tab:hover:not(:disabled) {
+	background: var(--dsw-alias-interactive-bg-hover);
+	color: var(--dsw-alias-label-primary);
+}
+
+.workspace-tab.active {
+	background: var(--dsw-specific-sidebar-nav-item-active);
+	color: var(--dsw-alias-label-primary);
+	font-weight: 600;
+}
+
+.workspace-tab:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.workspace-tab .tab-mark {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--dsw-alias-label-tertiary);
+}
+
+.workspace-tab.active .tab-mark {
+	background: var(--dsw-alias-state-business-primary);
 }
 
 .dot {
@@ -71,29 +115,12 @@ body {
 	background: var(--dsw-alias-state-error-primary);
 }
 
-.session-meta {
-	flex: 1;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	color: var(--dsw-alias-label-secondary);
-	font: var(--dsw-font-xxs-12);
-}
-
 .topbar-right {
 	display: flex;
 	align-items: center;
 	gap: 8px;
+	margin-left: auto;
 	white-space: nowrap;
-}
-
-.scope-badge {
-	padding: 1px 8px;
-	border-radius: var(--dsw-radius-xs);
-	background: var(--dsw-alias-state-business-tertiary);
-	color: var(--dsw-alias-state-business-primary);
-	font: var(--dsw-font-xxxs-strong-11);
 }
 
 .sync {
@@ -161,60 +188,96 @@ body {
 	margin-top: 6px;
 }
 
-/* ---------------------------------------------------------------- Agent 选择栏 */
+/* ---------------------------------------------------------------- Agent 选择栏（照 v8 原型：侧栏内顶部的来源下拉块） */
 
 .agent-rail {
-	width: 44px;
 	flex: none;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 6px;
-	padding: 10px 0;
-	background: var(--dsw-specific-sidebar-fill);
-	border-right: 1px solid var(--dsw-alias-border-l1);
+	padding: 4px;
 }
 
-.rail-btn {
-	position: relative;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	min-width: 30px;
-	height: 30px;
-	padding: 0 6px;
-	border: none;
-	border-radius: var(--dsw-radius-sm);
-	background: transparent;
+.source-picker {
+	display: flex;
+	flex-direction: column;
+	gap: 7px;
+}
+
+.source-picker-label {
 	color: var(--dsw-alias-label-tertiary);
-	cursor: pointer;
+	font: var(--dsw-font-xxxs-strong-11);
+	letter-spacing: 0.04em;
+}
+
+.source-select-wrap {
+	position: relative;
+	display: flex;
+	align-items: center;
+	height: 35px;
+	border: 1px solid var(--dsw-alias-border-l2);
+	border-radius: var(--dsw-radius-sm);
+	background: var(--dsw-alias-bg-base);
+	transition:
+		border-color 0.15s,
+		background 0.15s;
+}
+
+.source-select-wrap:hover {
+	border-color: var(--dsw-alias-border-l3);
+	background: var(--dsw-alias-bg-layer-1);
+}
+
+.source-select-icon {
+	width: 34px;
+	flex: none;
+	display: grid;
+	place-items: center;
+	color: var(--dsw-alias-label-secondary);
 	font: var(--dsw-font-s-strong-14);
 }
 
-.rail-btn:hover {
-	background: var(--dsw-specific-sidebar-nav-item-hover);
+#trace-source-select {
+	appearance: none;
+	-webkit-appearance: none;
+	flex: 1;
+	width: 100%;
+	height: 100%;
+	min-width: 0;
+	padding: 0 30px 0 0;
+	border: 0;
+	outline: none;
+	background: transparent;
 	color: var(--dsw-alias-label-primary);
+	cursor: pointer;
+	font: var(--dsw-font-xs-13);
 }
 
-.rail-btn.active {
-	background: var(--dsw-specific-sidebar-nav-item-active);
-	color: var(--dsw-alias-label-primary);
+#trace-source-select:focus-visible {
+	outline: 2px solid var(--dsw-alias-border-focus, var(--dsw-alias-link));
+	outline-offset: -2px;
+	border-radius: var(--dsw-radius-sm);
 }
 
-.rail-btn.active::before {
-	content: "";
+#trace-source-select option {
+	color: #172033;
+	background: #fff;
+}
+
+#trace-source-select option:disabled {
+	color: #9aa3b2;
+}
+
+.source-select-chevron {
 	position: absolute;
-	left: -10px;
-	top: 7px;
-	bottom: 7px;
-	width: 2px;
-	border-radius: 1px;
-	background: var(--dsw-alias-label-primary);
+	right: 10px;
+	top: 50%;
+	transform: translateY(-55%);
+	color: var(--dsw-alias-label-tertiary);
+	pointer-events: none;
+	font-size: 15px;
 }
 
-.rail-badge.small {
-	font-size: 10px;
-	letter-spacing: 0;
+.source-picker-hint {
+	color: var(--dsw-alias-label-tertiary);
+	font: var(--dsw-font-xxxs-11);
 }
 
 /* ---------------------------------------------------------------- 会话栏 */
@@ -232,6 +295,48 @@ body {
 	color: var(--dsw-alias-label-tertiary);
 	font: var(--dsw-font-xxxs-strong-11);
 	letter-spacing: 0.04em;
+}
+
+/* 会话计数（照 v8 原型）：标题右侧灰色小字 */
+.side-count {
+	flex: none;
+	padding-right: 8px;
+	color: var(--dsw-alias-label-tertiary);
+	font: var(--dsw-font-xxxs-11);
+	letter-spacing: 0;
+}
+
+/* 侧栏会话搜索（照 v8 原型）：⌕ 前缀 + 30px 输入框 */
+.sidebar-search {
+	position: relative;
+	margin: 8px 6px 10px;
+}
+
+.sidebar-search input {
+	width: 100%;
+	height: 30px;
+	box-sizing: border-box;
+	padding: 0 10px 0 30px;
+	border: 1px solid var(--dsw-alias-border-l2);
+	border-radius: var(--dsw-radius-sm);
+	outline: none;
+	background: var(--dsw-alias-bg-base);
+	color: var(--dsw-alias-label-primary);
+	font: var(--dsw-font-xs-13);
+}
+
+.sidebar-search input:focus-visible {
+	border-color: var(--dsw-alias-border-focus, var(--dsw-alias-link));
+}
+
+.sidebar-search::before {
+	content: "⌕";
+	position: absolute;
+	left: 10px;
+	top: 3px;
+	color: var(--dsw-alias-label-tertiary);
+	font-size: 19px;
+	pointer-events: none;
 }
 
 /* 表头整块就是分组开关：点标题或箭头都能收起/展开全部项目分组 */
@@ -419,6 +524,29 @@ body {
 }
 
 /* ---------------------------------------------------------------- 工具条 */
+
+/* 轨迹页头部（照 v8 原型）：会话名 + cwd，承接原 topbar 的 session-meta */
+.trace-intro {
+	padding: 18px 18px 13px;
+	border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.trace-intro-title {
+	font: var(--dsw-font-s-strong-14);
+	color: var(--dsw-alias-label-primary);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.trace-intro-sub {
+	margin-top: 4px;
+	color: var(--dsw-alias-label-tertiary);
+	font: var(--dsw-font-xxxs-11);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
 
 .toolbar {
 	position: sticky;

@@ -21,34 +21,52 @@
 		})();
 	</script>
 	<header id="topbar">
-		<div class="brand">
-			<span id="sync-dot" class="dot"></span>
-			<span class="brand-name">轨迹观察</span>
-		</div>
-		<div id="session-meta" class="session-meta">加载中…</div>
+		<nav class="workspace-tabs" aria-label="工作区切换">
+			<button class="workspace-tab active" type="button" data-workspace="trace" aria-current="page"><span class="tab-mark" aria-hidden="true"></span>轨迹</button>
+			<button class="workspace-tab" type="button" data-workspace="knowledge" disabled title="下一步实现"><span class="tab-mark" aria-hidden="true"></span>知识</button>
+			<button class="workspace-tab" type="button" data-workspace="distill" disabled title="下一步实现"><span class="tab-mark" aria-hidden="true"></span>任务</button>
+		</nav>
 		<div class="topbar-right">
+			<span id="sync-dot" class="dot"></span>
+			<span id="sync" class="sync">—</span>
 			<button id="theme-btn" class="tb-btn icon-btn" type="button" title="主题：跟随系统（点击切换）" aria-label="主题：跟随系统（点击切换）"></button>
 			<button id="chat-btn" class="tb-btn icon-btn" type="button" title="打开侧边对话" aria-label="打开侧边对话" aria-pressed="false">
 				<svg class="tb-icon" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3c0-.9.7-1.6 1.6-1.6h4.8c.9 0 1.6.7 1.6 1.6v3c0 .9-.7 1.6-1.6 1.6H5.5L3.7 9.8V7.6h-.1C2.7 7.6 2 6.9 2 6z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>
 			</button>
-			<span id="scope-badge" class="scope-badge"></span>
-			<span id="sync" class="sync">—</span>
 		</div>
 	</header>
 	<div id="layout">
-		<nav id="agent-rail" class="agent-rail" aria-label="轨迹源选择"></nav>
 		<aside id="sidebar">
+			<nav id="agent-rail" class="agent-rail" aria-label="对话来源选择">
+				<div class="source-picker">
+					<label class="source-picker-label" for="trace-source-select">对话来源</label>
+					<div class="source-select-wrap">
+						<span id="source-select-icon" class="source-select-icon" aria-hidden="true">π</span>
+						<select id="trace-source-select"></select>
+						<span class="source-select-chevron" aria-hidden="true">⌄</span>
+					</div>
+					<div id="source-picker-hint" class="source-picker-hint"></div>
+				</div>
+			</nav>
 			<section id="session-section" class="sidebar-block session-section">
 				<div class="section-head">
 					<button id="groups-toggle" class="section-toggle" type="button" aria-expanded="true" title="收起所有分组">
 						<span class="section-chev" aria-hidden="true">▾</span>
 						<span class="section-title">会话</span>
 					</button>
+					<span id="source-session-count" class="side-count"></span>
+				</div>
+				<div class="sidebar-search">
+					<input id="session-search" type="search" placeholder="搜索会话" aria-label="搜索会话">
 				</div>
 				<div id="session-list" class="session-list" aria-label="会话列表"></div>
 			</section>
 		</aside>
 		<main id="main">
+			<div id="trace-intro" class="trace-intro">
+				<div id="trace-intro-title" class="trace-intro-title"></div>
+				<div id="trace-intro-sub" class="trace-intro-sub"></div>
+			</div>
 			<div id="toolbar" class="toolbar" role="toolbar" aria-label="轨迹工具栏">
 				<button id="back-main" class="tb-btn" type="button" hidden title="返回主会话"><span class="tb-icon" aria-hidden="true">⟨</span><span>主会话</span></button>
 				<span class="tb-sep" aria-hidden="true"></span>
