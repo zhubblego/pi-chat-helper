@@ -1,6 +1,6 @@
 /**
  * app.js — 轨迹观察页：左侧会话栏，右侧轨迹（按轮次分段，工具条过滤/折叠）；
- * 点轨迹行在行下方内联展开详情面板（工具条随面板作用于当前行）；
+ * 点轨迹行居中弹出详情弹窗（Esc/遮罩/再点同一行关闭，工具条作用于当前行）；
  * 顶栏按钮开关右侧对话栏（对话栏接 pi 子进程，SSE 流式）。
  *
  * 数据：
@@ -56,6 +56,7 @@ const main = el("main");
 const mainInner = el("main-inner");
 const sessionList = el("session-list");
 const panel = el("ev-panel");
+const panelOverlay = el("ev-overlay");
 
 const state = {
 	scope: null,
@@ -1061,9 +1062,8 @@ function renderEvent(ev, terms = [], cropped = false) {
 
 function renderMain() {
 	updateDeriveButtons();
-	// 面板先停泊到 body：replaceChildren 会把它摘出文档，而 el("dv-*") 依赖
-	// getElementById（文档内可见）；停在文档外时后续 renderPanel/resetTranslateUi 会空引用崩溃
-	if (panel.parentElement !== document.body) document.body.appendChild(panel);
+	// 详情面板常驻 ev-overlay（modal）：不受 mainInner replaceChildren 影响，
+	// el("dv-*") 的 getElementById 引用始终在文档内
 	if (!state.selectedId) {
 		mainInner.replaceChildren(h("div", { class: "empty", text: "左侧选择一个会话查看轨迹" }));
 		return;
@@ -1146,7 +1146,7 @@ function renderMain() {
 		if (q) input.indeterminate = roundSelectedState(q) === "some";
 	}
 	updateFoldAll();
-	// 打开的详情面板重新挂到对应行下方（replaceChildren 会把它摘出文档，重挂不重建，滚动/展开态保留）
+	// 行重建后同步弹窗状态：行被过滤/折叠掉时收起弹窗，行还在则同步 is-open 高亮（弹窗本体常驻 overlay 不重建）
 	attachOpenPanel();
 }
 
@@ -1388,13 +1388,12 @@ async function loadFull(id) {
 	}
 }
 
-/** 展开轨迹行详情（再点同一行收起）；面板挂在行下方，行不可见时不展开。 */
+/** 展开轨迹行详情为居中弹窗（再点同一行收起）；行不可见时不展开。 */
 function openPanel(id) {
 	if (state.openId === id) {
 		closePanel();
 		return;
 	}
-	const anchor = rowAnchor(id);
 	state.openId = id;
 	state.openFull = null;
 	const light = findEvent(id);
@@ -1402,19 +1401,11 @@ function openPanel(id) {
 	renderPanel();
 	// 行不可见（被过滤/折叠）时 attachOpenPanel 已收尾，不再拉全文/写 hash
 	if (!attachOpenPanel()) return;
-	if (anchor) {
-		// 锚定行：面板插在行下方会把行推出原位，补偿滚动让它停在点击时的视口位置，
-		// 展开/收起都不跳动；行不在视口（chat 引用跳转等）时走 scrollIntoView 定位
-		restoreAnchor(anchor);
-	} else {
-		// behavior 必须显式 instant：#main 的 scroll-behavior 是 smooth（同 revealEvent）
-		panel.scrollIntoView({ block: "nearest", behavior: "instant" });
-	}
 	if (light?.truncated) loadFull(id);
 	writeViewHash();
 }
 
-/** 把打开的详情面板挂到对应轨迹行下方；行不在（被过滤/折叠/隐藏轮）时收起面板。返回是否挂载成功。 */
+/** 弹窗已常驻 overlay：这里只同步行高亮与显隐；行不在（被过滤/折叠/隐藏轮）时收起。返回是否展开。 */
 function attachOpenPanel() {
 	if (!state.openId) return false;
 	const row = mainInner.querySelector(`.ev[data-eid="${state.openId}"]`);
@@ -1422,11 +1413,9 @@ function attachOpenPanel() {
 		closePanel();
 		return false;
 	}
-	// 首次点行不会重绘轨迹：高亮在这里同步（renderEvent 里按 state 补一致）
 	for (const open of mainInner.querySelectorAll(".ev.is-open")) open.classList.remove("is-open");
 	row.classList.add("is-open");
-	row.after(panel);
-	panel.hidden = false;
+	panelOverlay.hidden = false;
 	return true;
 }
 
@@ -1450,35 +1439,15 @@ function refreshOpen() {
 	if (light.truncated) loadFull(light.id);
 }
 
-/** 详情面板插拔时的行锚点：行在视口内才需要稳定（行在视口外的跳转定位交给 scrollIntoView）。 */
-function rowAnchor(id) {
-	const row = id ? mainInner.querySelector(`.ev[data-eid="${id}"]`) : null;
-	if (!row) return null;
-	const rowRect = row.getBoundingClientRect();
-	const mainRect = main.getBoundingClientRect();
-	if (rowRect.bottom <= mainRect.top || rowRect.top >= mainRect.bottom) return null;
-	return { row, top: rowRect.top };
-}
-
-/** 把锚定的行滚回快照时的视口位置：面板插拔改变了行上方内容高度时补偿滚动。
- *  scrollTo 显式 instant：#main 的 scroll-behavior 是 smooth，scrollTop 赋值也会被平滑化。 */
-function restoreAnchor(anchor) {
-	const delta = anchor.row.getBoundingClientRect().top - anchor.top;
-	if (delta) main.scrollTo({ top: main.scrollTop + delta, behavior: "instant" });
-}
-
 function closePanel() {
-	// 收起同样锚定行：面板摘除后内容塌缩会把行带走，补偿滚动让它停在原位
-	const anchor = rowAnchor(state.openId);
 	state.openId = null;
 	state.openFull = null;
 	state.openLightJson = "";
-	panel.hidden = true;
+	panelOverlay.hidden = true;
 	for (const open of mainInner.querySelectorAll(".ev.is-open")) open.classList.remove("is-open");
 	transSeq++;
 	setSettingsOpen(false);
 	setCopyMenuOpen(false);
-	restoreAnchor(anchor);
 	writeViewHash();
 }
 
@@ -2546,6 +2515,10 @@ el("back-main").addEventListener("click", () => {
 		updateDeriveButtons();
 		renderMain();
 	}
+});
+// 点遮罩空白处关闭详情弹窗（面板本体点击不冒泡到这层判定）
+panelOverlay?.addEventListener("click", (e) => {
+	if (e.target === panelOverlay) closePanel();
 });
 document.addEventListener("keydown", (e) => {
 	if (e.key === "Escape") {

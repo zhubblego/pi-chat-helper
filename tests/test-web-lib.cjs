@@ -661,17 +661,17 @@ const check = (label, cond, extra = "") => {
 	);
 	check("全局 localStorage 键不再由 app.js 长期写入", ["tw.filters", "tw.tools", "tw.theme", "tw.translate", "tw.chat", "tw.chatWidth", "tw.composerHeight"].every((key) => !appSource.includes(`localStorage.setItem("${key}"`)));
 
-	// ---- 回归守卫：详情面板展开/收起的行锚定 ----
-	// panel.scrollIntoView(nearest) 的滚动量随面板高度/行位置漂移，行会一阵被推到上面一阵留在原地；
-	// 展开/收起改为锚定被点击行的视口位置，行不再跳（2026-11-10）。
+	// ---- 回归守卫：详情弹窗（居中 modal，行不被移动） ----
+	// 行内联展开会把行推出原位（曾用 rowAnchor 补偿）；改弹窗后列表 DOM 不变，行天然稳定。
 	check(
-		"展开面板锚定行：rowAnchor 快照 + restoreAnchor 补偿，行不在视口时才退回 scrollIntoView",
-		appSource.includes("const anchor = rowAnchor(id)") &&
-			appSource.includes("restoreAnchor(anchor)") &&
-			appSource.includes('panel.scrollIntoView({ block: "nearest", behavior: "instant" })'),
+		"详情为居中弹窗：overlay 常驻显隐，不再 row.after 插到行下方",
+		indexSource.includes('id="ev-overlay"') &&
+			appSource.includes('const panelOverlay = el("ev-overlay")') &&
+			appSource.includes("panelOverlay.hidden = false") &&
+			!appSource.includes("row.after(panel)") &&
+			!appSource.includes("rowAnchor"),
 	);
-	check("行锚定补偿用 instant 滚动（smooth 会被 #main 的 scroll-behavior 平滑化）", appSource.includes('main.scrollTo({ top: main.scrollTop + delta, behavior: "instant" })'));
-	check("收起面板同样锚定行（closePanel 内 rowAnchor）", appSource.includes("const anchor = rowAnchor(state.openId);") && appSource.indexOf("const anchor = rowAnchor(state.openId);") > appSource.indexOf("function closePanel"));
+	check("弹窗关闭路径齐全：遮罩点击/Esc/再点同一行", appSource.includes("if (e.target === panelOverlay) closePanel()") && appSource.includes("if (state.openId) {\n\t\t\tclosePanel();") && appSource.includes("state.openId === id"));
 
 	// ---- 回归守卫：会话表头的分组总开关 ----
 	check("主题首帧由服务端 __TW_BOOT__ 注入，不再读 tw.theme", indexSource.includes("__TW_BOOT__") && !indexSource.includes('localStorage.getItem("tw.theme")'));
@@ -707,21 +707,20 @@ const check = (label, cond, extra = "") => {
 	check("裁剪与选中两套业务分开（croppedEntries / selectedEvs 互不影响）", appSource.includes("state.croppedEntries.has(entryIdOf(ev))") && appSource.includes("state.selectedEvs.has(ev.id)") && appSource.split("state.croppedEntries = new Set()").length - 1 === 2);
 	check("行级控件复用轮次控件样式 + 行内五列网格", /\.q-eye,\n\.ev-eye \{/.test(styleSource) && /\.q-check,\n\.ev-check \{/.test(styleSource) && /grid-template-columns: 18px 13px 60px 1fr auto/.test(styleSource));
 	check(
-		"详情面板左缘跟随事件行预览列（默认/无剪刀/无勾选组合）",
-		styleSource.includes(".ev.no-crop + .ev-panel") &&
-			styleSource.includes(".ev.no-select + .ev-panel") &&
-			styleSource.includes(".ev.no-crop.no-select + .ev-panel") &&
-			styleSource.includes("margin-left: 80px;") &&
-			styleSource.includes("margin-left: 103px;") &&
-			styleSource.includes("margin-left: 108px;"),
+		"详情弹窗居中卡片样式（overlay 遮罩/宽度封顶/内滚）",
+		styleSource.includes(".ev-overlay") &&
+			styleSource.includes("place-items: center") &&
+			styleSource.includes("width: min(860px, 94vw)") &&
+			styleSource.includes("max-height: 88vh") &&
+			!styleSource.includes(".ev.no-crop + .ev-panel"),
 	);
 	check("轮次头不重复展示提问正文（首行 user 事件已含，q-sum 已删）", !appSource.includes("q-sum") && !styleSource.includes(".q-sum"));
 	check("checkbox 选中是无底黑勾（自定义渲染，不用 accent-color 的黑底白勾）", !styleSource.includes("accent-color:") && /\.q-check,\n\.ev-check \{[^}]*appearance: none/s.test(styleSource) && /\.q-check:checked,\n\.ev-check:checked \{[^}]*background-image: url\("data:image\/svg\+xml/s.test(styleSource) && /body\[data-ds-dark-theme\] \.q-check:checked/.test(styleSource));
 	check("剪刀图标（两个圆环把手 + 交叉刀刃），旧眼睛图标已移除", appSource.includes("scissors: [") && !appSource.includes('svgIcon("eye")') && !appSource.includes("\teye: ["));
 
-	// ---- 回归守卫：详情内联面板（行下方展开，工具条随面板作用于当前行） ----
-	check("详情在行下方内联展开：面板挂到对应行之后，行不在即收起", appSource.includes("function attachOpenPanel") && appSource.includes("row.after(panel)") && appSource.includes('mainInner.querySelector(`.ev[data-eid="${state.openId}"]`)'));
-	check("renderMain 末尾重挂面板（replaceChildren 摘出后重挂不重建）", appSource.includes("updateFoldAll();\n\t// 打开的详情面板重新挂到对应行下方（replaceChildren 会把它摘出文档，重挂不重建，滚动/展开态保留）\n\tattachOpenPanel();"));
+	// ---- 回归守卫：详情弹窗（居中 modal，工具条随面板常驻作用于当前行） ----
+	check("详情弹窗：行不在（被过滤/折叠）即收起，行在则高亮", appSource.includes("function attachOpenPanel") && appSource.includes('mainInner.querySelector(`.ev[data-eid="${state.openId}"]`)') && appSource.includes('row.classList.add("is-open")'));
+	check("renderMain 末尾同步弹窗状态（行重建后行没了收起/高亮同步，弹窗不重建）", appSource.includes("行被过滤/折叠掉时收起弹窗，行还在则同步 is-open 高亮（弹窗本体常驻 overlay 不重建）\n\tattachOpenPanel();"));
 	check("再点同一行收起（toggle）", appSource.includes("state.openId === id") && appSource.includes("closePanel();"));
 	check("面板头只剩工具条（无分类徽章/标题/关闭按钮），工具靠左", /class="ev-panel-head">\s*<div class="ev-panel-tools">\s*<button id="dv-translate"/.test(indexSource) && !indexSource.includes('id="dv-kind"') && !indexSource.includes('id="dv-title"') && !indexSource.includes('id="dv-close"') && !appSource.includes("dv-kind") && !appSource.includes("dv-title") && !appSource.includes("dv-close") && !styleSource.includes(".dv-kind"));
 	check("面板头部带工具条：译/⧉/⚙，仍作用于当前展开行", /class="ev-panel-head"[\s\S]*?id="dv-translate"[\s\S]*?id="dv-copy"[\s\S]*?id="dv-settings"/.test(indexSource));
@@ -735,7 +734,7 @@ const check = (label, cond, extra = "") => {
 			appSource.includes("body.scrollTop = Math.max") &&
 			styleSource.includes("overscroll-behavior: contain"),
 	);
-	check("renderMain 先把面板停泊到 body（防 replaceChildren 摘出后 el(\"dv-*\") 空引用崩溃）", appSource.includes("if (panel.parentElement !== document.body) document.body.appendChild(panel);"));
+	check("详情弹窗常驻 overlay：renderMain 不再停泊面板（el(\"dv-*\") 引用始终在文档内）", appSource.includes("详情面板常驻 ev-overlay") && !appSource.includes("panel.parentElement !== document.body"));
 	check("抽屉遗迹已移除（resize 把手/标签行/悬挂侧条/宽度持久化/旧 id）", !indexSource.includes('id="drawer-resize"') && !indexSource.includes("dv-tabs") && !indexSource.includes("dv-side") && !appSource.includes("setDrawerTab") && !appSource.includes("bindDrawerResize") && !appSource.includes("tw.drawerWidth") && !appSource.includes("tw.sidetool"));
 
 	// ---- 回归守卫：侧边对话栏（顶栏按钮开关，主题按钮右侧） ----

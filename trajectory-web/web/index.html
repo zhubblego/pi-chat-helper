@@ -151,9 +151,10 @@
 			<div id="chat-approval" class="chat-approval" hidden role="dialog" aria-modal="true" aria-label="工具审批"></div>
 		</aside>
 	</div>
-	<!-- 详情内联面板：点轨迹行后插到该行下方（app.js 负责挂载位置，随行重渲染重挂）。
-	     工具条（译/⧉/⚙）随面板迁移，仍作用于当前展开的这一行。 -->
-	<article id="ev-panel" class="ev-panel" hidden>
+	<!-- 详情弹窗：点轨迹行后居中弹出（不再行内联展开）；点遮罩/Esc/再点同一行关闭。
+	     工具条（译/⧉/⚙）随面板常驻，仍作用于当前打开的这一行。 -->
+	<div id="ev-overlay" class="ev-overlay" hidden>
+		<article id="ev-panel" class="ev-panel" role="dialog" aria-modal="true" aria-label="事件详情">
 			<header class="ev-panel-head">
 				<div class="ev-panel-tools">
 					<button id="dv-translate" class="dv-tool-btn" type="button" title="翻译正文（再次点击恢复原文）" aria-pressed="false"><span aria-hidden="true">译</span></button>
@@ -173,6 +174,7 @@
 			<div id="dv-meta" class="dv-meta"></div>
 			<div id="dv-body" class="dv-body"></div>
 		</article>
+	</div>
 	<script type="module" src="/app.js"></script>
 </body>
 </html>
