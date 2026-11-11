@@ -281,6 +281,13 @@ function truncateDisplay(text, maxWidth) {
 	return `${out}…`;
 }
 
+/** 控制台状态文案；未知/离线返回空串（会话列表 console-badge 使用）。 */
+export function consoleStatusLabel(state) {
+	if (state === "working") return "控制台运行中";
+	if (state === "idle") return "控制台在线空闲";
+	return "";
+}
+
 /** 多控制台候选菜单项 hint：状态 + 打开时间。 */
 export function consoleChoiceHint(record) {
 	let state = "状态未知";
