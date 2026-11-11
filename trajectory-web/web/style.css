@@ -1132,8 +1132,9 @@ mark.ev-hit {
 	display: none;
 }
 
-/* 面板本体：居中卡片，宽 min(860px, 94vw)，高封顶 88vh、内部滚动 */
+/* 面板本体：居中卡片，宽 min(860px, 94vw)，高封顶 88vh、内部滚动；右下角可拖拽放大 */
 .ev-panel {
+	position: relative;
 	--dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
 	width: min(860px, 94vw);
 	max-height: 88vh;
@@ -1145,6 +1146,23 @@ mark.ev-hit {
 	background: var(--dsw-alias-bg-layer-1);
 	box-shadow: var(--dsw-elevation-stroke);
 	overscroll-behavior: contain;
+}
+
+/* 右下角拖拽把手：斜纹样式，拖动改宽高（最小 480×240，视口内） */
+.ev-panel-resize {
+	position: absolute;
+	right: 0;
+	bottom: 0;
+	width: 16px;
+	height: 16px;
+	cursor: nwse-resize;
+	touch-action: none;
+	background: linear-gradient(135deg, transparent 0 55%, var(--dsw-alias-border-l3) 55% 62%, transparent 62% 72%, var(--dsw-alias-border-l3) 72% 79%, transparent 79% 89%, var(--dsw-alias-border-l3) 89% 96%, transparent 96%);
+	border-bottom-right-radius: var(--dsw-radius-md);
+}
+
+.ev-panel-close {
+	margin-left: auto;
 }
 
 /* 头部：拖动把手 + 工具条（译/⧉/⚙）；头部空白处可按住拖动弹窗 */

@@ -671,7 +671,7 @@ const check = (label, cond, extra = "") => {
 			!appSource.includes("row.after(panel)") &&
 			!appSource.includes("rowAnchor"),
 	);
-	check("弹窗关闭路径齐全：遮罩点击/Esc/再点同一行", appSource.includes("if (e.target === panelOverlay) closePanel()") && appSource.includes("if (state.openId) {\n\t\t\tclosePanel();") && appSource.includes("state.openId === id"));
+	check("详情弹窗仅关闭按钮可关：无遮罩点击/Esc/toggle 收起", appSource.includes('getElementById("dv-close")?.addEventListener("click", closePanel)') && !appSource.includes("if (e.target === panelOverlay) closePanel()") && !appSource.includes("if (state.openId === id) {\n\t\tclosePanel();") && !appSource.includes("if (state.openId) {\n\t\t\tclosePanel();"));
 
 	// ---- 回归守卫：会话表头的分组总开关 ----
 	check("主题首帧由服务端 __TW_BOOT__ 注入，不再读 tw.theme", indexSource.includes("__TW_BOOT__") && !indexSource.includes('localStorage.getItem("tw.theme")'));
@@ -723,7 +723,7 @@ const check = (label, cond, extra = "") => {
 	check("详情弹窗：行不在（被过滤/折叠）即收起，行在则高亮", appSource.includes("function attachOpenPanel") && appSource.includes('mainInner.querySelector(`.ev[data-eid="${state.openId}"]`)') && appSource.includes('row.classList.add("is-open")'));
 	check("renderMain 末尾同步弹窗状态（行重建后行没了收起/高亮同步，弹窗不重建）", appSource.includes("行被过滤/折叠掉时收起弹窗，行还在则同步 is-open 高亮（弹窗本体常驻 overlay 不重建）\n\tattachOpenPanel();"));
 	check("再点同一行收起（toggle）", appSource.includes("state.openId === id") && appSource.includes("closePanel();"));
-	check("面板头只剩拖动把手与工具条（无分类徽章/标题/关闭按钮），工具靠左", /class="ev-panel-head">\s*<span class="ev-panel-grip"[^>]*>[^<]*<\/span>\s*<div class="ev-panel-tools">\s*<button id="dv-translate"/.test(indexSource) && !indexSource.includes('id="dv-kind"') && !indexSource.includes('id="dv-title"') && !indexSource.includes('id="dv-close"') && !appSource.includes("dv-kind") && !appSource.includes("dv-title") && !appSource.includes("dv-close") && !styleSource.includes(".dv-kind"));
+	check("面板头：拖动把手 + 工具条靠左 + 关闭按钮靠右（无徽章/标题）", /class="ev-panel-head">\s*<span class="ev-panel-grip"[^>]*>[^<]*<\/span>\s*<div class="ev-panel-tools">/.test(indexSource) && indexSource.includes('id="dv-close"') && indexSource.includes("ev-panel-close") && !indexSource.includes('id="dv-kind"') && !indexSource.includes('id="dv-title"') && !appSource.includes("dv-kind") && !appSource.includes("dv-title") && !styleSource.includes(".dv-kind"));
 	check("面板头部带工具条：译/⧉/⚙，仍作用于当前展开行", /class="ev-panel-head"[\s\S]*?id="dv-translate"[\s\S]*?id="dv-copy"[\s\S]*?id="dv-settings"/.test(indexSource));
 	check("翻译/复制仍以 dv-body 为正文源（工具条迁移后目标不变）", appSource.includes('el("dv-body").querySelectorAll(".md")') && appSource.includes("function panelCopyText") && appSource.includes("async function translatePanel"));
 	check("展开行高亮 + 面板样式就位", appSource.includes('classes.push("is-open")') && styleSource.includes(".ev.is-open") && styleSource.includes(".ev-panel"));

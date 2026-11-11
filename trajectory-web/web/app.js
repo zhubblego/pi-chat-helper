@@ -1388,12 +1388,9 @@ async function loadFull(id) {
 	}
 }
 
-/** 展开轨迹行详情为居中弹窗（再点同一行收起）；行不可见时不展开。 */
+/** 打开轨迹行详情为居中弹窗；仅关闭按钮可关闭（点同一行/遮罩/Esc 均不关，换行切换内容）。 */
 function openPanel(id) {
-	if (state.openId === id) {
-		closePanel();
-		return;
-	}
+	if (state.openId === id) return;
 	state.openId = id;
 	state.openFull = null;
 	const light = findEvent(id);
@@ -2483,7 +2480,7 @@ el("dv-settings-menu").addEventListener("click", (e) => {
 	else if (item.dataset.lang) applyTranslateSetting({ lang: item.dataset.lang });
 	else if (item.dataset.mode) applyTranslateSetting({ mode: item.dataset.mode });
 });
-// 详情弹窗可拖动：头部空白/把手处按住拖动，transform 偏移；打开新事件/关闭时复位居中
+// 详情弹窗可拖动：头部空白/把手处按住拖动，transform 偏移；打开新事件/关闭时复位居中并恢复默认尺寸
 const panelOffset = { x: 0, y: 0 };
 function applyPanelOffset() {
 	panel.style.transform = panelOffset.x || panelOffset.y ? `translate(${panelOffset.x}px, ${panelOffset.y}px)` : "";
@@ -2491,6 +2488,8 @@ function applyPanelOffset() {
 function resetPanelOffset() {
 	panelOffset.x = 0;
 	panelOffset.y = 0;
+	panel.style.width = "";
+	panel.style.height = "";
 	applyPanelOffset();
 }
 panel.addEventListener("pointerdown", (e) => {
@@ -2504,6 +2503,29 @@ panel.addEventListener("pointerdown", (e) => {
 		panelOffset.x = Math.max(-(innerWidth / 2 - 40), Math.min(innerWidth / 2 - 40, start.dx + ev.clientX - start.x));
 		panelOffset.y = Math.max(-(innerHeight / 2 - 40), Math.min(innerHeight / 2 - 40, start.dy + ev.clientY - start.y));
 		applyPanelOffset();
+	};
+	const onEnd = () => {
+		window.removeEventListener("pointermove", onMove);
+		window.removeEventListener("pointerup", onEnd);
+		window.removeEventListener("pointercancel", onEnd);
+	};
+	window.addEventListener("pointermove", onMove);
+	window.addEventListener("pointerup", onEnd);
+	window.addEventListener("pointercancel", onEnd);
+});
+// 详情弹窗可拖拽放大：右下角把手拖动改宽高（clamp 到视口内）；仅关闭按钮可关闭
+document.getElementById("dv-close")?.addEventListener("click", closePanel);
+const panelResize = document.querySelector(".ev-panel-resize");
+panelResize?.addEventListener("pointerdown", (e) => {
+	if (e.button !== 0) return;
+	e.preventDefault();
+	e.stopPropagation();
+	const rect = panel.getBoundingClientRect();
+	const start = { x: e.clientX, y: e.clientY, w: rect.width, h: rect.height };
+	const onMove = (ev) => {
+		// 最小可读 480×240，最大不超视口（留 24px 边）
+		panel.style.width = `${Math.max(480, Math.min(innerWidth - 24, Math.round(start.w + ev.clientX - start.x)))}px`;
+		panel.style.height = `${Math.max(240, Math.min(innerHeight - 24, Math.round(start.h + ev.clientY - start.y)))}px`;
 	};
 	const onEnd = () => {
 		window.removeEventListener("pointermove", onMove);
@@ -2549,10 +2571,7 @@ el("back-main").addEventListener("click", () => {
 		renderMain();
 	}
 });
-// 点遮罩空白处关闭详情弹窗（面板本体点击不冒泡到这层判定）
-panelOverlay?.addEventListener("click", (e) => {
-	if (e.target === panelOverlay) closePanel();
-});
+// 遮罩点击不关闭：详情弹窗仅由关闭按钮（dv-close）或行被过滤/折叠时自动收起
 document.addEventListener("keydown", (e) => {
 	if (e.key === "Escape") {
 		// 对话栏优先：流式中 Esc = 停止生成，否则交给原有抽屉/面板链
@@ -2565,10 +2584,7 @@ document.addEventListener("keydown", (e) => {
 			setSettingsOpen(false);
 			return;
 		}
-		if (state.openId) {
-			closePanel();
-			return;
-		}
+		// 详情弹窗不响应 Esc：仅关闭按钮可关（面板内菜单的 Esc 已在上面处理）
 		if (state.chatOpen) {
 			setChatOpen(false);
 			return;
