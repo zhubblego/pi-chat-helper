@@ -161,7 +161,15 @@ async function main() {
 
 	targetBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 	await new Promise((resolve) => setTimeout(resolve, 20));
-	check("目标菜单打开：自动 + 两个 PID 共 3 项", !targetMenu.hidden && targetMenu.querySelectorAll("[data-forward-target]").length === 3, targetMenu.outerHTML.slice(0, 200));
+	check(
+		"目标菜单打开：自动 + 两个 PID 共 3 项，控制台项带状态点",
+		!targetMenu.hidden &&
+			targetMenu.querySelectorAll("[data-forward-target]").length === 3 &&
+			targetMenu.querySelector('[data-forward-target="1728"] .console-status-dot.is-idle') !== null &&
+			targetMenu.querySelector('[data-forward-target="4201"] .console-status-dot.is-working') !== null &&
+			targetMenu.querySelector('[data-forward-target="auto"] .console-status-dot') === null,
+		targetMenu.outerHTML.slice(0, 300),
+	);
 	const pidItem = targetMenu.querySelector('[data-forward-target="4201"]');
 	pidItem.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 	await new Promise((resolve) => setTimeout(resolve, 20));

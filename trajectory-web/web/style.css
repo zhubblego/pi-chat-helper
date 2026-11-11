@@ -2018,6 +2018,18 @@ mark.ev-hit {
 	border-style: dashed;
 }
 
+/* 转发目标菜单项内的状态点：直接挂状态类（working 实心/idle 空心），不依赖父级按钮 */
+.console-status-dot.is-working {
+	border-color: transparent;
+	background: var(--dsw-alias-state-success-primary);
+}
+
+.chat-profile-option-label .console-status-dot {
+	display: inline-block;
+	margin-right: 5px;
+	vertical-align: middle;
+}
+
 .chat-context {
 	display: inline-flex;
 	align-items: center;

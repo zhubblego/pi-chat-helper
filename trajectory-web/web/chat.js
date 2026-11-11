@@ -1023,7 +1023,7 @@ export function initChatPanel(deps) {
 		renderForwardTargetMenu();
 	}
 
-	function forwardOptionButton(datasetKey, value, label, hint, current) {
+	function forwardOptionButton(datasetKey, value, label, hint, current, state = null) {
 		return h(
 			"button",
 			{
@@ -1037,7 +1037,14 @@ export function initChatPanel(deps) {
 			h(
 				"span",
 				{ class: "chat-profile-option-body" },
-				h("span", { class: "chat-profile-option-label", text: label }),
+				h(
+					"span",
+					{ class: "chat-profile-option-label" },
+					state === "working" || state === "idle"
+						? h("span", { class: `console-status-dot is-${state}`, "aria-hidden": "true" })
+						: null,
+					h("span", { text: label }),
+				),
 				h("span", { class: "chat-profile-option-hint", text: hint }),
 			),
 		);
@@ -1074,7 +1081,7 @@ export function initChatPanel(deps) {
 			nodes.push(forwardOptionButton("forwardTarget", "auto", "自动", "唯一控制台时直接转发，多个时需选择", targetPid === null));
 			for (const item of candidates) {
 				if (!Number.isInteger(item?.pid)) continue;
-				nodes.push(forwardOptionButton("forwardTarget", String(item.pid), `PID ${item.pid}`, consoleChoiceHint(item), targetPid === item.pid));
+				nodes.push(forwardOptionButton("forwardTarget", String(item.pid), `PID ${item.pid}`, consoleChoiceHint(item), targetPid === item.pid, item.state));
 			}
 		}
 		forwardTargetMenuEl.replaceChildren(...nodes);
