@@ -213,7 +213,11 @@ export function initChatPanel(deps) {
 		if (mode === state.mode) return;
 		const session = currentSession();
 		if (!session) return;
-		if (mode === "forward" && !currentConsoleInfo()) return;
+		if (mode === "forward" && !currentConsoleInfo()) {
+			pushNotice("未检测到可转发控制台，无法切换到转发模式", "warn");
+			flushRender();
+			return;
+		}
 		if (input) state.drafts[state.mode] = input.value;
 		if (mode === "forward") {
 			closePalette({ restore: false, clearInput: false, focus: false });
@@ -922,12 +926,11 @@ export function initChatPanel(deps) {
 		const forward = state.mode === "forward";
 		const info = currentConsoleInfo();
 		const hasConsole = Boolean(info);
-		// 单钮反转：文案/高亮显示当前模式，点击切到另一模式；独立模式下无控制台时禁用
+		// 单钮反转：文案/高亮显示当前模式，点击切到另一模式；无控制台时不灰死，由 setMode 提示拦截
 		if (modeToggleBtn) {
 			modeToggleBtn.textContent = forward ? "转发" : "独立";
 			modeToggleBtn.setAttribute("data-mode", state.mode);
 			modeToggleBtn.setAttribute("aria-pressed", String(forward));
-			modeToggleBtn.disabled = !forward && !hasConsole;
 			modeToggleBtn.title = forward
 				? "转发到当前控制台：点击切回独立对话"
 					: hasConsole

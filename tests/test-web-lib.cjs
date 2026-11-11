@@ -777,7 +777,8 @@ const check = (label, cond, extra = "") => {
 			indexSource.includes('id="chat-forward-delivery"') &&
 			chatSource.includes("function setMode") &&
 			chatSource.includes('state.mode === "forward" ? "independent" : "forward"') &&
-			chatSource.includes("modeToggleBtn.disabled = !forward && !hasConsole") &&
+			chatSource.includes('pushNotice("未检测到可转发控制台，无法切换到转发模式", "warn")') &&
+			!chatSource.includes("modeToggleBtn.disabled = !forward && !hasConsole") &&
 			chatSource.includes("function sendForward") &&
 			chatSource.includes("/api/chat/forward") &&
 			chatSource.includes("forwardLogs") &&
