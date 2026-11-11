@@ -21,28 +21,23 @@
 		})();
 	</script>
 	<header id="topbar">
+		<div class="brand">
+			<span id="sync-dot" class="dot"></span>
+			<span class="brand-name">轨迹观察</span>
+		</div>
 		<div id="session-meta" class="session-meta">加载中…</div>
 		<div class="topbar-right">
 			<button id="theme-btn" class="tb-btn icon-btn" type="button" title="主题：跟随系统（点击切换）" aria-label="主题：跟随系统（点击切换）"></button>
 			<button id="chat-btn" class="tb-btn icon-btn" type="button" title="打开侧边对话" aria-label="打开侧边对话" aria-pressed="false">
 				<svg class="tb-icon" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3c0-.9.7-1.6 1.6-1.6h4.8c.9 0 1.6.7 1.6 1.6v3c0 .9-.7 1.6-1.6 1.6H5.5L3.7 9.8V7.6h-.1C2.7 7.6 2 6.9 2 6z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>
 			</button>
-			<span id="sync-dot" class="dot"></span>
+			<span id="scope-badge" class="scope-badge"></span>
 			<span id="sync" class="sync">—</span>
 		</div>
 	</header>
 	<div id="layout">
 		<nav id="agent-rail" class="agent-rail" aria-label="轨迹源选择"></nav>
 		<aside id="sidebar">
-			<div class="sidebar-brand">
-				<span class="sidebar-brand-mark" aria-hidden="true">✦</span>
-				<span class="sidebar-brand-name">轨迹观察<small>Pi / Codex 轨迹回看</small></span>
-			</div>
-			<nav class="sidebar-nav" aria-label="页面导航">
-				<button class="nav-item active" type="button" aria-current="page"><span aria-hidden="true">◷</span>轨迹</button>
-				<button class="nav-item" type="button" disabled title="下一步实现"><span aria-hidden="true">▤</span>知识</button>
-				<button class="nav-item" type="button" disabled title="下一步实现"><span aria-hidden="true">☷</span>蒸馏任务</button>
-			</nav>
 			<section id="session-section" class="sidebar-block session-section">
 				<div class="section-head">
 					<button id="groups-toggle" class="section-toggle" type="button" aria-expanded="true" title="收起所有分组">
@@ -54,10 +49,6 @@
 			</section>
 		</aside>
 		<main id="main">
-			<div class="page-head">
-				<h1 class="page-title">轨迹</h1>
-				<span id="scope-badge" class="scope-badge"></span>
-			</div>
 			<div id="toolbar" class="toolbar" role="toolbar" aria-label="轨迹工具栏">
 				<button id="back-main" class="tb-btn" type="button" hidden title="返回主会话"><span class="tb-icon" aria-hidden="true">⟨</span><span>主会话</span></button>
 				<span class="tb-sep" aria-hidden="true"></span>
