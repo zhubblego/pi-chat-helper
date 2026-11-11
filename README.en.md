@@ -4,42 +4,45 @@
 
 An extension package for [pi coding agent](https://github.com/earendil-works/pi-coding-agent): **replay full session trajectories in the browser** (trajectory-web), and **jump back to any past question inside the TUI** (question-panel). The trajectory viewer is not limited to pi — whichever agent has sessions on the host gets a lit button in the left-hand agent selector bar (currently pi and Codex).
 
-![Light theme](screenshots/light.png)
+![Trajectory page (light)](screenshots/light.png)
 
-*Light theme: session sidebar + question sidebar + trajectory segmented by question, tool calls paired with results*
-
-![Dark theme](screenshots/dark.png)
-
-*Dark theme: the detail modal — Markdown tables and mermaid diagrams; theme follows the system or can be pinned*
+*Trajectory page: session sidebar + question sidebar + trajectory segmented by question, tool calls paired with results*
 
 ## Key Features
 
 ### Trajectory replay · trajectory-web
 
-- **Full trajectories segmented by question**: session sidebar on the left (grouped by project in mode B, live sessions with a live badge) + question sidebar; on the right the trajectory is segmented by question — the original question, chain of thought, tool calls paired with results, output text, errors, and context events in order; errors and turn outputs are highlighted, turns can be collapsed; the frontend refreshes incrementally every 2 seconds.
-- **Detail modal**: click any entry to open a centered modal with Markdown rendering (markdown-it: GFM tables, task lists, strikethrough), ```mermaid``` code blocks rendered automatically as SVG diagrams (lazy-loaded, failures keep the source code), tool parameters/results, tokens and durations, and sub-calls; the modal is draggable and resizable from its bottom-right corner.
-- **Multiple agent sources**: native parsing for pi (branch tree, tool pairing, usage stats) plus a translation layer for Codex (messages, thinking, tool pairing, compaction, model switches, effort levels); the agent selector bar lights up every source available on the host, and the URL hash remembers source/session/detail position so everything restores after a refresh.
-- **Derived session jumps** (Codex source): every `spawn_agent` call in the trajectory is a derived-session row — click it to enter the child session it spawned, or click `⟨ 主会话` to go back to the parent session with that row highlighted; pi sub-agents are nested inside the parent session, no jump needed.
-- **Search and filters**: session-level full-text index (space-separated AND, case-insensitive, hit highlighting, turns without hits auto-hidden); a collapsible filter button group in the question sidebar (question/thinking/tool/output/context/error) plus multi-select tool-name filters (grouped by built-in / `MCP:` / extension package).
-- **Translate and copy**: Markdown paragraphs and system prompt sections translated paragraph by paragraph (Microsoft / Google channels, no key required), bilingual side-by-side or translation-only, target language selectable (simplified/traditional Chinese, English, Japanese); one-click copy of the original or the translation.
-- **Persistent habits**: filter state, tool exclusions, theme, and translation preferences are persisted server-side in SQLite and inherited across sessions and sources.
-- **Light and dark themes**: deepseek-style design tokens, follow the system or pin manually; the first frame is injected by the server to prevent flashing.
+Replay the full trajectory segmented by question: chain of thought, tool calls paired with results, answers, errors, and context events in order; errors and answers are highlighted, turns can be collapsed, and live sessions carry a live badge.
+
+**Message type filters** — question, thinking, tool, process, answer, context, error, and approval combine freely, tool names are multi-selectable; filter preferences persist across sessions.
+
+![Filter menu](screenshots/filter-menu.png)
+
+**Detail modal** — click any entry to expand it: Markdown, tables, mermaid diagrams, tool parameters and results, tokens and durations; the modal is draggable and resizable from its bottom-right corner.
+
+![Detail modal](screenshots/detail-modal.png)
+
+Also:
+
+- Full-text search: hit highlighting, turns without hits auto-collapse
+- Multiple agent sources: native pi parsing + Codex trajectory translation; Codex derived sessions jump on click, one click back to the parent
+- Paragraph-by-paragraph translation (Microsoft / Google, no key), bilingual or translation-only; one-click copy
+- Light and dark themes follow the system or pin manually; the URL remembers source, session, and position — refresh restores everything
 
 ### Chat page · chat
 
-Ask pi directly in the browser about any trajectory session — without touching the TUI session you are working in:
+Ask pi directly in the browser about any trajectory session — answers come from an independent child process, so your TUI session is never touched.
 
-- **Independent RPC child process**: the server answers via a `pi --mode rpc` child process; `/new` starts a new thread, `/resume` switches back to a historical thread; one child per trajectory session, at most 2 globally, idle ones recycled after 15 minutes.
-- **Context as a tool**: check trajectory entries to send a `<trajectory_index>` list along with your message; the model fetches full texts by id through the read-only `read_trajectory` tool (6k chars per entry / 12k per call); works for both pi and Codex sources.
-- **Models and skills**: `/model` lists the models in your explicit configuration set and switches via `set_model` (current model + effort level shown in a single trigger); `/skill` reuses pi's native command expansion, project skills optional.
-- **Three tool profiles**: `no-tools` (chat only) / `read-only` (default: read-only trajectory tools + read project files) / `full` (write files and run commands, approval per turn).
-- **Console forwarding**: switch to "forward" to send your question straight into a pi TUI console that has pi-chat-helper loaded — answers and tool approvals happen in the console; idle consoles send immediately, busy ones queue by default (interrupt optional), and multiple consoles pop up a candidate picker; a single toggle flips between "independent / forward".
-- **Threads stored separately**: chat threads are independent pi sessions under `<agentDir>/pi-chat-helper/chats`, invisible to pi's own `/resume`; deleting them does not affect trajectory history.
-- **Safe defaults**: loopback-only listening, Host/Origin validation on POST; chat is automatically disabled when listening on a non-loopback address (trajectory viewing is unaffected).
+![Chat page](screenshots/chat.png)
+
+- Check trajectory entries as context; the model fetches full texts on demand via a read-only tool
+- `/model` to switch models, `/skill` for skills, three tool profiles (chat-only / read-only / full, approval per turn)
+- "Forward" mode sends your question into a pi TUI console — answers and approvals happen there
+- Chat threads are stored separately; deleting them never affects trajectory history, and the service listens on loopback only
 
 ### TUI question panel · question-panel
 
-`/questions` opens a floating panel (docked to the top-right): single-click an entry to jump the transcript back to that question; double-click / `d` to enter the turn analysis view (thinking → tools → output node tree, `t` shows only the chain of thought); `/questions 50` (columns) or `/questions 60%` (percent) adjusts the width; ↑↓ to select, Enter to jump, q / Esc to close.
+`/questions` opens a floating panel (docked to the top-right): single-click an entry to jump the transcript back to that question; double-click / `d` to enter the turn analysis view (thinking → tools → output node tree); ↑↓ to select, Enter to jump, q / Esc to close. `/questions 50` (columns) or `/questions 60%` (percent) adjusts the width.
 
 ## Install
 
