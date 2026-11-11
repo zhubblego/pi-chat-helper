@@ -22,6 +22,14 @@ Replay the full trajectory segmented by question: chain of thought, tool calls p
 
 ![Detail modal](screenshots/detail-modal.png)
 
+**Crop and distill** — two editing modes that manage context right on the trajectory:
+
+![Crop and distill](screenshots/crop-distill.png)
+
+- **Crop**: click the scissors to cut a whole round or a single entry out of the model's context — the model no longer sees them in later turns; click again to undo. Only the current pi session can be cropped; other sessions are read-only
+- **Distill**: check valuable entries (the round header selects the whole round) as context for the chat page, sent along with your message to the model
+- Both modes can be on at once; selection and cropping never affect each other
+
 Also:
 
 - Full-text search: hit highlighting, turns without hits auto-collapse
@@ -35,7 +43,7 @@ Ask pi directly in the browser about any trajectory session — answers come fro
 
 ![Chat page](screenshots/chat.png)
 
-- Check trajectory entries as context; the model fetches full texts on demand via a read-only tool
+- Use distill mode to check trajectory entries as context; the model fetches full texts on demand via a read-only tool
 - `/model` to switch models, `/skill` for skills, three tool profiles (chat-only / read-only / full, approval per turn)
 - Chat threads are stored separately; deleting them never affects trajectory history, and the service listens on loopback only
 
