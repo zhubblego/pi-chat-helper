@@ -104,6 +104,8 @@
 							<div id="chat-palette-list" class="chat-palette-list" role="listbox" aria-label="斜杠命令"></div>
 						</div>
 						<div id="chat-profile-menu" class="chat-profile-menu" role="menu" hidden></div>
+						<div id="chat-forward-target-menu" class="chat-profile-menu" role="menu" hidden></div>
+						<div id="chat-forward-delivery-menu" class="chat-profile-menu" role="menu" hidden></div>
 						<div id="chat-context-menu" class="chat-context-menu" role="dialog" aria-label="上下文" hidden></div>
 					</div>
 					<div class="chat-accessory">
@@ -128,12 +130,17 @@
 									<svg class="chat-trigger-chevron" viewBox="0 0 12 12" width="12" height="12" fill="none" aria-hidden="true"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
 								</button>
 							</div>
+							<button id="chat-forward-target" class="chat-forward-target" type="button" hidden aria-haspopup="menu" aria-expanded="false" title="转发目标">
+								<span class="console-status-dot" aria-hidden="true"></span>
+								<span id="chat-forward-target-label" class="chat-trigger-label">自动</span>
+								<svg class="chat-trigger-chevron" viewBox="0 0 12 12" width="12" height="12" fill="none" aria-hidden="true"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+							</button>
+							<button id="chat-forward-delivery" class="chat-forward-delivery" type="button" hidden aria-haspopup="menu" aria-expanded="false" title="控制台忙碌时的转发方式">
+								<span id="chat-forward-delivery-label" class="chat-trigger-label">排队</span>
+								<svg class="chat-trigger-chevron" viewBox="0 0 12 12" width="12" height="12" fill="none" aria-hidden="true"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+							</button>
 						</div>
 						<div class="chat-trailing">
-							<select id="chat-forward-delivery" class="chat-forward-delivery" hidden title="控制台忙碌时的转发方式" aria-label="转发方式">
-								<option value="auto">排队</option>
-								<option value="steer">插话</option>
-							</select>
 							<div class="chat-standard-controls">
 								<button id="chat-model-label" class="chat-model-label" type="button" aria-haspopup="menu" aria-expanded="false" title="模型与思考级别">
 									<span id="chat-model-name" class="chat-trigger-label">读取模型中…</span>

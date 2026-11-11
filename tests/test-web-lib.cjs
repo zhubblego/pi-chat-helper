@@ -30,7 +30,7 @@ const check = (label, cond, extra = "") => {
 		isCurrentTurn,
 		modelLabel,
 		consoleStatusLabel,
-		consoleChoiceLabel,
+		consoleChoiceHint,
 		readChatMode,
 		writeChatMode,
 		forwardStatusLabel,
@@ -206,11 +206,11 @@ const check = (label, cond, extra = "") => {
 	const choiceStartedAt = new Date(2026, 10, 10, 9, 41, 0).toISOString();
 	const choiceBase = { pid: 4201, state: "idle", startedAt: choiceStartedAt, heartbeatAt: choiceStartedAt };
 	check(
-		"consoleChoiceLabel：pid/状态/打开时间；缺字段降级",
-		consoleChoiceLabel(choiceBase) === "pid 4201 · 空闲 · 09:41 打开" &&
-			consoleChoiceLabel({ ...choiceBase, state: "working" }) === "pid 4201 · 运行中 · 09:41 打开" &&
-			consoleChoiceLabel({ pid: 4202, state: "unknown" }) === "pid 4202 · 状态未知" &&
-			consoleChoiceLabel({}) === "pid ? · 状态未知",
+		"consoleChoiceHint：状态+打开时间；缺字段降级",
+		consoleChoiceHint(choiceBase) === "空闲 · 09:41 打开" &&
+			consoleChoiceHint({ ...choiceBase, state: "working" }) === "运行中 · 09:41 打开" &&
+			consoleChoiceHint({ pid: 4202, state: "unknown" }) === "状态未知" &&
+			consoleChoiceHint({}) === "状态未知",
 	);
 	const modeMap = { "pi:a": "forward", "codex:b": "forward" };
 	const modeWritten = writeChatMode(modeMap, "pi:c", "forward");
@@ -782,7 +782,8 @@ const check = (label, cond, extra = "") => {
 			chatSource.includes("function sendForward") &&
 			chatSource.includes("/api/chat/forward") &&
 			chatSource.includes("forwardLogs") &&
-			chatSource.includes("forwardDeliveryEl") &&
+			chatSource.includes("forwardDeliveryBtn") &&
+			chatSource.includes("forwardTargetBtn") &&
 			chatSource.includes("state.mode === \"forward\"") &&
 			styleSource.includes(".chat-mode-toggle") &&
 			styleSource.includes('.chat-mode-toggle[data-mode="forward"]') &&
@@ -830,7 +831,7 @@ const check = (label, cond, extra = "") => {
 			!indexSource.includes('id="chat-head"'),
 		modelLabelTag,
 	);
-	const selectBlock = /\.chat-profile,\n\.chat-model-label \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
+	const selectBlock = /\.chat-profile,\n\.chat-model-label,\n\.chat-forward-target,\n\.chat-forward-delivery \{[^}]*\}/s.exec(styleSource)?.[0] ?? "";
 	check(
 		"模型/权限 trigger：dsh gap4/28px/padding 0 4 0 8/radius-sm/透明底",
 		/display: inline-flex/.test(selectBlock) &&

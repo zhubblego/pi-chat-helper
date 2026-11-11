@@ -1344,7 +1344,9 @@ mark.ev-hit {
 
 /* 输入卡状态：dsh PermissionSelect / ModelSelect 的 trigger（无顶部对话头） */
 .chat-profile,
-.chat-model-label {
+.chat-model-label,
+.chat-forward-target,
+.chat-forward-delivery {
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
@@ -1381,6 +1383,17 @@ mark.ev-hit {
 	white-space: nowrap;
 }
 
+.chat-forward-target {
+	flex: none;
+	gap: 5px;
+	max-width: 220px;
+}
+
+.chat-forward-delivery {
+	flex: none;
+	max-width: 120px;
+}
+
 .chat-model-effort {
 	flex-shrink: 1000;
 	min-width: 0;
@@ -1398,13 +1411,17 @@ mark.ev-hit {
 
 @media (hover: hover) {
 	.chat-profile:hover:not(:disabled),
-	.chat-model-label:hover:not(:disabled) {
+	.chat-model-label:hover:not(:disabled),
+	.chat-forward-target:hover:not(:disabled),
+	.chat-forward-delivery:hover:not(:disabled) {
 		background: var(--dsw-alias-interactive-bg-hover);
 	}
 }
 
 .chat-profile:focus-visible,
-.chat-model-label:focus-visible {
+.chat-model-label:focus-visible,
+.chat-forward-target:focus-visible,
+.chat-forward-delivery:focus-visible {
 	box-shadow: 0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
 }
 
@@ -1415,13 +1432,17 @@ mark.ev-hit {
 }
 
 .chat-profile[aria-expanded="true"],
-.chat-model-label[aria-expanded="true"] {
+.chat-model-label[aria-expanded="true"],
+.chat-forward-target[aria-expanded="true"],
+.chat-forward-delivery[aria-expanded="true"] {
 	background: var(--dsw-alias-interactive-bg-hover);
 	color: var(--dsw-alias-label-primary);
 }
 
 .chat-profile[aria-expanded="true"] .chat-trigger-chevron,
-.chat-model-label[aria-expanded="true"] .chat-trigger-chevron {
+.chat-model-label[aria-expanded="true"] .chat-trigger-chevron,
+.chat-forward-target[aria-expanded="true"] .chat-trigger-chevron,
+.chat-forward-delivery[aria-expanded="true"] .chat-trigger-chevron {
 	transform: rotate(180deg);
 }
 
@@ -1768,48 +1789,6 @@ mark.ev-hit {
 	color: var(--dsw-alias-label-secondary);
 }
 
-/* 同一会话被多个控制台持有时，候选选择面板（结构同 confirm，按钮可多个） */
-.chat-forward-choice {
-	align-self: stretch;
-	padding: 10px 12px;
-	border: 1px solid var(--dsw-alias-border-l2);
-	border-radius: var(--dsw-radius-md);
-	background: var(--dsw-alias-bg-layer-2);
-}
-
-.chat-forward-choice-text {
-	color: var(--dsw-alias-label-secondary);
-	font: var(--dsw-font-xs-13);
-	line-height: 20px;
-}
-
-.chat-forward-choice-actions {
-	display: flex;
-	flex-wrap: wrap;
-	justify-content: flex-end;
-	gap: 8px;
-	margin-top: 8px;
-}
-
-.chat-forward-choice-console,
-.chat-forward-choice-cancel {
-	border: 0;
-	border-radius: var(--dsw-radius-sm);
-	padding: 4px 10px;
-	font: var(--dsw-font-xs-13);
-	cursor: pointer;
-}
-
-.chat-forward-choice-console {
-	background: var(--dsw-alias-button-primary-fill);
-	color: var(--dsw-alias-label-primary-inverted);
-}
-
-.chat-forward-choice-cancel {
-	background: transparent;
-	color: var(--dsw-alias-label-secondary);
-}
-
 /* 只给屏幕阅读器的播报区：流式结束后只读最后一条，不重读整张消息表 */
 .chat-sr-only {
 	position: absolute;
@@ -2044,7 +2023,8 @@ mark.ev-hit {
 	border-radius: 2px;
 }
 
-.chat-console-status.is-working .console-status-dot {
+.chat-console-status.is-working .console-status-dot,
+.chat-forward-target.is-working .console-status-dot {
 	border-color: transparent;
 	background: var(--dsw-alias-state-success-primary);
 }
@@ -2055,11 +2035,14 @@ mark.ev-hit {
 }
 
 .chat-console-status.is-offline .console-status-dot,
-.chat-console-status.is-unavailable .console-status-dot {
+.chat-console-status.is-unavailable .console-status-dot,
+.chat-forward-target.is-offline .console-status-dot,
+.chat-forward-target.is-unavailable .console-status-dot {
 	border-color: var(--dsw-alias-label-tertiary);
 }
 
-.chat-console-status.is-unavailable .console-status-dot {
+.chat-console-status.is-unavailable .console-status-dot,
+.chat-forward-target.is-unavailable .console-status-dot {
 	border-style: dashed;
 }
 
@@ -2726,17 +2709,7 @@ mark.ev-hit {
 	cursor: default;
 }
 
-.chat-forward-delivery {
-	height: 28px;
-	max-width: 96px;
-	padding: 0 6px;
-	border: 1px solid var(--dsw-alias-border-l2);
-	border-radius: var(--dsw-radius-sm);
-	background: transparent;
-	color: var(--dsw-alias-label-secondary);
-	font-size: 12px;
-	cursor: pointer;
-}
+/* 转发目标/方式按钮下的状态点与文字间隔已由触发器 gap 提供；菜单复用 .chat-profile-menu */
 
 #chat-add {
 	display: grid;

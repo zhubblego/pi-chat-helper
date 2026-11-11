@@ -8,7 +8,7 @@
 import {
 	computeAnchoredMenuPosition,
 	contextSummaryLabel,
-	consoleChoiceLabel,
+	consoleChoiceHint,
 	filterPaletteItems,
 	formatChars,
 	formatContextWindow,
@@ -56,6 +56,22 @@ const CONTEXT_MENU_ANCHOR = Object.freeze({
 	maxWidth: "min(420px, 100%)",
 	maxHeight: 360,
 });
+const FORWARD_TARGET_MENU_ANCHOR = Object.freeze({
+	offset: 4,
+	align: "left",
+	minWidth: "min(220px, 100%)",
+	maxWidth: "min(360px, 100%)",
+});
+const FORWARD_DELIVERY_MENU_ANCHOR = Object.freeze({
+	offset: 4,
+	align: "left",
+	minWidth: "min(160px, 100%)",
+	maxWidth: "min(280px, 100%)",
+});
+const FORWARD_DELIVERY_OPTIONS = Object.freeze([
+	{ id: "auto", label: "排队", hint: "控制台忙碌时排队，空闲时立即执行" },
+	{ id: "steer", label: "插话", hint: "打断当前任务，插话优先处理" },
+]);
 const COMMAND_ITEMS = Object.freeze([
 	{ id: "new", label: "新对话", hint: "开一个新线程（旧线程可用 /resume 找回）", group: "命令", search: "new 新对话" },
 	{ id: "resume", label: "历史对话", hint: "切换回旧线程", group: "命令", search: "resume 历史 对话 线程" },
@@ -75,7 +91,12 @@ export function initChatPanel(deps) {
 	const modelBtn = el("chat-model-label");
 	const sendBtn = el("chat-send");
 	const modeToggleBtn = el("chat-mode-toggle");
-	const forwardDeliveryEl = el("chat-forward-delivery");
+	const forwardTargetBtn = el("chat-forward-target");
+	const forwardTargetLabelEl = el("chat-forward-target-label");
+	const forwardTargetMenuEl = el("chat-forward-target-menu");
+	const forwardDeliveryBtn = el("chat-forward-delivery");
+	const forwardDeliveryLabelEl = el("chat-forward-delivery-label");
+	const forwardDeliveryMenuEl = el("chat-forward-delivery-menu");
 	const announcer = el("chat-announcer");
 	const paletteEl = el("chat-palette");
 	const paletteListEl = el("chat-palette-list");
@@ -148,6 +169,10 @@ export function initChatPanel(deps) {
 		forwardSeq: 0,
 		forwardConfirm: null,
 		forwardChoice: null,
+		forwardTargets: new Map(),
+		forwardCandidates: new Map(),
+		forwardTargetMenu: false,
+		forwardDeliveryMenu: false,
 		approvals: [],
 		approvalChecked: false,
 		approvalBusy: false,
@@ -229,6 +254,8 @@ export function initChatPanel(deps) {
 		state.forwardSeq++;
 		state.forwardConfirm = null;
 		state.forwardChoice = null;
+		state.forwardTargetMenu = false;
+		state.forwardDeliveryMenu = false;
 		saveModeFor(sessionKeyOf(session), mode);
 		if (input) {
 			input.value = state.drafts[mode] ?? "";
@@ -668,7 +695,6 @@ export function initChatPanel(deps) {
 								onClick: () => {
 									state.forwardConfirm = null;
 									state.forwardDelivery = "auto";
-									if (forwardDeliveryEl) forwardDeliveryEl.value = "auto";
 									render();
 								},
 							},
@@ -676,41 +702,6 @@ export function initChatPanel(deps) {
 					),
 				),
 						);
-		}
-		const choice = state.forwardChoice;
-		if (choice && choice.key === currentKey()) {
-			nodes.push(
-				h(
-					"div",
-					{ class: "chat-forward-choice" },
-					h("div", { class: "chat-forward-choice-text", text: `当前会话被 ${choice.consoles.length} 个控制台同时持有，选择转发目标：` }),
-					h(
-						"div",
-						{ class: "chat-forward-choice-actions" },
-						...choice.consoles.map((item) =>
-							h("button", {
-								class: "chat-forward-choice-console",
-								type: "button",
-								text: consoleChoiceLabel(item),
-								onClick: () => {
-									const replay = { text: choice.text, delivery: choice.delivery, pid: item.pid };
-									state.forwardChoice = null;
-									void sendForward(replay);
-								},
-							}),
-						),
-						h("button", {
-							class: "chat-forward-choice-cancel",
-							type: "button",
-							text: "取消",
-							onClick: () => {
-								state.forwardChoice = null;
-								render();
-							},
-						}),
-					),
-				),
-			);
 		}
 		const log = currentForwardLog();
 		if (!log.length) {
@@ -941,17 +932,221 @@ export function initChatPanel(deps) {
 		const profileBtn = el("chat-profile");
 		if (profileBtn) profileBtn.hidden = forward;
 		if (modelBtn) modelBtn.hidden = forward;
-		if (forwardDeliveryEl) {
-			const show = forward && info?.state === "working";
-			forwardDeliveryEl.hidden = !show;
-			if (state.forwardDelivery !== "auto" && state.forwardDelivery !== "steer") state.forwardDelivery = "auto";
-			forwardDeliveryEl.value = state.forwardDelivery;
+		renderForwardControls();
+	}
+
+	/** 转发目标/方式按钮：左下角常显（转发模式），状态用点表示，文字固定。 */
+	function renderForwardControls() {
+		const forward = state.mode === "forward";
+		const session = currentSession();
+		const show = forward && Boolean(session);
+		if (forwardTargetBtn) {
+			forwardTargetBtn.hidden = !show;
+			forwardTargetBtn.setAttribute("aria-expanded", String(state.forwardTargetMenu));
+		}
+		if (forwardDeliveryBtn) {
+			forwardDeliveryBtn.hidden = !show;
+			forwardDeliveryBtn.setAttribute("aria-expanded", String(state.forwardDeliveryMenu));
+		}
+		if (!show) return;
+		const key = sessionKeyOf(session);
+		const info = currentConsoleInfo();
+		const targetPid = state.forwardTargets.get(key) ?? null;
+		if (forwardTargetLabelEl) forwardTargetLabelEl.textContent = targetPid ? `PID ${targetPid}` : "自动";
+		if (forwardTargetBtn) {
+			let tone = "unavailable";
+			if (info) {
+				const record = targetPid && info.pid !== targetPid ? forwardCandidateByPid(key, targetPid) : info;
+				tone = record?.state === "working" || record?.state === "idle" ? record.state : state.consoleLost.has(key) ? "offline" : "unavailable";
+			} else if (state.consoleLost.has(key)) tone = "offline";
+			forwardTargetBtn.className = `chat-forward-target is-${tone}`;
+			forwardTargetBtn.title = targetPid
+				? `转发目标 PID ${targetPid}；点色表示状态（实心运行中/空心空闲）`
+				: "转发目标：自动（唯一控制台直接转发，多个时需选择）";
+		}
+		if (state.forwardDelivery !== "auto" && state.forwardDelivery !== "steer") state.forwardDelivery = "auto";
+		if (forwardDeliveryLabelEl) forwardDeliveryLabelEl.textContent = state.forwardDelivery === "steer" ? "插话" : "排队";
+	}
+
+	function forwardCandidateByPid(key, pid) {
+		const list = state.forwardCandidates.get(key);
+		return Array.isArray(list) ? list.find((item) => item?.pid === pid) ?? null : null;
+	}
+
+	function closeForwardTargetMenu() {
+		if (!state.forwardTargetMenu) return;
+		state.forwardTargetMenu = false;
+		renderForwardControls();
+		renderForwardTargetMenu();
+	}
+
+	function closeForwardDeliveryMenu() {
+		if (!state.forwardDeliveryMenu) return;
+		state.forwardDeliveryMenu = false;
+		renderForwardControls();
+		renderForwardDeliveryMenu();
+	}
+
+	function openForwardTargetMenu() {
+		if (state.mode !== "forward" || !currentSession()) return;
+		closeForwardDeliveryMenu();
+		closeProfileMenu();
+		closeContextMenu({ focus: false });
+		state.forwardTargetMenu = true;
+		renderForwardControls();
+		renderForwardTargetMenu();
+		void loadForwardCandidates();
+	}
+
+	function openForwardDeliveryMenu() {
+		if (state.mode !== "forward" || !currentSession()) return;
+		closeForwardTargetMenu();
+		closeProfileMenu();
+		closeContextMenu({ focus: false });
+		state.forwardDeliveryMenu = true;
+		renderForwardControls();
+		renderForwardDeliveryMenu();
+	}
+
+	async function loadForwardCandidates() {
+		const session = currentSession();
+		if (!session) return;
+		const key = sessionKeyOf(session);
+		try {
+			const res = await fetch(`/api/chat/consoles?source=pi&session=${encodeURIComponent(session.id)}`);
+			const data = await res.json();
+			if (currentKey() !== key || state.mode !== "forward") return;
+			state.forwardCandidates.set(key, Array.isArray(data?.consoles) ? data.consoles : []);
+		} catch {
+			if (currentKey() === key && state.mode === "forward" && !state.forwardCandidates.has(key)) {
+				state.forwardCandidates.set(key, []);
+			}
+		}
+		renderForwardControls();
+		renderForwardTargetMenu();
+	}
+
+	function forwardOptionButton(datasetKey, value, label, hint, current) {
+		return h(
+			"button",
+			{
+				class: `chat-profile-option${current ? " is-current" : ""}`,
+				type: "button",
+				role: "menuitemradio",
+				"aria-checked": String(current),
+				dataset: { [datasetKey]: value },
+			},
+			h("span", { class: "chat-profile-option-check", "aria-hidden": "true", text: current ? "✓" : "" }),
+			h(
+				"span",
+				{ class: "chat-profile-option-body" },
+				h("span", { class: "chat-profile-option-label", text: label }),
+				h("span", { class: "chat-profile-option-hint", text: hint }),
+			),
+		);
+	}
+
+	function renderForwardTargetMenu() {
+		if (!forwardTargetMenuEl) return;
+		forwardTargetBtn?.setAttribute("aria-expanded", String(state.forwardTargetMenu));
+		if (!state.forwardTargetMenu) {
+			forwardTargetMenuEl.hidden = true;
+			forwardTargetMenuEl.replaceChildren();
+			clearAnchoredMenu(forwardTargetMenuEl);
+			return;
+		}
+		forwardTargetMenuEl.hidden = false;
+		const key = currentKey();
+		const candidates = state.forwardCandidates.get(key);
+		const targetPid = state.forwardTargets.get(key) ?? null;
+		const nodes = [];
+		if (state.forwardChoice?.key === key) {
+			nodes.push(
+				h(
+					"div",
+					{ class: "chat-profile-confirm" },
+					h("div", { class: "chat-profile-confirm-text", text: "当前会话被多个控制台持有，选择转发目标" }),
+				),
+			);
+		}
+		if (!Array.isArray(candidates)) {
+			nodes.push(h("div", { class: "chat-palette-loading", text: "正在获取控制台…" }));
+		} else if (candidates.length === 0) {
+			nodes.push(h("div", { class: "chat-palette-empty", text: "没有在线控制台" }));
+		} else {
+			nodes.push(forwardOptionButton("forwardTarget", "auto", "自动", "唯一控制台时直接转发，多个时需选择", targetPid === null));
+			for (const item of candidates) {
+				if (!Number.isInteger(item?.pid)) continue;
+				nodes.push(forwardOptionButton("forwardTarget", String(item.pid), `PID ${item.pid}`, consoleChoiceHint(item), targetPid === item.pid));
+			}
+		}
+		forwardTargetMenuEl.replaceChildren(...nodes);
+		positionForwardTargetMenu();
+	}
+
+	function renderForwardDeliveryMenu() {
+		if (!forwardDeliveryMenuEl) return;
+		forwardDeliveryBtn?.setAttribute("aria-expanded", String(state.forwardDeliveryMenu));
+		if (!state.forwardDeliveryMenu) {
+			forwardDeliveryMenuEl.hidden = true;
+			forwardDeliveryMenuEl.replaceChildren();
+			clearAnchoredMenu(forwardDeliveryMenuEl);
+			return;
+		}
+		forwardDeliveryMenuEl.hidden = false;
+		forwardDeliveryMenuEl.replaceChildren(
+			...FORWARD_DELIVERY_OPTIONS.map((option) =>
+				forwardOptionButton("forwardDelivery", option.id, option.label, option.hint, state.forwardDelivery === option.id),
+			),
+		);
+		positionForwardDeliveryMenu();
+	}
+
+	function selectForwardTarget(value) {
+		const key = currentKey();
+		if (!key) return;
+		const pid = value === "auto" ? null : Number(value);
+		state.forwardTargets.set(key, Number.isInteger(pid) && pid > 0 ? pid : null);
+		closeForwardTargetMenu();
+		if (state.forwardChoice?.key === key) {
+			const choice = state.forwardChoice;
+			state.forwardChoice = null;
+			if (state.forwardTargets.get(key)) void sendForward({ text: choice.text, delivery: choice.delivery, pid: state.forwardTargets.get(key) });
 		}
 	}
 
-	/** 控制台状态条：独立模式只在有桥时显示；转发模式显示在线/离线/不可用。 */
+	function selectForwardDelivery(value) {
+		state.forwardDelivery = value === "steer" ? "steer" : "auto";
+		state.forwardConfirm = null;
+		state.forwardChoice = null;
+		closeForwardDeliveryMenu();
+	}
+
+	function positionForwardTargetMenu() {
+		if (!state.forwardTargetMenu) {
+			clearAnchoredMenu(forwardTargetMenuEl);
+			return;
+		}
+		positionAnchoredMenu(forwardTargetMenuEl, forwardTargetBtn, FORWARD_TARGET_MENU_ANCHOR);
+	}
+
+	function positionForwardDeliveryMenu() {
+		if (!state.forwardDeliveryMenu) {
+			clearAnchoredMenu(forwardDeliveryMenuEl);
+			return;
+		}
+		positionAnchoredMenu(forwardDeliveryMenuEl, forwardDeliveryBtn, FORWARD_DELIVERY_MENU_ANCHOR);
+	}
+
+	/** 控制台状态条：转发模式信息并入左下角目标按钮；独立模式只在有桥时显示。 */
 	function renderConsoleStatus() {
 		if (!consoleStatusEl) return;
+		if (state.mode === "forward") {
+			consoleStatusEl.hidden = true;
+			consoleStatusEl.replaceChildren();
+			consoleStatusEl.removeAttribute("title");
+			return;
+		}
 		const session = currentSession();
 		const info = session ? currentConsoleInfo() : null;
 		const key = session ? sessionKeyOf(session) : "";
@@ -1954,6 +2149,8 @@ export function initChatPanel(deps) {
 		if (state.palette) positionPalette();
 		if (state.profileMenuOpen) positionProfileMenu();
 		if (state.contextMenuOpen) positionContextMenu();
+		if (state.forwardTargetMenu) positionForwardTargetMenu();
+		if (state.forwardDeliveryMenu) positionForwardDeliveryMenu();
 	}
 
 	function openPalette(layer, { draft = null, clearOnSelect = null, initialIndex = 0, back = null } = {}) {
@@ -2708,8 +2905,9 @@ export function initChatPanel(deps) {
 			flushRender();
 			return;
 		}
-		const delivery = replay?.delivery ?? (forwardDeliveryEl?.value === "steer" ? "steer" : "auto");
+		const delivery = replay?.delivery ?? (state.forwardDelivery === "steer" ? "steer" : "auto");
 		const key = sessionKeyOf(session);
+		const targetPid = replay?.pid ?? state.forwardTargets.get(key) ?? null;
 		if (
 			replay === null &&
 			delivery === "steer" &&
@@ -2731,7 +2929,7 @@ export function initChatPanel(deps) {
 			const res = await fetch("/api/chat/forward", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ source: session.source, session: session.id, prompt: text, delivery, pid: replay?.pid }),
+				body: JSON.stringify({ source: session.source, session: session.id, prompt: text, delivery, pid: targetPid }),
 				signal: controller.signal,
 			});
 			let data = null;
@@ -2747,9 +2945,11 @@ export function initChatPanel(deps) {
 			if (!res.ok || data?.ok !== true) {
 				const code = typeof data?.code === "string" ? data.code : `http_${res.status}`;
 				if (code === "ambiguous_console" && Array.isArray(data?.consoles) && data.consoles.length > 0) {
-					state.forwardChoice = { key, text, delivery, consoles: data.consoles };
+					state.forwardCandidates.set(key, data.consoles);
+					state.forwardChoice = { key, text, delivery };
 					state.forwardBusy = false;
 					render();
+					openForwardTargetMenu();
 					return;
 				}
 				if (["no_console", "console_offline", "session_mismatch"].includes(code)) state.consoleLost.add(key);
@@ -2769,7 +2969,6 @@ export function initChatPanel(deps) {
 			state.drafts.forward = "";
 			deps.autoGrowInput?.();
 			state.forwardDelivery = "auto";
-			if (forwardDeliveryEl) forwardDeliveryEl.value = "auto";
 			state.forwardBusy = false;
 			render();
 			announce(forwardDeliveryLabel(actual));
@@ -2852,13 +3051,24 @@ export function initChatPanel(deps) {
 		});
 	}
 	if (modeToggleBtn) modeToggleBtn.addEventListener("click", () => setMode(state.mode === "forward" ? "independent" : "forward"));
-	if (forwardDeliveryEl) {
-		forwardDeliveryEl.addEventListener("change", () => {
-			state.forwardDelivery = forwardDeliveryEl.value === "steer" ? "steer" : "auto";
-			state.forwardConfirm = null;
-			state.forwardChoice = null;
-		});
-	}
+	forwardTargetBtn?.addEventListener("click", (e) => {
+		e.stopPropagation();
+		if (state.forwardTargetMenu) closeForwardTargetMenu();
+		else openForwardTargetMenu();
+	});
+	forwardTargetMenuEl?.addEventListener("click", (e) => {
+		const option = e.target.closest?.("[data-forward-target]");
+		if (option) selectForwardTarget(option.dataset.forwardTarget);
+	});
+	forwardDeliveryBtn?.addEventListener("click", (e) => {
+		e.stopPropagation();
+		if (state.forwardDeliveryMenu) closeForwardDeliveryMenu();
+		else openForwardDeliveryMenu();
+	});
+	forwardDeliveryMenuEl?.addEventListener("click", (e) => {
+		const option = e.target.closest?.("[data-forward-delivery]");
+		if (option) selectForwardDelivery(option.dataset.forwardDelivery);
+	});
 	if (addBtn) {
 		addBtn.addEventListener("click", (e) => {
 			e.stopPropagation();
@@ -3014,6 +3224,8 @@ export function initChatPanel(deps) {
 			if (!state.open) {
 				closePalette({ restore: true, focus: false });
 				closeProfileMenu();
+				closeForwardTargetMenu();
+				closeForwardDeliveryMenu();
 				closeContextMenu({ focus: false });
 			}
 			if (state.open) void ensureLoaded();
@@ -3022,6 +3234,11 @@ export function initChatPanel(deps) {
 			renderModeControls();
 		},
 		handleEscape() {
+			if (state.forwardTargetMenu || state.forwardDeliveryMenu) {
+				closeForwardTargetMenu();
+				closeForwardDeliveryMenu();
+				return true;
+			}
 			if (state.mode === "forward") return false;
 			if (state.approvals.length) {
 				void respondApproval(false);
@@ -3057,6 +3274,8 @@ export function initChatPanel(deps) {
 			closePalette({ restore: false, clearInput: true, focus: false });
 			clearApprovals();
 			closeProfileMenu();
+			closeForwardTargetMenu();
+			closeForwardDeliveryMenu();
 			closeContextMenu({ focus: false });
 			state.models = [];
 			state.modelsAt = 0;
