@@ -139,6 +139,101 @@ body {
 	border-right: 1px solid var(--dsw-alias-border-l1);
 }
 
+/* 品牌区：照知识中心原型的 .brand（✦ + 标题 + 副题），尺寸融入现有紧凑体系 */
+.sidebar-brand {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 4px 12px;
+	white-space: nowrap;
+}
+
+.sidebar-brand-mark {
+	flex: none;
+	color: var(--dsw-alias-state-business-primary);
+	font-size: 15px;
+	line-height: 1;
+}
+
+.sidebar-brand-name {
+	display: flex;
+	flex-direction: column;
+	font: var(--dsw-font-m-18);
+	color: var(--dsw-alias-label-primary);
+}
+
+.sidebar-brand-name small {
+	margin-top: 1px;
+	color: var(--dsw-alias-label-tertiary);
+	font: var(--dsw-font-xxxs-11);
+}
+
+/* 页面导航：照原型的 .nav 列表（轨迹当前页；知识／蒸馏任务占位，下一步实现） */
+.sidebar-nav {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding-bottom: 8px;
+	margin-bottom: 6px;
+	border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.nav-item {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	width: 100%;
+	padding: 7px 10px;
+	border: none;
+	border-radius: var(--dsw-radius-sm);
+	background: transparent;
+	color: var(--dsw-alias-label-secondary);
+	font: var(--dsw-font-xs-13);
+	text-align: left;
+	cursor: pointer;
+}
+
+.nav-item > span {
+	flex: none;
+	width: 14px;
+	color: var(--dsw-alias-label-tertiary);
+	text-align: center;
+}
+
+.nav-item:hover:not(:disabled):not(.active) {
+	background: var(--dsw-specific-sidebar-nav-item-hover);
+	color: var(--dsw-alias-label-primary);
+}
+
+.nav-item.active {
+	background: var(--dsw-specific-sidebar-nav-item-active);
+	color: var(--dsw-alias-label-primary);
+	font-weight: 500;
+}
+
+.nav-item.active > span {
+	color: var(--dsw-alias-state-business-primary);
+}
+
+.nav-item:disabled {
+	color: var(--dsw-alias-label-tertiary);
+	cursor: default;
+}
+
+/* 页面头：照原型的 .head（h1 页面标题 + pill），pill 沿用 scope-badge */
+.page-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 14px 10px 6px;
+}
+
+.page-title {
+	margin: 0;
+	font: var(--dsw-font-m-18);
+	color: var(--dsw-alias-label-primary);
+}
+
 #main {
 	flex: 1;
 	overflow-y: auto;
