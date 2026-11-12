@@ -39,11 +39,14 @@
 		<aside id="sidebar">
 			<nav id="agent-rail" class="agent-rail" aria-label="对话来源选择">
 				<div class="source-picker">
-					<label class="source-picker-label" for="trace-source-select">对话来源</label>
-					<div class="source-select-wrap">
-						<span id="source-select-icon" class="source-select-icon" aria-hidden="true">π</span>
-						<select id="trace-source-select"></select>
-						<span class="source-select-chevron" aria-hidden="true">⌄</span>
+					<span class="source-picker-label">对话来源</span>
+					<div id="source-menu-root" class="menu-root source-menu-root">
+						<button id="source-btn" class="source-btn" type="button" aria-haspopup="menu" aria-expanded="false" title="切换对话来源">
+							<span id="source-select-icon" class="source-btn-icon" aria-hidden="true">π</span>
+							<span id="source-btn-label" class="source-btn-text"></span>
+							<span class="source-btn-chevron" aria-hidden="true">⌄</span>
+						</button>
+						<div id="source-menu" class="menu" role="menu" hidden></div>
 					</div>
 					<div id="source-picker-hint" class="source-picker-hint"></div>
 				</div>

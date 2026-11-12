@@ -61,8 +61,9 @@ const panelOverlay = el("ev-overlay");
 const state = {
 	scope: null,
 	sessions: [],
-	sessionListKey: "",
+		sessionListKey: "",
 	sessionQuery: "",
+	sourceMenuOpen: false,
 	selectedId: null,
 	data: null,
 	etag: null,
@@ -1753,35 +1754,46 @@ async function pollSources() {
 }
 
 function renderRail() {
-	// 未来源占位：后端未接入前以下拉禁用项展示（原型：Claude Code / OpenCode 后续支持）
+	// 未来源占位：后端未接入前以菜单禁用项展示（原型：Claude Code / OpenCode 后续支持）
 	const future = [
 		{ id: "claude-code", label: "Claude Code" },
 		{ id: "opencode", label: "OpenCode" },
 	].filter((f) => !state.sources.some((s) => s.id === f.id));
-	const options = [
-		...state.sources.map((s) => h("option", { value: s.id, text: `${s.label} · ${s.sessions} 会话` })),
-		...future.map((f) => h("option", { value: f.id, text: `${f.label} · 后续支持`, disabled: "disabled" })),
-	];
-	const select = h("select", { id: "trace-source-select" }, ...options);
-	select.value = state.source;
-	const label = state.sources.find((s) => s.id === state.source)?.label ?? state.source;
+	const current = state.sources.find((s) => s.id === state.source);
+	const label = current?.label ?? state.source;
 	el("source-select-icon").textContent = SOURCE_BADGE[state.source] ?? label.slice(0, 1);
+	el("source-btn-label").textContent = `${label} · ${current ? `${current.sessions} 会话` : "0 会话"}`;
 	el("source-picker-hint").textContent = `${label} · 当前显示此来源的会话记录`;
-	el("agent-rail").replaceChildren(
-		h(
-			"div",
-			{ class: "source-picker" },
-			h("label", { class: "source-picker-label", for: "trace-source-select", text: "对话来源" }),
+	const items = [
+		...state.sources.map((s) =>
 			h(
-				"div",
-				{ class: "source-select-wrap" },
-				el("source-select-icon"),
-				select,
-				h("span", { class: "source-select-chevron", "aria-hidden": "true", text: "⌄" }),
+				"button",
+				{
+					class: "menu-item",
+					type: "button",
+					role: "menuitemradio",
+					"aria-checked": String(s.id === state.source),
+						dataset: { source: s.id },
+					onClick: () => {
+						setSourceMenuOpen(false);
+						switchSource(s.id);
+					},
+				},
+				h("span", { class: "source-menu-icon", "aria-hidden": "true", text: SOURCE_BADGE[s.id] ?? s.label.slice(0, 1) }),
+				h("span", { class: "menu-item-label", text: `${s.label} · ${s.sessions} 会话` }),
+				s.id === state.source ? h("span", { class: "menu-check", "aria-hidden": "true", text: "✓" }) : null,
 			),
-			el("source-picker-hint"),
 		),
-	);
+		...future.map((f) =>
+			h(
+				"button",
+				{ class: "menu-item", type: "button", role: "menuitem", disabled: "disabled", title: "后续支持", dataset: { source: f.id } },
+				h("span", { class: "source-menu-icon", "aria-hidden": "true", text: "?" }),
+				h("span", { class: "menu-item-label", text: `${f.label} · 后续支持` }),
+			),
+		),
+	];
+	el("source-menu").replaceChildren(...items);
 }
 
 /** 切换轨迹源：每源独立的选中会话与折叠状态（分桶保存/恢复），临时态清空重拉。 */
@@ -2337,6 +2349,11 @@ el("filter-menu").addEventListener("keydown", (e) => {
 
 // 点击菜单外关闭（用 composedPath 判断：节点可能在派发过程中被替换）
 document.addEventListener("click", (e) => {
+	if (state.sourceMenuOpen) {
+		const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+		const inside = path.some((node) => node instanceof Element && node.id === "source-menu-root") || e.target.closest?.("#source-menu-root");
+		if (!inside) setSourceMenuOpen(false);
+	}
 	if (!state.menuOpen) return;
 	const path = typeof e.composedPath === "function" ? e.composedPath() : [];
 	if (path.some((node) => node instanceof Element && node.id === "filter-root")) return;
@@ -2612,9 +2629,19 @@ mainInner.addEventListener("keydown", (e) => {
 	openEventRow(row);
 });
 
-el("agent-rail").addEventListener("change", (e) => {
-	if (e.target.id === "trace-source-select") switchSource(e.target.value);
-});
+el("source-btn").addEventListener("click", () => setSourceMenuOpen(!state.sourceMenuOpen));
+
+/** 来源菜单开关（照过滤菜单模式：外点/Esc 关闭，键盘可达）。 */
+function setSourceMenuOpen(open) {
+	state.sourceMenuOpen = open;
+	el("source-menu").hidden = !open;
+	el("source-btn").setAttribute("aria-expanded", String(open));
+	if (open) {
+		renderRail();
+		el("source-menu").querySelector('button[role^="menuitem"]')?.focus();
+	}
+}
+
 el("session-search").addEventListener("input", (e) => {
 	state.sessionQuery = e.target.value;
 	renderSessions();
@@ -2745,6 +2772,12 @@ document.addEventListener("keydown", (e) => {
 		// 会话右键菜单最上层收起
 		if (sessionMenu) {
 			closeSessionMenu();
+			return;
+		}
+		// 来源菜单收起并把焦点还给触发按钮
+		if (state.sourceMenuOpen) {
+			setSourceMenuOpen(false);
+			el("source-btn").focus();
 			return;
 		}
 		// 对话栏优先：流式中 Esc = 停止生成，否则交给原有抽屉/面板链

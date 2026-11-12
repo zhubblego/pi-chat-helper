@@ -207,25 +207,35 @@ body {
 	letter-spacing: 0.04em;
 }
 
-.source-select-wrap {
-	position: relative;
+/* 来源触发按钮：与站内菜单体系统一（menu-root + .menu 浮层），外观保持原下拉盒规格 */
+.source-btn {
 	display: flex;
 	align-items: center;
+	width: 100%;
 	height: 35px;
+	padding: 0;
 	border: 1px solid var(--dsw-alias-border-l2);
 	border-radius: var(--dsw-radius-sm);
 	background: var(--dsw-alias-bg-base);
+	color: var(--dsw-alias-label-primary);
+	cursor: pointer;
 	transition:
 		border-color 0.15s,
 		background 0.15s;
 }
 
-.source-select-wrap:hover {
+.source-btn:hover,
+.source-btn:focus-visible {
 	border-color: var(--dsw-alias-border-l3);
 	background: var(--dsw-alias-bg-layer-1);
+	outline: none;
 }
 
-.source-select-icon {
+.source-btn[aria-expanded="true"] {
+	border-color: var(--dsw-alias-border-focus, var(--dsw-alias-link));
+}
+
+.source-btn-icon {
 	width: 34px;
 	flex: none;
 	display: grid;
@@ -234,45 +244,48 @@ body {
 	font: var(--dsw-font-s-strong-14);
 }
 
-#trace-source-select {
-	appearance: none;
-	-webkit-appearance: none;
+.source-btn-text {
 	flex: 1;
-	width: 100%;
-	height: 100%;
 	min-width: 0;
-	padding: 0 30px 0 0;
-	border: 0;
-	outline: none;
-	background: transparent;
-	color: var(--dsw-alias-label-primary);
-	cursor: pointer;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	text-align: left;
 	font: var(--dsw-font-xs-13);
 }
 
-#trace-source-select:focus-visible {
-	outline: 2px solid var(--dsw-alias-border-focus, var(--dsw-alias-link));
-	outline-offset: -2px;
-	border-radius: var(--dsw-radius-sm);
-}
-
-#trace-source-select option {
-	color: #172033;
-	background: #fff;
-}
-
-#trace-source-select option:disabled {
-	color: #9aa3b2;
-}
-
-.source-select-chevron {
-	position: absolute;
-	right: 10px;
-	top: 50%;
-	transform: translateY(-55%);
+.source-btn-chevron {
+	flex: none;
+	padding: 0 10px;
 	color: var(--dsw-alias-label-tertiary);
-	pointer-events: none;
 	font-size: 15px;
+}
+
+/* 来源菜单浮层：复用 .menu / .menu-item（与过滤菜单同一套） */
+.source-menu-root {
+	display: block;
+}
+
+#source-menu .menu-item .source-menu-icon {
+	flex: none;
+	width: 14px;
+	color: var(--dsw-alias-label-secondary);
+	text-align: center;
+	font-size: 11px;
+}
+
+#source-menu .menu-item:disabled {
+	color: var(--dsw-alias-label-tertiary);
+	cursor: default;
+}
+
+#source-menu .menu-item:disabled .source-menu-icon {
+	color: var(--dsw-alias-label-tertiary);
+}
+
+#source-menu .menu-item:disabled:hover,
+#source-menu .menu-item:disabled:focus-visible {
+	background: transparent;
 }
 
 .source-picker-hint {
