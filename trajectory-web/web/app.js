@@ -2347,13 +2347,20 @@ el("filter-menu").addEventListener("keydown", (e) => {
 	}
 });
 
+// 来源菜单外点关闭：pointerdown 捕获阶段（不受目标元素吞 click／stopPropagation 影响，
+// 菜单内部命中 #source-menu-root 则不关，交给按钮 toggle／菜单项自身的 click 处理）
+document.addEventListener(
+	"pointerdown",
+	(e) => {
+		if (!state.sourceMenuOpen) return;
+		if (e.target instanceof Element && e.target.closest("#source-menu-root")) return;
+		setSourceMenuOpen(false);
+	},
+	true,
+);
+
 // 点击菜单外关闭（用 composedPath 判断：节点可能在派发过程中被替换）
 document.addEventListener("click", (e) => {
-	if (state.sourceMenuOpen) {
-		const path = typeof e.composedPath === "function" ? e.composedPath() : [];
-		const inside = path.some((node) => node instanceof Element && node.id === "source-menu-root") || e.target.closest?.("#source-menu-root");
-		if (!inside) setSourceMenuOpen(false);
-	}
 	if (!state.menuOpen) return;
 	const path = typeof e.composedPath === "function" ? e.composedPath() : [];
 	if (path.some((node) => node instanceof Element && node.id === "filter-root")) return;
