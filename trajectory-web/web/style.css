@@ -210,12 +210,11 @@ body {
 /* 来源触发按钮：与其他菜单触发按钮（tb-btn）同款语言——无框透明底、hover 浅底亮字；
    展开态同 hover 底色（照 aria-pressed 模式）；高度 30px 与侧栏搜索框对齐 */
 .source-btn {
-	display: flex;
+	display: inline-flex;
 	align-items: center;
-	width: 100%;
 	height: 30px;
 	padding: 0;
-	gap: 4px;
+	gap: 2px;
 	border: 0;
 	border-radius: var(--dsw-radius-sm);
 	background: transparent;
@@ -232,27 +231,17 @@ body {
 }
 
 .source-btn-icon {
-	width: 26px;
 	flex: none;
+	padding: 0 7px;
 	display: grid;
 	place-items: center;
 	color: var(--dsw-alias-label-secondary);
 	font: var(--dsw-font-s-strong-14);
 }
 
-.source-btn-text {
-	flex: 1;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	text-align: left;
-	font: var(--dsw-font-xs-13);
-}
-
 .source-btn-chevron {
 	flex: none;
-	padding: 0 9px 0 7px;
+	padding: 0 7px 0 0;
 	color: var(--dsw-alias-label-tertiary);
 	font-size: 14px;
 }

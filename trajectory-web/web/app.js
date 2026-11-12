@@ -1762,7 +1762,7 @@ function renderRail() {
 	const current = state.sources.find((s) => s.id === state.source);
 	const label = current?.label ?? state.source;
 	el("source-select-icon").textContent = SOURCE_BADGE[state.source] ?? label.slice(0, 1);
-	el("source-btn-label").textContent = `${label} · ${current ? `${current.sessions} 会话` : "0 会话"}`;
+	el("source-btn").title = `切换对话来源（当前：${label}）`;
 	el("source-picker-hint").textContent = `${label} · 当前显示此来源的会话记录`;
 	const items = [
 		...state.sources.map((s) =>
@@ -1773,14 +1773,14 @@ function renderRail() {
 					type: "button",
 					role: "menuitemradio",
 					"aria-checked": String(s.id === state.source),
-						dataset: { source: s.id },
+					title: `${s.label}（${s.sessions} 会话）`,
+					dataset: { source: s.id },
 					onClick: () => {
 						setSourceMenuOpen(false);
 						switchSource(s.id);
 					},
 				},
 				h("span", { class: "source-menu-icon", "aria-hidden": "true", text: SOURCE_BADGE[s.id] ?? s.label.slice(0, 1) }),
-				h("span", { class: "menu-item-label", text: `${s.label} · ${s.sessions} 会话` }),
 				s.id === state.source ? h("span", { class: "menu-check", "aria-hidden": "true", text: "✓" }) : null,
 			),
 		),
@@ -1789,7 +1789,7 @@ function renderRail() {
 				"button",
 				{ class: "menu-item", type: "button", role: "menuitem", disabled: "disabled", title: "后续支持", dataset: { source: f.id } },
 				h("span", { class: "source-menu-icon", "aria-hidden": "true", text: "?" }),
-				h("span", { class: "menu-item-label", text: `${f.label} · 后续支持` }),
+				h("span", { class: "menu-item-label", text: f.label }),
 			),
 		),
 	];
