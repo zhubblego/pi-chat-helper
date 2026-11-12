@@ -64,6 +64,7 @@ const state = {
 		sessionListKey: "",
 	sessionQuery: "",
 	sourceMenuOpen: false,
+	workspace: "trace",
 	selectedId: null,
 	data: null,
 	etag: null,
@@ -2637,6 +2638,33 @@ mainInner.addEventListener("keydown", (e) => {
 });
 
 el("source-btn").addEventListener("click", () => setSourceMenuOpen(!state.sourceMenuOpen));
+
+/** 工作区切换（轨迹/知识/任务）：侧栏区块、工具栏与主视图联动显隐。
+ * 知识/任务尚未接入数据，先呈现结构占位；浮层菜单随手收起。 */
+function switchWorkspace(id) {
+	if (id === state.workspace || !id) return;
+	state.workspace = id;
+	for (const tab of document.querySelectorAll(".workspace-tab")) {
+		const active = tab.dataset.workspace === id;
+		tab.classList.toggle("active", active);
+		if (active) tab.setAttribute("aria-current", "page");
+		else tab.removeAttribute("aria-current");
+	}
+	const sections = { trace: "session-section", knowledge: "knowledge-section", distill: "tasks-section" };
+	for (const [ws, sectionId] of Object.entries(sections)) el(sectionId).hidden = ws !== id;
+	const views = { trace: "main-inner", knowledge: "knowledge-view", distill: "distill-view" };
+	for (const [ws, viewId] of Object.entries(views)) el(viewId).hidden = ws !== id;
+	// 轨迹专属头部与工具栏：仅轨迹工作区显示
+	el("trace-intro").hidden = id !== "trace";
+	el("toolbar").hidden = id !== "trace";
+	closeSessionMenu();
+	setSourceMenuOpen(false);
+	if (id === "trace") main.scrollTop = 0;
+}
+
+document.querySelectorAll(".workspace-tab").forEach((tab) => {
+	tab.addEventListener("click", () => switchWorkspace(tab.dataset.workspace));
+});
 
 /** 来源菜单开关（照过滤菜单模式：外点/Esc 关闭，键盘可达）。 */
 function setSourceMenuOpen(open) {

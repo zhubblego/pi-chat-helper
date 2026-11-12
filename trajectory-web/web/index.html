@@ -23,8 +23,8 @@
 	<header id="topbar">
 		<nav class="workspace-tabs" aria-label="工作区切换">
 			<button class="workspace-tab active" type="button" data-workspace="trace" aria-current="page"><span class="tab-mark" aria-hidden="true"></span>轨迹</button>
-			<button class="workspace-tab" type="button" data-workspace="knowledge" disabled title="下一步实现"><span class="tab-mark" aria-hidden="true"></span>知识</button>
-			<button class="workspace-tab" type="button" data-workspace="distill" disabled title="下一步实现"><span class="tab-mark" aria-hidden="true"></span>任务</button>
+			<button class="workspace-tab" type="button" data-workspace="knowledge"><span class="tab-mark" aria-hidden="true"></span>知识</button>
+			<button class="workspace-tab" type="button" data-workspace="distill"><span class="tab-mark" aria-hidden="true"></span>任务</button>
 		</nav>
 		<div class="topbar-right">
 			<span id="sync-dot" class="dot"></span>
@@ -63,6 +63,18 @@
 				</div>
 				<div id="session-list" class="session-list" aria-label="会话列表"></div>
 			</section>
+			<section id="knowledge-section" class="sidebar-block session-section" hidden>
+				<div class="section-head">
+					<span class="section-title">知识主题</span>
+				</div>
+				<div class="side-empty">知识库接入开发中，暂无主题</div>
+			</section>
+			<section id="tasks-section" class="sidebar-block session-section" hidden>
+				<div class="section-head">
+					<span class="section-title">任务中心</span>
+				</div>
+				<div class="side-empty">蒸馏任务接入开发中，暂无任务</div>
+			</section>
 		</aside>
 		<main id="main">
 			<div id="trace-intro" class="trace-intro">
@@ -97,6 +109,30 @@
 				</label>
 			</div>
 			<div id="main-inner" class="main-inner"></div>
+			<section id="knowledge-view" class="workspace-view" hidden>
+				<div class="page-content">
+					<div class="page-heading">
+						<div class="page-heading-main">
+							<div class="breadcrumb">知识中心　/　主题笔记</div>
+							<h1 class="page-title">知识中心</h1>
+							<p class="page-subtitle">从轨迹会话沉淀可长期复用的知识：主题、结论与来源证据</p>
+						</div>
+					</div>
+					<div class="empty">知识库尚未接入——工作区结构已就位，数据与编辑功能在后续版本实现</div>
+				</div>
+			</section>
+			<section id="distill-view" class="workspace-view" hidden>
+				<div class="page-content">
+					<div class="page-heading">
+						<div class="page-heading-main">
+							<div class="breadcrumb">蒸馏任务　/　任务概览</div>
+							<h1 class="page-title">蒸馏任务</h1>
+							<p class="page-subtitle">按 Session 追踪蒸馏覆盖率、质量状态与知识结果</p>
+						</div>
+					</div>
+					<div class="empty">任务系统尚未接入——工作区结构已就位，队列与工作流在后续版本实现</div>
+				</div>
+			</section>
 		</main>
 		<!-- 侧边对话栏（分屏）：参与 #layout 的 flex 布局，打开时主区收窄不覆盖；顶栏按钮开关 -->
 		<aside id="chat-drawer" class="chat-drawer" hidden>
