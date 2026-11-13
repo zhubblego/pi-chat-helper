@@ -1401,6 +1401,23 @@ async function loadFull(id) {
 	}
 }
 
+/** 钉住态：面板去遮罩非模态化（页面与对话栏可正常输入），仍可拖动/缩放；关闭面板时复位为模态。 */
+let panelPinned = false;
+function setPanelPinned(pinned) {
+	if (panelPinned === pinned) return;
+	panelPinned = pinned;
+	panelOverlay.classList.toggle("pinned", pinned);
+	// 非模态化：屏幕阅读器不再按模态对话框处理
+	panel.setAttribute("aria-modal", pinned ? "false" : "true");
+	const btn = el("dv-pin");
+	if (btn) {
+		btn.setAttribute("aria-pressed", String(pinned));
+		btn.title = pinned ? "取消钉住：恢复模态弹窗" : "钉住：面板浮动不挡页面，可在对话栏继续输入";
+	}
+	// 取消钉住＝回到默认模态弹窗：复位居中恢复默认尺寸（关闭路径 closePanel 已另行复位）
+	if (!pinned) resetPanelOffset();
+}
+
 /** 打开轨迹行详情为居中弹窗；仅关闭按钮可关闭（点同一行/遮罩/Esc 均不关，换行切换内容）。 */
 function openPanel(id) {
 	if (state.openId === id) return;
@@ -1408,7 +1425,8 @@ function openPanel(id) {
 	state.openFull = null;
 	const light = findEvent(id);
 	state.openLightJson = JSON.stringify(light ?? null);
-	resetPanelOffset();
+	// 钉住时换行只换内容，保留拖出的位置与尺寸；模态弹窗下复位居中恢复默认大小
+	if (!panelPinned) resetPanelOffset();
 	renderPanel();
 	// 行不可见（被过滤/折叠）时 attachOpenPanel 已收尾，不再拉全文/写 hash
 	if (!attachOpenPanel()) return;
@@ -1454,6 +1472,7 @@ function closePanel() {
 	state.openId = null;
 	state.openFull = null;
 	state.openLightJson = "";
+	setPanelPinned(false);
 	resetPanelOffset();
 	panelOverlay.hidden = true;
 	for (const open of mainInner.querySelectorAll(".ev.is-open")) open.classList.remove("is-open");
@@ -2745,6 +2764,7 @@ panel.addEventListener("pointerdown", (e) => {
 });
 // 详情弹窗可拖拽放大：右下角把手拖动改宽高（clamp 到视口内）；仅关闭按钮可关闭
 document.getElementById("dv-close")?.addEventListener("click", closePanel);
+el("dv-pin")?.addEventListener("click", () => setPanelPinned(!panelPinned));
 const panelResize = document.querySelector(".ev-panel-resize");
 panelResize?.addEventListener("pointerdown", (e) => {
 	if (e.button !== 0) return;

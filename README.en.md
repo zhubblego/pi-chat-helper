@@ -18,7 +18,7 @@ Replay the full trajectory segmented by question: chain of thought, tool calls p
 
 ![Filter menu](screenshots/filter-menu.png)
 
-**Detail modal** — click any entry to expand it: Markdown, tables, mermaid diagrams, tool parameters and results, tokens and durations; the modal is draggable and resizable from its bottom-right corner.
+**Detail modal** — click any entry to expand it: Markdown, tables, mermaid diagrams, tool parameters and results, tokens and durations; the modal is draggable and resizable from its bottom-right corner; pin it with 📌 to drop the backdrop — the page and chat input stay usable while you read, click again to restore the modal.
 
 ![Detail modal](screenshots/detail-modal.png)
 
