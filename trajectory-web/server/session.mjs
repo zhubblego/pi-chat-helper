@@ -598,6 +598,35 @@ export function buildProjectionFrom({ header, entries, file }) {
 		q.modelHidden = q.editableIds.every((id) => editsByTarget.has(id) && editsByTarget.get(id) === null);
 	}
 
+	// 模型视角边界（对齐 pi buildContextEntries 语义）：分支内最后一条 compaction 之后重建上下文，
+	// 其 firstKeptEntryId 之前的条目不再进入模型（只剩摘要）；保留区里的 system 消息同样不进。
+	// firstKeptEntryId 缺失或不在链上时，compaction 之前全部视为已摘要（Codex 翻译层的 compacted 即此形态）。
+	// 无 compaction 的会话不打标记（事件缺 inContext 字段＝全量在上下文）。
+	const lastCompaction = branch.findLast((e) => e.type === "compaction");
+	if (lastCompaction) {
+		const compIdx = branch.lastIndexOf(lastCompaction);
+		const firstKeptId = typeof lastCompaction.firstKeptEntryId === "string" ? lastCompaction.firstKeptEntryId : null;
+		const inCtxById = new Map();
+		let keptStarted = false;
+		branch.forEach((entry, i) => {
+			let inCtx = true;
+			if (i > compIdx) inCtx = true;
+			else if (entry === lastCompaction) inCtx = true;
+			else {
+				if (firstKeptId && entry.id === firstKeptId) keptStarted = true;
+				inCtx = keptStarted && !(entry.type === "message" && entry.message?.role === "system");
+			}
+			if (entry.id) inCtxById.set(entry.id, inCtx);
+		});
+		for (const q of questions) {
+			for (const ev of q.events) {
+				const entryId = ev.id.includes(":") ? ev.id.slice(0, ev.id.indexOf(":")) : ev.id;
+				const inCtx = inCtxById.get(entryId);
+				if (inCtx === false) ev.inContext = false;
+			}
+		}
+	}
+
 	// 分组统计汇总（过程/回答已按 stopReason 在事件生成时区分，无需位置标注）
 	for (const q of questions) {
 		for (const ev of q.events) {

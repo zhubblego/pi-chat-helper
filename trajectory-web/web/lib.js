@@ -11,7 +11,8 @@ export const FILTER_GROUPS = {
 	tools: ["tool", "bash"],
 	text: ["text"],
 	answer: ["answer"],
-	context: ["system", "compaction", "branch", "model", "thinking-level", "usage", "context-edit", "custom"],
+	compact: ["compaction"],
+	context: ["system", "branch", "model", "thinking-level", "usage", "context-edit", "custom"],
 	error: ["error"],
 	approval: ["approval"],
 };
@@ -22,6 +23,7 @@ export const GROUP_LABELS = {
 	tools: "工具",
 	text: "过程",
 	answer: "回答",
+	compact: "压缩",
 	context: "上下文",
 	error: "错误",
 	approval: "审批",
@@ -36,6 +38,20 @@ export function kindGroup(kind) {
 
 export function eventPasses(filters, kind) {
 	return filters[kindGroup(kind)] !== false;
+}
+
+/** 视角取值：all = 文件全量；model = 只看仍会进入模型上下文的条目。 */
+export const PERSPECTIVE_VALUES = Object.freeze(["all", "model"]);
+
+/**
+ * 视角过滤：model 视角隐藏已被压缩掉原义的条目（扫描器标记 inContext=false）
+ * 以及被裁剪（context_edit）剔除的条目；all 视角不做限制。cropped 由调用方
+ * 用自身的裁剪态判定传入（app.js 的 eventCropped）。
+ */
+export function eventInPerspective(ev, perspective, cropped = false) {
+	if (perspective !== "model") return true;
+	if (ev?.inContext === false) return false;
+	return !cropped;
 }
 
 /** 当前会话出现过的工具名（按首次出现顺序去重；未出现过的工具不列出）。 */
@@ -116,13 +132,13 @@ export function groupToolNames(names, origins = {}) {
 export function presetFilters(name) {
 	switch (name) {
 		case "thinking":
-			return { user: false, thinking: true, tools: false, text: false, answer: false, context: false, error: true, approval: false };
+			return { user: false, thinking: true, tools: false, text: false, answer: false, compact: false, context: false, error: true, approval: false };
 		case "tools":
-			return { user: false, thinking: false, tools: true, text: false, answer: false, context: false, error: true, approval: false };
+			return { user: false, thinking: false, tools: true, text: false, answer: false, compact: false, context: false, error: true, approval: false };
 		case "answer":
-			return { user: false, thinking: false, tools: false, text: false, answer: true, context: false, error: true, approval: false };
+			return { user: false, thinking: false, tools: false, text: false, answer: true, compact: false, context: false, error: true, approval: false };
 		default:
-			return { user: true, thinking: true, tools: true, text: true, answer: true, context: true, error: true, approval: true };
+			return { user: true, thinking: true, tools: true, text: true, answer: true, compact: true, context: true, error: true, approval: true };
 	}
 }
 

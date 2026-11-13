@@ -27,6 +27,7 @@ export const GLOBAL_PREF_KEYS = Object.freeze([
 	"tools",
 	"theme",
 	"translate",
+	"perspective",
 	"chatOpen",
 	"chatWidth",
 	"composerHeight",

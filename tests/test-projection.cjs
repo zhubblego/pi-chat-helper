@@ -142,6 +142,16 @@ check("连续 context_edit 聚合为一条（×3，含恢复项）", q1.events.a
 check("部分剔除不算整轮隐藏（u2 已恢复、a3 仍剔除）", q1.modelHidden !== true);
 check("问题 1 未被编辑，不标隐藏", q0.modelHidden !== true);
 
+// ---- 模型视角边界（最后一条 compaction → inContext 标记） ----
+check("起始分组事件标记已摘要（compaction 之前）", pre.events.every((e) => e.inContext === false));
+check(
+	"问题1 压缩边界前事件全部标记已摘要",
+	q0.events.filter((e) => e.kind !== "compaction").every((e) => e.inContext === false),
+	JSON.stringify(q0.events.map((e) => [e.kind, e.inContext])),
+);
+check("压缩事件本身仍在上下文（不打 false 标记）", q0.events.find((e) => e.kind === "compaction").inContext === undefined);
+check("压缩后条目不标记（含 system 补丁与聚合编辑）", q1.events.every((e) => e.inContext === undefined), JSON.stringify(q1.events.map((e) => [e.kind, e.inContext])));
+
 	// ---- light / full ----
 	const light = toLight(proj);
 	const lightSys = light.questions[0].events.find((e) => e.kind === "system");
@@ -159,6 +169,7 @@ check("问题 1 未被编辑，不标隐藏", q0.modelHidden !== true);
 	const projBranch = buildProjection(branchFile);
 	const texts = projBranch.questions.flatMap((q) => q.events.filter((e) => e.kind === "answer").map((e) => e.text));
 	check("活动分支取最后叶子", texts.includes("活动分支回答") && !texts.includes("被放弃的分支"), JSON.stringify(texts));
+	check("无 compaction 会话不打任何 inContext 标记", projBranch.questions.every((q) => q.events.every((e) => e.inContext === undefined)));
 	const entries = mod.parseSessionFile(branchFile).entries;
 	check("activeBranch 沿 parentId 回溯", activeBranch(entries).map((e) => e.id).join(",") === "u1,a1,a2b", activeBranch(entries).map((e) => e.id).join(","));
 

@@ -22,6 +22,7 @@ import {
 	deriveTargets,
 	deriveTaskName,
 	eventPasses,
+	eventInPerspective,
 	eventTagLabel,
 	eventToolPasses,
 	fmtBytes,
@@ -69,6 +70,8 @@ const state = {
 	data: null,
 	etag: null,
 	filters: presetFilters("all"),
+	perspective: "all",
+	perspectiveOpen: false,
 	searchIndex: new TrajectorySearchIndex(),
 	query: "",
 	menuOpen: false,
@@ -254,6 +257,15 @@ const ICONS = {
 		["path", { d: "M4.3 2.6h3.4M9 3.9v4.2" }],
 	],
 	text: [["path", { d: "M2 3.4h8M2 6h8M2 8.6h5" }]],
+	compact: [
+		["path", { d: "M6 1.4v2.6M4.5 2.8 6 4.3l1.5-1.5" }],
+		["path", { d: "M2.6 6h6.8" }],
+		["path", { d: "M6 10.6V8M4.5 9.2 6 7.7l1.5 1.5" }],
+	],
+	eye: [
+		["path", { d: "M1.4 6s1.8-3.2 4.6-3.2S10.6 6 10.6 6 8.8 9.2 6 9.2 1.4 6 1.4 6z" }],
+		["circle", { cx: 6, cy: 6, r: 1.5 }],
+	],
 	context: [
 		["path", { d: "M6 1.7 1.8 4.1 6 6.5l4.2-2.4z" }],
 		["path", { d: "M1.8 7.1 6 9.5l4.2-2.4" }],
@@ -317,6 +329,7 @@ function applyGlobalPrefs(global) {
 	if (normalized.tools) applyToolsPref(normalized.tools);
 	if (normalized.translate) applyTranslatePref(normalized.translate);
 	if (normalized.theme) themePref = normalized.theme;
+	if (normalized.perspective) state.perspective = normalized.perspective;
 	if (typeof normalized.chatOpen === "boolean") globalPrefs.chatOpen = normalized.chatOpen;
 	if (normalized.chatWidth !== undefined) globalPrefs.chatWidth = normalized.chatWidth;
 	if (normalized.composerHeight !== undefined) globalPrefs.composerHeight = normalized.composerHeight;
@@ -628,7 +641,13 @@ function revealEvent(eid) {
 // ---------------------------------------------------------------------------
 
 /** 过滤菜单里可开关的类型（工具走子菜单，不是开关）。 */
-const TOGGLE_GROUPS = ["user", "thinking", "text", "answer", "context", "error", "approval"];
+const TOGGLE_GROUPS = ["user", "thinking", "text", "answer", "compact", "context", "error", "approval"];
+
+/** 视角菜单项：值 → 标签/说明（与 lib.PERSPECTIVE_VALUES 对齐）。 */
+const PERSPECTIVE_OPTIONS = [
+	{ value: "all", label: "全量", title: "显示文件里的全部条目（含已被压缩的历史）" },
+	{ value: "model", label: "模型", title: "只看模型当前上下文：压缩摘要＋其后未被裁剪的条目" },
+];
 
 /** 过滤菜单：显示类型勾选（照 deepseek Menu 的紧凑卡与选中语义）；工具行是带子菜单入口的行。 */
 function renderFilterMenu() {
@@ -786,6 +805,7 @@ function updateFilterButton() {
 function renderToolbar() {
 	renderFilterMenu();
 	updateFilterButton();
+	updatePerspectiveButton();
 	updateFoldAll();
 	updateCropButton();
 	updateDistillButton();
@@ -837,6 +857,48 @@ function setMenuOpen(open) {
 	syncToolNames();
 	renderFilterMenu();
 	el("filter-menu").querySelector('button[role^="menuitem"]')?.focus();
+}
+
+/** 视角菜单：全量／模型二选一（menuitemradio，选中项带勾）。 */
+function renderPerspectiveMenu() {
+	const nodes = [h("div", { class: "menu-label", role: "presentation", text: "轨迹视角" })];
+	for (const opt of PERSPECTIVE_OPTIONS) {
+		const checked = state.perspective === opt.value;
+		nodes.push(
+			h(
+				"button",
+				{ class: "menu-item", type: "button", role: "menuitemradio", "aria-checked": String(checked), dataset: { perspective: opt.value }, title: opt.title },
+					svgIcon(opt.value === "model" ? "eye" : "all", "menu-item-icon"),
+					h("span", { class: "menu-item-label", text: opt.label }),
+				checked ? svgIcon("check", "menu-check") : null,
+			),
+		);
+	}
+	el("perspective-menu").replaceChildren(...nodes);
+}
+
+function setPerspectiveMenuOpen(open) {
+	state.perspectiveOpen = open;
+	el("perspective-menu").hidden = !open;
+	el("perspective-btn").setAttribute("aria-expanded", String(open));
+	if (open) {
+		renderPerspectiveMenu();
+		el("perspective-menu").querySelector('button[role^="menuitem"]')?.focus();
+	}
+}
+
+function updatePerspectiveButton() {
+	const opt = PERSPECTIVE_OPTIONS.find((o) => o.value === state.perspective) ?? PERSPECTIVE_OPTIONS[0];
+	el("perspective-label").textContent = opt.label;
+	el("perspective-btn").title = `切换轨迹视角（当前：${opt.label}）：${opt.title}`;
+}
+
+function setPerspective(value) {
+	if (!PERSPECTIVE_OPTIONS.some((o) => o.value === value) || state.perspective === value) return;
+	state.perspective = value;
+	queueGlobalPrefs({ perspective: value });
+	updatePerspectiveButton();
+	renderMain();
 }
 
 /** 当前会话可折叠的轮次序号（问题分组，含「会话开始」）。 */
@@ -1092,10 +1154,15 @@ function renderMain() {
 		...questions
 			.map((q) => {
 			const shown = (q.events ?? []).filter(
-			(ev) => eventPasses(state.filters, ev.kind) && eventToolPasses(state.toolExcluded, ev) && (!matches || matches.has(ev.id)),
+				(ev) =>
+					eventPasses(state.filters, ev.kind) &&
+					eventToolPasses(state.toolExcluded, ev) &&
+					eventInPerspective(ev, state.perspective, eventCropped(ev, q)) &&
+					(!matches || matches.has(ev.id)),
 			);
-			// 搜索激活时：无命中的轮次整轮隐藏（过滤 ∩ 搜索，不再渲染空框）
-			if (matches && shown.length === 0) return null;
+			// 搜索激活时：无命中的轮次整轮隐藏（过滤 ∩ 搜索，不再渲染空框）；
+			// 模型视角下被压缩/裁剪殆尽的轮同理整轮隐藏（其内容只剩摘要或已不在上下文）
+			if ((matches || state.perspective === "model") && shown.length === 0) return null;
 			const roundLabel = q.index < 0 ? "会话开始" : `第 ${q.index + 1} 轮`;
 			// 裁剪只改样式（删除线），轮次与条目仍可展开/点开看详情
 			const roundCropped = roundCroppedOf(q);
@@ -2347,11 +2414,48 @@ el("filter-menu").addEventListener("keydown", (e) => {
 	}
 });
 
+// 视角菜单：点选即切换并关闭（二选一的 radio 语义，不需要像过滤那样连续调整）
+el("perspective-btn").addEventListener("click", (e) => {
+	e.stopPropagation();
+	setPerspectiveMenuOpen(!state.perspectiveOpen);
+});
+
+el("perspective-menu").addEventListener("click", (e) => {
+	e.stopPropagation();
+	const item = e.target.closest("button[data-perspective]");
+	if (!item) return;
+	setPerspective(item.dataset.perspective);
+	setPerspectiveMenuOpen(false);
+	el("perspective-btn").focus();
+});
+
+// 视角菜单键盘导航：上下循环 / Escape 关闭回按钮
+el("perspective-menu").addEventListener("keydown", (e) => {
+	const items = [...el("perspective-menu").querySelectorAll('button[role^="menuitem"]')];
+	if (items.length === 0) return;
+	const index = items.indexOf(document.activeElement);
+	if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+		e.preventDefault();
+		const step = e.key === "ArrowDown" ? 1 : -1;
+		items[(index + step + items.length) % items.length].focus();
+		return;
+	}
+	if (e.key === "Escape") {
+		e.preventDefault();
+		setPerspectiveMenuOpen(false);
+		el("perspective-btn").focus();
+	}
+});
+
 // 来源菜单外点关闭：pointerdown 捕获阶段（不受目标元素吞 click／stopPropagation 影响，
 // 菜单内部命中 #source-menu-root 则不关，交给按钮 toggle／菜单项自身的 click 处理）
 document.addEventListener(
 	"pointerdown",
 	(e) => {
+		// 视角菜单外点关闭（同来源菜单的捕获策略；菜单项点击后菜单自身关闭，此处只兜底）
+		if (state.perspectiveOpen && !(e.target instanceof Element && e.target.closest("#perspective-root"))) {
+			setPerspectiveMenuOpen(false);
+		}
 		if (!state.sourceMenuOpen) return;
 		if (e.target instanceof Element && e.target.closest("#source-menu-root")) return;
 		setSourceMenuOpen(false);

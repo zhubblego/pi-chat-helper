@@ -20,7 +20,7 @@ const check = (label, cond, extra = "") => {
 	vm.runInContext(fs.readFileSync(path.join(vendorDir, "markdown-it.min.js"), "utf8"), browserCtx);
 	globalThis.window = { markdownit: browserCtx.markdownit, addEventListener: () => {} };
 	const lib = await import(pathToFileURL(path.join(__dirname, "..", "trajectory-web", "web", "lib.js")).href);
-	const { kindGroup, eventPasses, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, buildAgentTree, deriveInfo, deriveTargets, deriveTaskName, DERIVE_TOOL, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments, hitSnippet, allToolsIncluded, toggleAllTools } = lib;
+	const { kindGroup, eventPasses, eventInPerspective, presetFilters, eventTagLabel, formatDurationMillis, formatElapsedSeconds, fmtTokens, fmtCost, fmtTime, renderMarkdown, fmtRelative, fmtBytes, projectLabel, groupSessions, buildAgentTree, deriveInfo, deriveTargets, deriveTaskName, DERIVE_TOOL, TrajectorySearchIndex, collectToolNames, eventToolPasses, groupToolNames, mcpLabel, highlightSegments, hitSnippet, allToolsIncluded, toggleAllTools } = lib;
 
 	// ---- SSE 解析（chat-lib.js） ----
 	const {
@@ -399,7 +399,7 @@ const check = (label, cond, extra = "") => {
 	// ---- 过滤映射 ----
 	check("tool → tools 组", kindGroup("tool") === "tools" && kindGroup("bash") === "tools");
 	check("thinking → thinking 组", kindGroup("thinking") === "thinking");
-	check("system/compaction → context 组", kindGroup("system") === "context" && kindGroup("compaction") === "context");
+	check("system/compaction → context/compact 组", kindGroup("system") === "context" && kindGroup("compaction") === "compact");
 	check("error → error 组（独立开关）", kindGroup("error") === "error");
 	check("未知 kind 归入 context", kindGroup("what") === "context");
 
@@ -410,6 +410,14 @@ const check = (label, cond, extra = "") => {
 	const onlyAnswer = presetFilters("answer");
 	check("仅回答预设：answer 通过、过程/其余不过", eventPasses(onlyAnswer, "answer") === true && eventPasses(onlyAnswer, "text") === false && eventPasses(onlyAnswer, "tool") === false);
 	check("预设不隐藏错误（仅思考/仅工具/仅回答时仍显示失败）", presetFilters("thinking").error === true && presetFilters("tools").error === true && presetFilters("answer").error === true && all.error === true);
+
+	// 视角：all 不限制；model 隐藏 inContext=false 与被裁剪条目
+	check("全量视角不限制任何条目", eventInPerspective({ inContext: false }, "all") === true && eventInPerspective({ inContext: false }, "all", true) === true);
+	check(
+		"模型视角隐藏已摘要与被裁剪条目",
+		eventInPerspective({ inContext: false }, "model") === false && eventInPerspective({}, "model", true) === false && eventInPerspective({}, "model") === true && eventInPerspective(undefined, "model") === true,
+	);
+	check("预设含 compact 组（仅回答时压缩隐藏，全部时显示）", presetFilters("answer").compact === false && all.compact === true);
 
 	// ---- 工具名子菜单助手 ----
 	const toolQuestions = [
@@ -717,7 +725,22 @@ const check = (label, cond, extra = "") => {
 	check("弹窗可拖动：头部空白按住拖动 + 中心不出视口 + 位置尺寸永久保留（无复位）", appSource.includes('closest(".ev-panel-head")') && appSource.includes("function applyPanelOffset") && !appSource.includes("resetPanelOffset") && appSource.includes("innerWidth / 2 - 40") && styleSource.includes("cursor: move") && indexSource.includes("ev-panel-grip"));
 	check("轮次头不重复展示提问正文（首行 user 事件已含，q-sum 已删）", !appSource.includes("q-sum") && !styleSource.includes(".q-sum"));
 	check("checkbox 选中是无底黑勾（自定义渲染，不用 accent-color 的黑底白勾）", !styleSource.includes("accent-color:") && /\.q-check,\n\.ev-check \{[^}]*appearance: none/s.test(styleSource) && /\.q-check:checked,\n\.ev-check:checked \{[^}]*background-image: url\("data:image\/svg\+xml/s.test(styleSource) && /body\[data-ds-dark-theme\] \.q-check:checked/.test(styleSource));
-	check("剪刀图标（两个圆环把手 + 交叉刀刃），旧眼睛图标已移除", appSource.includes("scissors: [") && !appSource.includes('svgIcon("eye")') && !appSource.includes("\teye: ["));
+	check("剪刀图标（两个圆环把手 + 交叉刀刃）保留，眼睛图标仅用于视角菜单", appSource.includes("scissors: [") && appSource.includes("\teye: [") && appSource.split('"eye"').length - 1 === 1 && appSource.split('svgIcon("scissors")').length - 1 === 2);
+
+	// ---- 视角菜单（过滤右侧，全量/模型二选一）----
+	check(
+		"视角菜单挂在过滤右侧，menuitemradio 二选一",
+		indexSource.indexOf('id="perspective-root"') > indexSource.indexOf('id="filter-root"') &&
+			appSource.includes('role: "menuitemradio"') &&
+			appSource.includes("PERSPECTIVE_OPTIONS"),
+	);
+	check(
+		"模型视角接线：渲染过滤＋外点关闭＋偏好持久化",
+		appSource.includes("eventInPerspective(ev, state.perspective, eventCropped(ev, q))") &&
+			appSource.includes('closest("#perspective-root")') &&
+			appSource.includes("queueGlobalPrefs({ perspective: value })"),
+	);
+	check("模型视角下空轮整轮隐藏（内容只剩摘要或已不在上下文）", appSource.includes('(matches || state.perspective === "model") && shown.length === 0'));
 
 	// ---- 回归守卫：详情弹窗（居中 modal，工具条随面板常驻作用于当前行） ----
 	check("详情弹窗：行不在（被过滤/折叠）即收起，行在则高亮", appSource.includes("function attachOpenPanel") && appSource.includes('mainInner.querySelector(`.ev[data-eid="${state.openId}"]`)') && appSource.includes('row.classList.add("is-open")'));

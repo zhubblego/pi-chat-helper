@@ -14,7 +14,7 @@ An extension package for [pi coding agent](https://github.com/earendil-works/pi-
 
 Replay the full trajectory segmented by question: chain of thought, tool calls paired with results, answers, errors, and context events in order; errors and answers are highlighted, turns can be collapsed, and live sessions carry a live badge.
 
-**Message type filters** — question, thinking, tool, process, answer, context, error, and approval combine freely, tool names are multi-selectable; filter preferences persist across sessions.
+**Message type filters** — question, thinking, tool, process, answer, compaction, context, error, and approval combine freely, tool names are multi-selectable; filter preferences persist across sessions. **Trajectory perspective** — "Full" shows every entry in the file (including history already compacted away), while "Model" shows only the model's current context: the compaction summary plus subsequent un-cropped entries, with fully compacted rounds hidden; the preference persists across sessions.
 
 ![Filter menu](screenshots/filter-menu.png)
 

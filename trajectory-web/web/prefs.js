@@ -14,6 +14,7 @@ export const GLOBAL_PREF_KEYS = Object.freeze([
 	"tools",
 	"theme",
 	"translate",
+	"perspective",
 	"chatOpen",
 	"chatWidth",
 	"composerHeight",
@@ -31,6 +32,7 @@ export const LEGACY_GLOBAL_KEYS = Object.freeze({
 });
 
 export const THEME_VALUES = Object.freeze(["system", "light", "dark"]);
+export const PERSPECTIVE_PREF_VALUES = Object.freeze(["all", "model"]);
 
 function isPlainObject(value) {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -70,6 +72,7 @@ export function normalizeGlobalPrefs(value) {
 	if (Object.prototype.hasOwnProperty.call(value, "filters")) out.filters = normalizeFiltersPrefs(value.filters);
 	if (Object.prototype.hasOwnProperty.call(value, "tools")) out.tools = normalizeToolsPrefs(value.tools);
 	if (THEME_VALUES.includes(value.theme)) out.theme = value.theme;
+	if (PERSPECTIVE_PREF_VALUES.includes(value.perspective)) out.perspective = value.perspective;
 	if (isPlainObject(value.translate)) out.translate = { ...value.translate };
 	if (typeof value.chatOpen === "boolean") out.chatOpen = value.chatOpen;
 	for (const key of ["chatWidth", "composerHeight"]) {
