@@ -714,7 +714,7 @@ const check = (label, cond, extra = "") => {
 			styleSource.includes("max-height: 88vh") &&
 			!styleSource.includes(".ev.no-crop + .ev-panel"),
 	);
-	check("弹窗可拖动：头部空白按住拖动 + 中心不出视口 + 打开/关闭复位", appSource.includes('closest(".ev-panel-head")') && appSource.includes("function resetPanelOffset") && appSource.includes("innerWidth / 2 - 40") && styleSource.includes("cursor: move") && indexSource.includes("ev-panel-grip"));
+	check("弹窗可拖动：头部空白按住拖动 + 中心不出视口 + 位置尺寸永久保留（无复位）", appSource.includes('closest(".ev-panel-head")') && appSource.includes("function applyPanelOffset") && !appSource.includes("resetPanelOffset") && appSource.includes("innerWidth / 2 - 40") && styleSource.includes("cursor: move") && indexSource.includes("ev-panel-grip"));
 	check("轮次头不重复展示提问正文（首行 user 事件已含，q-sum 已删）", !appSource.includes("q-sum") && !styleSource.includes(".q-sum"));
 	check("checkbox 选中是无底黑勾（自定义渲染，不用 accent-color 的黑底白勾）", !styleSource.includes("accent-color:") && /\.q-check,\n\.ev-check \{[^}]*appearance: none/s.test(styleSource) && /\.q-check:checked,\n\.ev-check:checked \{[^}]*background-image: url\("data:image\/svg\+xml/s.test(styleSource) && /body\[data-ds-dark-theme\] \.q-check:checked/.test(styleSource));
 	check("剪刀图标（两个圆环把手 + 交叉刀刃），旧眼睛图标已移除", appSource.includes("scissors: [") && !appSource.includes('svgIcon("eye")') && !appSource.includes("\teye: ["));
