@@ -1401,20 +1401,18 @@ async function loadFull(id) {
 	}
 }
 
-/** 钉住态：面板去遮罩非模态化（页面与对话栏可正常输入），仍可拖动/缩放；关闭面板时复位为模态。 */
+/** 钉住态：面板固定当前位置，切换条目只换内容不移动；取消钉住或关闭面板时复位居中。
+ * 弹窗本身已非模态（无遮罩、点击穿透），打开期间页面与对话栏照常输入。 */
 let panelPinned = false;
 function setPanelPinned(pinned) {
 	if (panelPinned === pinned) return;
 	panelPinned = pinned;
-	panelOverlay.classList.toggle("pinned", pinned);
-	// 非模态化：屏幕阅读器不再按模态对话框处理
-	panel.setAttribute("aria-modal", pinned ? "false" : "true");
 	const btn = el("dv-pin");
 	if (btn) {
 		btn.setAttribute("aria-pressed", String(pinned));
-		btn.title = pinned ? "取消钉住：恢复模态弹窗" : "钉住：面板浮动不挡页面，可在对话栏继续输入";
+		btn.title = pinned ? "取消钉住：切换条目时面板复位居中" : "钉住：面板固定当前位置，切换条目不移动";
 	}
-	// 取消钉住＝回到默认模态弹窗：复位居中恢复默认尺寸（关闭路径 closePanel 已另行复位）
+	// 取消钉住＝复位居中恢复默认尺寸（关闭路径 closePanel 已另行复位）
 	if (!pinned) resetPanelOffset();
 }
 
@@ -1425,7 +1423,7 @@ function openPanel(id) {
 	state.openFull = null;
 	const light = findEvent(id);
 	state.openLightJson = JSON.stringify(light ?? null);
-	// 钉住时换行只换内容，保留拖出的位置与尺寸；模态弹窗下复位居中恢复默认大小
+	// 未钉住时换行复位居中恢复默认大小；钉住时只换内容，保留拖出的位置与尺寸
 	if (!panelPinned) resetPanelOffset();
 	renderPanel();
 	// 行不可见（被过滤/折叠）时 attachOpenPanel 已收尾，不再拉全文/写 hash

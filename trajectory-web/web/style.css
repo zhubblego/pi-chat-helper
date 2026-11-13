@@ -1382,7 +1382,7 @@ mark.ev-hit {
 	border-left-color: var(--dsw-alias-state-business-primary);
 }
 
-/* 详情弹窗：遮罩层居中（点遮罩/Esc/再点同一行关闭）；面板不再行内联展开。 */
+/* 详情弹窗：非模态浮层——无遮罩背景，容器点击穿透到页面（含对话栏可正常输入），面板本体可交互。 */
 .ev-overlay {
 	position: fixed;
 	inset: 0;
@@ -1390,24 +1390,18 @@ mark.ev-hit {
 	display: grid;
 	place-items: center;
 	padding: 32px;
-	background: rgb(0 0 0 / 0.45);
+	background: none;
+	pointer-events: none;
 }
 
 .ev-overlay[hidden] {
 	display: none;
 }
-/* 钉住（非模态）：去遮罩背景，遮罩层点击穿透到页面（含对话栏可正常输入），面板本体仍可交互 */
-.ev-overlay.pinned {
-	background: none;
-	pointer-events: none;
-}
-.ev-overlay.pinned .ev-panel {
-	pointer-events: auto;
-}
 
 /* 面板本体：居中卡片，宽 min(860px, 94vw)，高封顶 88vh、内部滚动；右下角可拖拽放大 */
 .ev-panel {
 	position: relative;
+	pointer-events: auto;
 	--dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
 	width: min(860px, 94vw);
 	max-height: 88vh;

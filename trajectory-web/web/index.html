@@ -213,11 +213,11 @@
 			<div id="chat-approval" class="chat-approval" hidden role="dialog" aria-modal="true" aria-label="工具审批"></div>
 		</aside>
 	</div>
-	<!-- 详情弹窗：点轨迹行后居中弹出（不再行内联展开）；点遮罩/Esc/再点同一行关闭。
-	     工具条（译/⧉/⚙/📌）随面板常驻，仍作用于当前打开的这一行；📌 钉住后去遮罩，
-	     页面与对话栏可正常操作（边打字边看），✕ 关闭。 -->
+	<!-- 详情弹窗：点轨迹行后居中弹出（不再行内联展开）；非模态无遮罩，打开期间页面与
+	     对话栏照常操作（边打字边看），✕ 关闭。工具条（译/⧉/⚙/📌）随面板常驻；
+	     📌 钉住后切换条目只换内容，面板位置不动。 -->
 	<div id="ev-overlay" class="ev-overlay" hidden>
-		<article id="ev-panel" class="ev-panel" role="dialog" aria-modal="true" aria-label="事件详情">
+		<article id="ev-panel" class="ev-panel" role="dialog" aria-modal="false" aria-label="事件详情">
 			<header class="ev-panel-head">
 				<span class="ev-panel-grip" aria-hidden="true">⠿</span>
 				<div class="ev-panel-tools">
@@ -233,7 +233,7 @@
 						<button id="dv-settings" class="dv-tool-btn" type="button" title="翻译设置" aria-haspopup="menu" aria-expanded="false"><span aria-hidden="true">⚙</span></button>
 						<div id="dv-settings-menu" class="menu" role="menu" hidden></div>
 					</div>
-					<button id="dv-pin" class="dv-tool-btn" type="button" title="钉住：面板浮动不挡页面，可在对话栏继续输入" aria-label="钉住详情面板" aria-pressed="false">
+					<button id="dv-pin" class="dv-tool-btn" type="button" title="钉住：面板固定当前位置，切换条目不移动" aria-label="钉住详情面板" aria-pressed="false">
 						<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z"/></svg>
 					</button>
 				</div>
