@@ -1454,7 +1454,6 @@ function closePanel() {
 	state.openId = null;
 	state.openFull = null;
 	state.openLightJson = "";
-	resetPanelOffset();
 	panelOverlay.hidden = true;
 	for (const open of mainInner.querySelectorAll(".ev.is-open")) open.classList.remove("is-open");
 	transSeq++;
@@ -2710,17 +2709,10 @@ el("dv-settings-menu").addEventListener("click", (e) => {
 	else if (item.dataset.lang) applyTranslateSetting({ lang: item.dataset.lang });
 	else if (item.dataset.mode) applyTranslateSetting({ mode: item.dataset.mode });
 });
-// 详情弹窗可拖动：头部空白/把手处按住拖动，transform 偏移；打开新事件/关闭时复位居中并恢复默认尺寸
+// 详情弹窗可拖动：头部空白/把手处按住拖动，transform 偏移；位置与尺寸跨条目切换、关闭重开永久保留
 const panelOffset = { x: 0, y: 0 };
 function applyPanelOffset() {
 	panel.style.transform = panelOffset.x || panelOffset.y ? `translate(${panelOffset.x}px, ${panelOffset.y}px)` : "";
-}
-function resetPanelOffset() {
-	panelOffset.x = 0;
-	panelOffset.y = 0;
-	panel.style.width = "";
-	panel.style.height = "";
-	applyPanelOffset();
 }
 panel.addEventListener("pointerdown", (e) => {
 	const head = e.target.closest(".ev-panel-head");

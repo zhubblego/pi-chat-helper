@@ -1410,9 +1410,13 @@ mark.ev-hit {
 	margin: 0;
 	border: 1px solid var(--dsw-alias-border-l1);
 	border-radius: var(--dsw-radius-md);
-	background: var(--dsw-alias-bg-overlay);
+	background: var(--dsw-static-neutral-bluish-50);
 	box-shadow: var(--dsw-elevation-stroke);
 	overscroll-behavior: contain;
+}
+/* 暗色下 static-50 近白会刺眼：回浮层层级色（875 本就亮于页底 950，已可区分） */
+body[data-ds-dark-theme] .ev-panel {
+	background: var(--dsw-alias-bg-layer-1);
 }
 
 /* 右下角拖拽把手：斜纹样式，拖动改宽高（最小 480×240，视口内） */
