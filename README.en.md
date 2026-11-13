@@ -35,6 +35,7 @@ Also:
 - Full-text search: hit highlighting, turns without hits auto-collapse
 - Multiple agent sources: native pi parsing + Codex trajectory translation; Codex derived sessions jump on click, one click back to the parent
 - Paragraph-by-paragraph translation (Microsoft / Google, no key), bilingual or translation-only; one-click copy
+- Session context menu: copy the session ID; truly delete the session file via right-click (two-step confirm; pi source only, live/running sessions are refused)
 - Light and dark themes follow the system or pin manually; the URL remembers source, session, and position — refresh restores everything
 
 ### Chat page · chat

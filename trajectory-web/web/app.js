@@ -2510,7 +2510,7 @@ sessionList.addEventListener("click", (e) => {
 });
 
 // ---------------------------------------------------------------------------
-// 会话右键菜单（仅 pi 源）：真删除会话文件，两步确认防误触
+// 会话右键菜单（仅 pi 源）：复制 Session ID＋真删除会话文件（删除两步确认防误触）
 // ---------------------------------------------------------------------------
 
 let sessionMenu = null;
@@ -2545,6 +2545,14 @@ function openSessionMenu(x, y, session) {
 	sessionMenu = h(
 		"div",
 		{ class: "session-menu", role: "menu", "aria-label": "会话操作" },
+		h("button", {
+			class: "menu-item session-menu-copy",
+			type: "button",
+			role: "menuitem",
+			title: `复制完整会话 ID：${session.id}`,
+			text: "复制 Session ID",
+			onClick: () => void copySessionId(session),
+		}),
 		h("button", {
 			class: "menu-item session-menu-delete",
 			type: "button",
@@ -2583,6 +2591,17 @@ function renderSessionMenuConfirm(session) {
 	sessionMenu.querySelector(".session-menu-confirm-cancel")?.focus?.();
 	// 确认态更高：按打开坐标重新 clamp，防止底部溢出视口
 	positionSessionMenu(sessionMenuAt.x, sessionMenuAt.y);
+}
+
+/** 复制完整会话 ID 到剪贴板（安全操作，不设 live 门槛）；失败走同步栏提示。 */
+async function copySessionId(session) {
+	closeSessionMenu();
+	try {
+		await navigator.clipboard.writeText(String(session.id ?? ""));
+		setSync(`已复制 Session ID：${String(session.id).slice(0, 8)}…`, "ok");
+	} catch (err) {
+		setSync(`复制失败：${err.message}`, "warn");
+	}
 }
 
 async function deleteSession(session) {

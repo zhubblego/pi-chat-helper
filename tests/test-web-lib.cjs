@@ -742,6 +742,15 @@ const check = (label, cond, extra = "") => {
 	);
 	check("模型视角下空轮整轮隐藏（内容只剩摘要或已不在上下文）", appSource.includes('(matches || state.perspective === "model") && shown.length === 0'));
 
+	// ---- 会话右键菜单：复制 Session ID＋两步确认删除 ----
+	check(
+		"右键菜单首项是复制 Session ID（安全操作在前，删除在后）",
+		appSource.indexOf("session-menu-copy") < appSource.indexOf("session-menu-delete") &&
+			appSource.includes('text: "复制 Session ID"') &&
+			appSource.includes("navigator.clipboard.writeText(String(session.id"),
+	);
+	check("复制不设 live 门槛（菜单项无 disabled），删除保留 live 禁用", !appSource.includes('class: "menu-item session-menu-copy",\n\t\t\ttype: "button",\n\t\t\trole: "menuitem",\n\t\t\tdisabled') && appSource.includes("disabled: session.live ? \"disabled\" : null"));
+
 	// ---- 回归守卫：详情弹窗（居中 modal，工具条随面板常驻作用于当前行） ----
 	check("详情弹窗：行不在（被过滤/折叠）即收起，行在则高亮", appSource.includes("function attachOpenPanel") && appSource.includes('mainInner.querySelector(`.ev[data-eid="${state.openId}"]`)') && appSource.includes('row.classList.add("is-open")'));
 	check("renderMain 末尾同步弹窗状态（行重建后行没了收起/高亮同步，弹窗不重建）", appSource.includes("行被过滤/折叠掉时收起弹窗，行还在则同步 is-open 高亮（弹窗本体常驻 overlay 不重建）\n\tattachOpenPanel();"));
