@@ -1087,6 +1087,19 @@ body[data-ds-dark-theme] .ev-check:indeterminate {
 	scroll-margin-top: calc(var(--tw-toolbar-height) + 44px);
 }
 
+/* 模型视角：现行压缩摘要置顶（模型上下文第一条消息），与轮次列表视觉分隔 */
+.context-lead {
+	scroll-margin-top: calc(var(--tw-toolbar-height) + 44px);
+	padding: 6px 14px 10px;
+	border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.context-lead-cap {
+	font: var(--dsw-font-xxxs-strong-11);
+	color: var(--dsw-alias-state-business-primary);
+	padding: 0 2px 4px;
+}
+
 .question.folded .q-body {
 	display: none;
 }

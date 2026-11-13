@@ -741,6 +741,14 @@ const check = (label, cond, extra = "") => {
 			appSource.includes("queueGlobalPrefs({ perspective: value })"),
 	);
 	check("模型视角下空轮整轮隐藏（内容只剩摘要或已不在上下文）", appSource.includes('(matches || state.perspective === "model") && shown.length === 0'));
+	check(
+		"模型视角压缩摘要置顶（lead 区），轮内不再渲染",
+		appSource.includes('class: "context-lead"') &&
+			appSource.includes('!(modelView && ev.kind === "compaction")') &&
+			appSource.includes('ev.kind === "compaction" &&') &&
+			appSource.includes("ev.inContext !== false &&") &&
+			styleSource.includes(".context-lead"),
+	);
 
 	// ---- 会话右键菜单：复制 Session ID＋两步确认删除 ----
 	check(

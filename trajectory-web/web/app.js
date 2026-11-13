@@ -1150,7 +1150,31 @@ function renderMain() {
 	}
 	const matches = state.searchIndex.search(state.query);
 	const terms = state.query.trim() ? state.query.trim().split(/\s+/) : [];
+	// 模型视角：现行压缩摘要是模型上下文的第一条消息，提升到时间线最前；
+	// 不提升会挂在触发轮末尾——切点落在轮中间时表现为「轮尾内容排在压缩前」，与上下文序不符
+	const modelView = state.perspective === "model";
+	const leadEvents = modelView
+		? questions
+				.flatMap((q) => q.events ?? [])
+				.filter(
+					(ev) =>
+						ev.kind === "compaction" &&
+						ev.inContext !== false &&
+						eventPasses(state.filters, ev.kind) &&
+						(!matches || matches.has(ev.id)),
+				)
+		: [];
 	mainInner.replaceChildren(
+		...(leadEvents.length
+			? [
+					h(
+						"div",
+						{ class: "context-lead", role: "region", "aria-label": "模型上下文起点：压缩摘要" },
+						h("div", { class: "context-lead-cap", text: "上下文起点 · 压缩摘要" }),
+						...leadEvents.map((ev) => renderEvent(ev, terms)),
+					),
+				]
+			: []),
 		...questions
 			.map((q) => {
 			const shown = (q.events ?? []).filter(
@@ -1158,6 +1182,8 @@ function renderMain() {
 					eventPasses(state.filters, ev.kind) &&
 					eventToolPasses(state.toolExcluded, ev) &&
 					eventInPerspective(ev, state.perspective, eventCropped(ev, q)) &&
+					// 压缩摘要已提升到顶部 lead 区，轮内不再渲染（仅模型视角）
+					!(modelView && ev.kind === "compaction") &&
 					(!matches || matches.has(ev.id)),
 			);
 			// 搜索激活时：无命中的轮次整轮隐藏（过滤 ∩ 搜索，不再渲染空框）；
